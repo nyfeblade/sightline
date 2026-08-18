@@ -42,6 +42,26 @@ impl Totals {
     }
 }
 
+/// One item from the session's plan.
+#[derive(Clone)]
+pub struct Todo {
+    pub text: String,
+    pub status: String,
+}
+
+/// A subagent the session launched.
+#[derive(Clone)]
+pub struct AgentRun {
+    pub id: String,
+    pub kind: String,
+    pub description: String,
+    pub model: String,
+    pub status: String,
+    pub output_file: Option<String>,
+    pub started: Option<DateTime<Utc>>,
+    pub finished: Option<DateTime<Utc>>,
+}
+
 /// Everything one file had done to it during the session.
 #[derive(Clone, Default)]
 pub struct FileTouch {
@@ -95,11 +115,27 @@ pub struct Session {
     pub turn_ms: Vec<u64>,
     /// true when startup skipped the head of an oversized transcript
     pub partial: bool,
+    /// a live session that has not written a transcript yet — it is in the
+    /// registry, so it is real, but there is nothing to read until it is used
+    pub placeholder: bool,
     /// whether this Claude Code install keeps a live-session registry
     pub registry_seen: bool,
     skip_first: bool,
     /// requests per model id
     pub models: BTreeMap<String, usize>,
+    /// the session's current plan, from its last TodoWrite
+    pub todos: Vec<Todo>,
+    /// subagents it launched, oldest first
+    pub agents: Vec<AgentRun>,
+    /// prompts typed while it was busy and not yet consumed
+    pub queued: Vec<String>,
+    /// tool calls the user refused
+    pub denials: usize,
+    /// effort level of the most recent request
+    pub effort: String,
+    /// skills that drove a turn, by name
+    pub skills: BTreeMap<String, usize>,
+    agent_by_tool: HashMap<String, usize>,
     /// tool_use id -> (tool name, when it was issued)
     pending: HashMap<String, (String, Option<DateTime<Utc>>)>,
     tail: Tail,
@@ -137,9 +173,17 @@ impl Session {
             latencies: Vec::new(),
             turn_ms: Vec::new(),
             partial: false,
+            placeholder: false,
             registry_seen: true,
             skip_first: false,
             models: BTreeMap::new(),
+            todos: Vec::new(),
+            agents: Vec::new(),
+            queued: Vec::new(),
+            denials: 0,
+            effort: String::new(),
+            skills: BTreeMap::new(),
+            agent_by_tool: HashMap::new(),
             pending: HashMap::new(),
         }
     }
@@ -202,6 +246,9 @@ impl Session {
                 if rec.get("isMeta").and_then(Value::as_bool).unwrap_or(false) {
                     return;
                 }
+                if rec.get("toolDenialKind").is_some() {
+                    self.denials += 1;
+                }
                 if self.cwd.is_empty() {
                     self.cwd = take("cwd");
                 }
@@ -247,7 +294,47 @@ impl Session {
                                     if !ok {
                                         self.errors += 1;
                                     }
+                                    if let Some(t) = tur.and_then(|v| v.get("newTodos")) {
+                                        self.todos = t
+                                            .as_array()
+                                            .map(|a| {
+                                                a.iter()
+                                                    .map(|i| Todo {
+                                                        text: i
+                                                            .get("content")
+                                                            .and_then(Value::as_str)
+                                                            .unwrap_or("")
+                                                            .to_string(),
+                                                        status: i
+                                                            .get("status")
+                                                            .and_then(Value::as_str)
+                                                            .unwrap_or("pending")
+                                                            .to_string(),
+                                                    })
+                                                    .collect()
+                                            })
+                                            .unwrap_or_default();
+                                    }
+                                    if let Some(idx) = self.agent_by_tool.get(&id).copied() {
+                                        if let (Some(run), Some(v)) = (self.agents.get_mut(idx), tur) {
+                                            let g = |k: &str| {
+                                                v.get(k).and_then(Value::as_str).unwrap_or("").to_string()
+                                            };
+                                            run.id = g("agentId");
+                                            run.model = g("resolvedModel");
+                                            run.status = if g("status").is_empty() {
+                                                "done".into()
+                                            } else {
+                                                g("status")
+                                            };
+                                            let f = g("outputFile");
+                                            run.output_file = (!f.is_empty()).then_some(f);
+                                            run.finished = ts;
+                                        }
+                                    }
                                     let mut ev = Ev::new(ts, Kind::Result, head, body);
+                                    ev.spill = event::spill_path(&ev.body)
+                                        .or_else(|| event::spill_path(&raw));
                                     ev.tool = Some(name.clone());
                                     ev.ok = ok;
                                     self.push(ev);
@@ -261,6 +348,12 @@ impl Session {
                 }
             }
             "assistant" => {
+                if let Some(e) = rec.get("effort").and_then(Value::as_str) {
+                    self.effort = e.to_string();
+                }
+                if let Some(skill) = rec.get("attributionSkill").and_then(Value::as_str) {
+                    *self.skills.entry(skill.to_string()).or_insert(0) += 1;
+                }
                 let msg = rec.get("message");
                 if let Some(m) = msg {
                     if let Some(model) = m.get("model").and_then(Value::as_str) {
@@ -308,6 +401,26 @@ impl Session {
                                 let body = serde_json::to_string_pretty(&input)
                                     .unwrap_or_else(|_| input.to_string());
                                 *self.tools.entry(name.clone()).or_insert(0) += 1;
+                                if name == "Agent" {
+                                    let g = |k: &str| {
+                                        input.get(k).and_then(Value::as_str).unwrap_or("").to_string()
+                                    };
+                                    self.agents.push(AgentRun {
+                                        id: String::new(),
+                                        kind: if g("subagent_type").is_empty() {
+                                            "general-purpose".into()
+                                        } else {
+                                            g("subagent_type")
+                                        },
+                                        description: g("description"),
+                                        model: String::new(),
+                                        status: "launched".into(),
+                                        output_file: None,
+                                        started: ts,
+                                        finished: None,
+                                    });
+                                    self.agent_by_tool.insert(id.clone(), self.agents.len() - 1);
+                                }
                                 self.pending.insert(id, (name.clone(), ts));
                                 let mut ev = Ev::new(ts, Kind::Tool, summary, body);
                                 ev.tool = Some(name);
@@ -357,6 +470,20 @@ impl Session {
                         let c = take("content");
                         self.push(Ev::new(ts, Kind::System, event::clip(&c, 300), c));
                     }
+                    _ => {}
+                }
+            }
+            "queue-operation" => {
+                let op = rec.get("operation").and_then(Value::as_str).unwrap_or("");
+                let content = take("content");
+                match op {
+                    "enqueue" if !content.is_empty() => self.queued.push(content),
+                    "dequeue" | "remove" => {
+                        if !self.queued.is_empty() {
+                            self.queued.remove(0);
+                        }
+                    }
+                    "popAll" => self.queued.clear(),
                     _ => {}
                 }
             }
@@ -509,6 +636,17 @@ impl Session {
                 _ => Status::Ended,
             },
         }
+    }
+
+    /// A session known only from the registry, with no transcript yet.
+    pub fn pending(id: String, live: Live) -> Self {
+        let mut s = Session::open(PathBuf::from(format!("/nonexistent/{id}.jsonl")));
+        s.id = id;
+        s.cwd = live.cwd.clone();
+        s.version = live.version.clone();
+        s.live = Some(live);
+        s.placeholder = true;
+        s
     }
 
     /// Name for the session list: registry name, else title, else first prompt.

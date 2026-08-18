@@ -7,11 +7,13 @@ and, where sessions run in tmux, a way to steer them from the same window.
 No hooks to install, no server, no configuration. Nothing leaves the machine.
 
 ```
-scope                    # live view of sessions touched in the last 24h
-scope --live             # only sessions with a running claude process
-scope --once             # one-shot table, for scripts
-scope new [path]         # start a session in tmux (so it can be steered)
-scope send <who> <text>  # type a line into a running session and submit it
+scope                     # live view of sessions touched in the last 24h
+scope --live              # only sessions with a running claude process
+scope --once              # one-shot table, for scripts
+scope new [path]          # start a session in tmux (so it can be steered)
+scope send <who> <text>   # type a line into a running session and submit it
+scope waiting             # list sessions blocked on a prompt
+scope approve <who> [n]   # answer a blocked session, default option 1
 ```
 
 ## Where the data comes from
@@ -32,9 +34,13 @@ Two files Claude Code already writes.
 
 ## Panes
 
+Nine, on keys `1` to `9`.
+
 **feed** — the running commentary. One line per event: prompt, reply, tool call
 with its arguments, result with size and status. `enter` opens the whole thing —
-the full command, the full output, the full diff.
+the full command, the full output, the full diff. Where Claude Code spilled a
+large result to a file, `enter` reads that file, so you see what was actually
+produced rather than the preview.
 
 **files** — every file the session read, wrote or edited, with per-file counts,
 lines added and removed, and when it was last touched. `enter` shows that file's
@@ -45,6 +51,26 @@ full the context window is, turns with average and longest, a tool-call
 histogram, tool latency average and worst, files and line churn, error count,
 and a per-minute activity strip for the last hour.
 
+**plan** — the session's todo list as it stands, plus prompts it has queued and
+any message scope is holding for it.
+
+**agents** — subagents the session launched, with kind, description, status and
+duration. `enter` reads the subagent's own output file.
+
+**mirror** — what the session's terminal is showing right now, read from its
+tmux pane. Press `m` to type into it directly.
+
+**tree** — the working directory as it stands: branch, changed files, unstaged
+insertions and deletions. `enter` shows the diff for one file. This is what
+landed on disk, which is not always what the transcript claims.
+
+**errors** — every failed tool call and API error in the session, in one list.
+
+**fleet** — every session on a single timeline, tagged by session.
+
+`/` searches everything loaded, across all sessions; `]` and `[` step through
+the matches.
+
 ## Steering sessions
 
 Claude Code's own cross-session channel is a token-authenticated private socket.
@@ -53,17 +79,55 @@ session running in a tmux pane can be driven exactly as a person would drive it 
 permission prompts, slash commands, plan mode and everything else keep working.
 
 Start sessions with `scope new`, or `n` inside scope, and they become steerable.
-Sessions started outside tmux are fully visible but cannot be typed into; they
-are marked in the list, so it is always clear which is which. Everything here is
-a no-op with a clear message when tmux is not installed.
+A session already running outside tmux can be adopted with `A`, which resumes
+that same conversation inside tmux — you then close the old window. Sessions
+that are not steerable are fully visible and marked as such, so it is always
+clear which is which. Everything here is a no-op with a clear message when tmux
+is not installed.
 
 | key | does |
 |---|---|
 | `s` | type a message into the selected session |
 | `b` | send one message to every steerable session |
+| `Q` | queue a message; scope sends it when that session next goes idle |
+| `y` `d` | accept or decline what a session is asking |
+| `ctrl`+digit | pick another option on that prompt |
+| `p` | jump to the next session waiting on you |
 | `i` | interrupt the selected session (sends Escape) |
+| `m` | passthrough: every key goes to the session until `ctrl+]` |
 | `a` | attach to it full-screen; detach and you are back in scope |
-| `n` | start a new session in tmux |
+| `n` `A` | start a new session · adopt an existing one into tmux |
+| `L` | launch a fleet from `~/.config/nyfe-scope/fleet.json` |
+| `N` | desktop notifications on or off |
+
+### Waiting on you
+
+A session blocked on a permission prompt cannot make progress until a person
+answers, so scope treats that as the most important state there is: blocked
+sessions sort to the top, the header counts them, and the prompt — question and
+options — appears at the bottom of the window wherever you are, answerable with
+one key. Detection reads the rendered pane, so it works for any prompt Claude
+Code draws without depending on its internals.
+
+### Notifications and queues
+
+`N` toggles desktop notifications, which fire when a session goes idle, hits an
+error, or starts waiting on you. `Q` queues a message for a session that is
+mid-turn; scope delivers it the moment that session is free, so you can line up
+the next instruction without watching for the gap.
+
+### Fleets
+
+`~/.config/nyfe-scope/fleet.json` is a list of sessions to start together:
+
+```json
+[
+  {"cwd": "~/api", "prompt": "run the test suite and fix what fails", "effort": "high"},
+  {"cwd": "~/web", "model": "claude-opus-5", "permission_mode": "plan"}
+]
+```
+
+`L` launches all of them.
 
 `scope send` accepts a session's Claude Code name, its id, or the tmux session
 name — the last of which works even before a session has written a transcript,

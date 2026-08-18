@@ -24,11 +24,13 @@ pub struct Ev {
     /// full text, shown in the detail popup
     pub body: String,
     pub ok: bool,
+    /// a file holding the untruncated output, when the harness spilled it
+    pub spill: Option<String>,
 }
 
 impl Ev {
     pub fn new(ts: Option<DateTime<Utc>>, kind: Kind, head: String, body: String) -> Self {
-        Ev { ts, kind, tool: None, head, body, ok: true }
+        Ev { ts, kind, tool: None, head, body, ok: true, spill: None }
     }
 }
 
@@ -75,6 +77,16 @@ impl Filter {
             Filter::Talk => matches!(ev.kind, Kind::Prompt | Kind::Text),
         }
     }
+}
+
+/// Large tool output is written to a file and replaced with a pointer. Find it
+/// so the detail view can show what was actually produced, not the preview.
+pub fn spill_path(text: &str) -> Option<String> {
+    let at = text.find("saved to: ")? + "saved to: ".len();
+    let rest = &text[at..];
+    let end = rest.find(|c: char| c.is_whitespace()).unwrap_or(rest.len());
+    let path = rest[..end].trim();
+    if path.starts_with('/') { Some(path.to_string()) } else { None }
 }
 
 pub fn ts_of(rec: &Value) -> Option<DateTime<Utc>> {

@@ -186,9 +186,14 @@ fn status_mark(s: &Session) -> (String, Color) {
 pub fn draw(f: &mut Frame, app: &mut App) {
     let area = f.area();
     f.render_widget(Block::new().style(Style::new().bg(pal().midnight)), area);
-    let [header, body, footer] =
-        Layout::vertical([Constraint::Length(1), Constraint::Min(0), Constraint::Length(1)])
-            .areas(area);
+    let blocked = app.approval().is_some();
+    let [header, body, strip, footer] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(0),
+        Constraint::Length(if blocked { 5 } else { 0 }),
+        Constraint::Length(1),
+    ])
+    .areas(area);
     let [left, right] =
         Layout::horizontal([Constraint::Length(42), Constraint::Min(20)]).areas(body);
     let [list, card] = Layout::vertical([Constraint::Min(6), Constraint::Length(9)]).areas(left);
@@ -200,6 +205,15 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         View::Feed => draw_feed(f, app, right),
         View::Files => draw_files(f, app, right),
         View::Stats => draw_stats(f, app, right),
+        View::Plan => draw_plan(f, app, right),
+        View::Agents => draw_agents(f, app, right),
+        View::Mirror => draw_mirror(f, app, right),
+        View::Tree => draw_tree(f, app, right),
+        View::Errors => draw_errors(f, app, right),
+        View::Fleet => draw_fleet(f, app, right),
+    }
+    if blocked {
+        draw_approval(f, app, strip);
     }
     draw_footer(f, app, footer);
 
@@ -219,7 +233,15 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(" nyfe scope ", Style::new().fg(pal().gold).add_modifier(Modifier::BOLD)),
         Span::styled(format!("· {} sessions · {working} working", app.sessions.len()), muted()),
     ];
-    let mut right = vec![Span::styled(format!("{} out ", fmt_tokens(tokens)), Style::new().fg(pal().dim))];
+    let mut right = Vec::new();
+    let waiting = app.approvals.len();
+    if waiting > 0 {
+        right.push(Span::styled(
+            format!(" {waiting} need you · "),
+            Style::new().fg(pal().gold).add_modifier(Modifier::BOLD),
+        ));
+    }
+    right.push(Span::styled(format!("{} out ", fmt_tokens(tokens)), Style::new().fg(pal().dim)));
     if app.show_cost {
         right.push(Span::styled(
             format!("~${cost:.2} if API{} ", if unpriced { "*" } else { "" }),
@@ -258,13 +280,19 @@ fn draw_sessions(f: &mut Frame, app: &mut App, area: Rect) {
         let (mark, color) = status_mark(s);
         let dot = mark.chars().next().unwrap_or('·').to_string();
         let word: String = mark.chars().skip(2).collect();
-        let age = fmt_age(s.age_secs());
+        let age = if s.placeholder { "new".to_string() } else { fmt_age(s.age_secs()) };
         let label_style = if selected {
             Style::new().fg(pal().text).add_modifier(Modifier::BOLD)
         } else {
             Style::new().fg(pal().text)
         };
-        let steer = if *steerable.get(i).unwrap_or(&false) { "⌁ " } else { "" };
+        let steer = if app.approvals.contains_key(&s.id) {
+            "! "
+        } else if *steerable.get(i).unwrap_or(&false) {
+            "⌁ "
+        } else {
+            ""
+        };
         let label_w = w.saturating_sub(age.chars().count() + steer.chars().count() + 5);
         lines.push(row(
             vec![
@@ -273,18 +301,29 @@ fn draw_sessions(f: &mut Frame, app: &mut App, area: Rect) {
                 Span::styled(clip_to(&s.label(), label_w), label_style),
             ],
             vec![
-                Span::styled(steer.to_string(), Style::new().fg(pal().gold)),
+                Span::styled(
+                    steer.to_string(),
+                    Style::new().fg(pal().gold).add_modifier(if steer == "! " {
+                        Modifier::BOLD
+                    } else {
+                        Modifier::empty()
+                    }),
+                ),
                 Span::styled(format!("{age} "), muted()),
             ],
             w,
         ));
         let right = format!("ctx {} ", fmt_tokens(s.totals.ctx));
-        let room = w.saturating_sub(word.chars().count() + right.chars().count() + 6);
+        // Assemble, then clip to what is left after the right-hand column, so a
+        // long path can never run into it.
+        let avail = w.saturating_sub(right.chars().count() + 4);
+        let path_room = avail.saturating_sub(word.chars().count() + 3);
+        let path = clip_left(&s.where_(), path_room);
         lines.push(row(
             vec![
                 Span::raw("   "),
-                Span::styled(word, Style::new().fg(color)),
-                Span::styled(format!(" · {}", clip_left(&s.where_(), room)), muted()),
+                Span::styled(word.clone(), Style::new().fg(color)),
+                Span::styled(clip_to(&format!(" · {path}"), avail.saturating_sub(word.chars().count())), muted()),
             ],
             vec![Span::styled(right, muted())],
             w,
@@ -334,11 +373,16 @@ fn draw_card(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
-fn pane_legend(name: &str) -> &'static str {
+fn pane_legend(name: &str) -> String {
     match name {
-        "files" => " files · E edit  W write  R read ",
-        "feed" => " feed ",
-        _ => " stats ",
+        "files" => " files · E edit  W write  R read ".into(),
+        "plan" => " plan · from the session's todo list ".into(),
+        "agents" => " agents · subagents this session launched ".into(),
+        "mirror" => " mirror · what the session's terminal shows ".into(),
+        "tree" => " tree · working directory as it stands ".into(),
+        "errors" => " errors · failed tools and API errors ".into(),
+        "fleet" => " fleet · every session on one timeline ".into(),
+        other => format!(" {other} "),
     }
 }
 
@@ -500,6 +544,283 @@ fn draw_files(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
+/// Draw a cursor-selectable list, keeping the selection in view.
+fn draw_list(
+    f: &mut Frame,
+    inner: Rect,
+    lines: Vec<Line<'static>>,
+    sel: &mut usize,
+    top: &mut usize,
+    empty: &str,
+) {
+    let h = inner.height as usize;
+    if h == 0 {
+        return;
+    }
+    if lines.is_empty() {
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(format!(" {empty}"), muted()))),
+            inner,
+        );
+        return;
+    }
+    if *sel >= lines.len() {
+        *sel = lines.len() - 1;
+    }
+    if *sel < *top {
+        *top = *sel;
+    } else if *sel >= *top + h {
+        *top = *sel + 1 - h;
+    }
+    let window: Vec<Line> = lines.into_iter().skip(*top).take(h).collect();
+    f.render_widget(Paragraph::new(window), inner);
+}
+
+fn cursor(selected: bool) -> Span<'static> {
+    Span::styled(if selected { "▌" } else { " " }, Style::new().fg(pal().gold))
+}
+
+fn draw_plan(f: &mut Frame, app: &mut App, area: Rect) {
+    let (block, _) = pane(app, "plan");
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let Some(s) = app.current() else { return };
+    let w = inner.width as usize;
+    let mut lines: Vec<Line> = Vec::new();
+    for t in &s.todos {
+        let (glyph, color) = match t.status.as_str() {
+            "completed" => ("✓", pal().ok),
+            "in_progress" => ("▸", pal().gold),
+            _ => ("○", pal().muted),
+        };
+        let style = if t.status == "completed" {
+            Style::new().fg(pal().muted).add_modifier(Modifier::CROSSED_OUT)
+        } else if t.status == "in_progress" {
+            Style::new().fg(pal().text)
+        } else {
+            Style::new().fg(pal().body)
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!("  {glyph} "), Style::new().fg(color)),
+            Span::styled(clip_to(&t.text, w.saturating_sub(5)), style),
+        ]));
+    }
+    if lines.is_empty() {
+        lines.push(Line::from(Span::styled("  no plan recorded for this session", muted())));
+    }
+    if !s.queued.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            " queued prompts",
+            Style::new().fg(pal().gold).add_modifier(Modifier::BOLD),
+        )));
+        for q in &s.queued {
+            lines.push(Line::from(vec![
+                Span::styled("  · ", muted()),
+                Span::styled(clip_to(q, w.saturating_sub(5)), Style::new().fg(pal().body)),
+            ]));
+        }
+    }
+    let waiting = app.queues.get(&s.id).cloned().unwrap_or_default();
+    if !waiting.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            " held by scope until idle",
+            Style::new().fg(pal().gold).add_modifier(Modifier::BOLD),
+        )));
+        for q in &waiting {
+            lines.push(Line::from(vec![
+                Span::styled("  · ", muted()),
+                Span::styled(clip_to(q, w.saturating_sub(5)), Style::new().fg(pal().body)),
+            ]));
+        }
+    }
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+fn draw_agents(f: &mut Frame, app: &mut App, area: Rect) {
+    let (block, _) = pane(app, "agents");
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let w = inner.width as usize;
+    let (sel, top) = (app.list_sel, app.list_top_right);
+    let lines: Vec<Line> = match app.current() {
+        Some(s) => s
+            .agents
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                let took = match (a.started, a.finished) {
+                    (Some(x), Some(y)) => fmt_ms((y - x).num_milliseconds()),
+                    (Some(x), None) => format!("{} so far", fmt_age((chrono::Utc::now() - x).num_seconds())),
+                    _ => "—".into(),
+                };
+                let right = format!("{} · {took} ", a.status);
+                let text = format!("{} · {}", a.kind, a.description);
+                row(
+                    vec![
+                        cursor(i == sel),
+                        Span::styled(
+                            clip_to(&text, w.saturating_sub(right.chars().count() + 3)),
+                            Style::new().fg(if i == sel { pal().text } else { pal().body }),
+                        ),
+                    ],
+                    vec![Span::styled(
+                        right,
+                        Style::new().fg(if a.finished.is_some() { pal().muted } else { pal().gold }),
+                    )],
+                    w,
+                )
+            })
+            .collect(),
+        None => Vec::new(),
+    };
+    let mut sel = sel;
+    let mut top = top;
+    draw_list(f, inner, lines, &mut sel, &mut top, "no subagents launched");
+    app.list_sel = sel;
+    app.list_top_right = top;
+}
+
+fn draw_mirror(f: &mut Frame, app: &mut App, area: Rect) {
+    let (block, _) = pane(app, "mirror");
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let Some(s) = app.current() else { return };
+    let text = match app.mirror.get(&s.id) {
+        Some(t) => t.clone(),
+        None => {
+            let hint = if app.steer.contains_key(&s.id) {
+                "reading the pane…"
+            } else {
+                "this session is not in tmux — press A to resume it in tmux"
+            };
+            f.render_widget(
+                Paragraph::new(Line::from(Span::styled(format!(" {hint}"), muted()))),
+                inner,
+            );
+            return;
+        }
+    };
+    let lines: Vec<Line> = text
+        .lines()
+        .map(|l| Line::from(Span::styled(l.to_string(), Style::new().fg(pal().body))))
+        .collect();
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+fn draw_tree(f: &mut Frame, app: &mut App, area: Rect) {
+    let (block, _) = pane(app, "tree");
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let w = inner.width as usize;
+    let (sel, top) = (app.list_sel, app.list_top_right);
+    let tree = app.tree().cloned();
+    let lines: Vec<Line> = match &tree {
+        Some(t) => {
+            let mut v = vec![Line::from(vec![
+                Span::styled("  on ", muted()),
+                Span::styled(t.branch.clone(), Style::new().fg(pal().gold)),
+                Span::styled(
+                    format!("  +{} / -{} unstaged", t.insertions, t.deletions),
+                    muted(),
+                ),
+            ])];
+            v.extend(t.entries.iter().enumerate().map(|(i, e)| {
+                let color = match e.code.trim() {
+                    "??" => pal().muted,
+                    c if c.starts_with('A') || c.starts_with('M') => pal().ok,
+                    c if c.starts_with('D') => pal().bad,
+                    _ => pal().body,
+                };
+                Line::from(vec![
+                    cursor(i == sel),
+                    Span::styled(format!("{:<3}", e.code.trim()), Style::new().fg(color)),
+                    Span::styled(
+                        clip_left(&e.path, w.saturating_sub(6)),
+                        Style::new().fg(if i == sel { pal().text } else { pal().body }),
+                    ),
+                ])
+            }));
+            v
+        }
+        None => Vec::new(),
+    };
+    let mut sel = sel;
+    let mut top = top;
+    draw_list(f, inner, lines, &mut sel, &mut top, "not a git repository, or nothing changed");
+    app.list_sel = sel;
+    app.list_top_right = top;
+}
+
+fn event_line(ev: &Ev, w: usize, selected: bool, tag_extra: Option<&str>) -> Line<'static> {
+    let time = ev
+        .ts
+        .map(|t| t.with_timezone(&chrono::Local).format("%H:%M:%S").to_string())
+        .unwrap_or_else(|| "--:--:--".into());
+    let (tag, color) = kind_tag(ev);
+    let tag = clip_to(&tag, 14);
+    let pad = " ".repeat(14usize.saturating_sub(tag.chars().count()));
+    let extra = tag_extra.map(|e| format!("{e} ")).unwrap_or_default();
+    let used = 25 + extra.chars().count();
+    Line::from(vec![
+        cursor(selected),
+        Span::styled(format!("{time} "), Style::new().fg(pal().muted)),
+        Span::styled(extra, Style::new().fg(pal().gold)),
+        Span::styled(format!("{tag}{pad} "), Style::new().fg(color)),
+        Span::styled(
+            clip_to(&ev.head, w.saturating_sub(used)),
+            Style::new().fg(if selected { pal().text } else { pal().body }),
+        ),
+    ])
+}
+
+fn draw_errors(f: &mut Frame, app: &mut App, area: Rect) {
+    let (block, _) = pane(app, "errors");
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let w = inner.width as usize;
+    let (sel, top) = (app.list_sel, app.list_top_right);
+    let idxs = app.errors();
+    let lines: Vec<Line> = match app.current() {
+        Some(s) => idxs
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| s.events.get(*e).map(|ev| event_line(ev, w, i == sel, None)))
+            .collect(),
+        None => Vec::new(),
+    };
+    let mut sel = sel;
+    let mut top = top;
+    draw_list(f, inner, lines, &mut sel, &mut top, "no errors — nothing failed in this session");
+    app.list_sel = sel;
+    app.list_top_right = top;
+}
+
+fn draw_fleet(f: &mut Frame, app: &mut App, area: Rect) {
+    let (block, _) = pane(app, "fleet");
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let w = inner.width as usize;
+    let (sel, top) = (app.list_sel, app.list_top_right);
+    let merged = app.fleet();
+    let lines: Vec<Line> = merged
+        .iter()
+        .enumerate()
+        .filter_map(|(i, (si, ei))| {
+            let s = app.sessions.get(*si)?;
+            let ev = s.events.get(*ei)?;
+            let tag = clip_to(&s.label(), 10);
+            Some(event_line(ev, w, i == sel, Some(&format!("{tag:<10}"))))
+        })
+        .collect();
+    let mut sel = if app.list_sel == 0 && !lines.is_empty() { lines.len() - 1 } else { sel };
+    let mut top = top;
+    draw_list(f, inner, lines, &mut sel, &mut top, "nothing yet");
+    app.list_sel = sel;
+    app.list_top_right = top;
+}
+
 fn bar(n: usize, max: usize, width: usize) -> String {
     if max == 0 {
         return String::new();
@@ -636,6 +957,37 @@ fn draw_stats(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
+/// A session blocked on a question, shown wherever you are, with the answer
+/// keys spelled out.
+fn draw_approval(f: &mut Frame, app: &App, area: Rect) {
+    let Some((s, a)) = app.approval() else { return };
+    let block = Block::bordered()
+        .border_style(Style::new().fg(pal().gold))
+        .title(Span::styled(
+            format!(" {} is waiting on you ", s.label()),
+            Style::new().fg(pal().gold).add_modifier(Modifier::BOLD),
+        ))
+        .title_bottom(Span::styled(
+            " y accept · d decline · ctrl+<digit> pick an option ",
+            muted(),
+        ));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let w = inner.width as usize;
+    let mut lines = vec![Line::from(Span::styled(
+        format!(" {}", clip_to(&a.question, w.saturating_sub(2))),
+        Style::new().fg(pal().text),
+    ))];
+    for opt in a.options.iter().take(3) {
+        let _ = &opt;
+        lines.push(Line::from(Span::styled(
+            format!("   {}", clip_to(opt, w.saturating_sub(4))),
+            Style::new().fg(pal().body),
+        )));
+    }
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     if let Some(input) = &app.input {
         f.render_widget(
@@ -651,7 +1003,24 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         );
         return;
     }
-    if app.note_visible() {
+    if app.passthrough {
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    "▌ passthrough ",
+                    Style::new().fg(pal().gold).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "every key goes to the selected session · ctrl+] to stop",
+                    muted(),
+                ),
+            ])),
+            area,
+        );
+        return;
+    }
+    // The strip already says what is being asked; do not say it twice.
+    if app.note_visible() && app.approval().is_none() {
         f.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled("▌ ", Style::new().fg(pal().gold)),
@@ -662,9 +1031,9 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
     let keys = if app.tmux_ok {
-        "  j/k session · enter open · 1 2 3 panes · s send · i interrupt · a attach · n new · ? help"
+        "  j/k session · 1…9 panes · s send · y/d answer · i interrupt · a attach · / search · ? help"
     } else {
-        "  j/k session · J/K move · enter open · 1 feed 2 files 3 stats · f filter · $ cost · ? help"
+        "  j/k session · 1…9 panes · enter open · f filter · / search · $ cost · ? help"
     };
     let state = format!(
         "{} · {} · {} ",
@@ -714,17 +1083,70 @@ fn body_lines(text: &str) -> Vec<Line<'static>> {
         .collect()
 }
 
+/// Read a spilled output file, capped so a giant artefact cannot wedge the UI.
+fn read_capped(path: &str) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    Some(text.chars().take(400_000).collect())
+}
+
+fn event_popup(ev: &Ev) -> (String, Color, String) {
+    let (tag, color) = kind_tag(ev);
+    let body = match ev.spill.as_deref().and_then(read_capped) {
+        Some(full) => format!("{full}\n\n── summary ──\n{}", ev.body),
+        None => ev.body.clone(),
+    };
+    (tag, color, body)
+}
+
 fn draw_popup(f: &mut Frame, app: &App, area: Rect) {
     let (title, color, body) = match app.view {
         View::Files => match app.file_history() {
             Some((path, text)) => (crate::event::short_path(&path), pal().gold, text),
             None => return,
         },
+        View::Agents => {
+            let Some(s) = app.current() else { return };
+            let Some(a) = s.agents.get(app.list_sel) else { return };
+            let body = a
+                .output_file
+                .as_deref()
+                .and_then(read_capped)
+                .unwrap_or_else(|| {
+                    format!(
+                        "{}\n\nkind: {}\nmodel: {}\nstatus: {}\n\nno output file recorded",
+                        a.description, a.kind, a.model, a.status
+                    )
+                });
+            (format!("agent · {}", a.kind), pal().gold, body)
+        }
+        View::Tree => {
+            let Some(s) = app.current() else { return };
+            let Some(t) = app.trees.get(&s.id) else { return };
+            let Some(e) = t.entries.get(app.list_sel) else { return };
+            let body = crate::git::diff(std::path::Path::new(&s.cwd), &e.path)
+                .unwrap_or_else(|| "no diff available".into());
+            (e.path.clone(), pal().gold, body)
+        }
+        View::Mirror => {
+            let Some(s) = app.current() else { return };
+            let body = app.mirror.get(&s.id).cloned().unwrap_or_default();
+            (format!("mirror · {}", s.label()), pal().gold, body)
+        }
+        View::Errors => {
+            let Some(s) = app.current() else { return };
+            let idxs = app.errors();
+            let Some(ev) = idxs.get(app.list_sel).and_then(|i| s.events.get(*i)) else { return };
+            event_popup(ev)
+        }
+        View::Fleet => {
+            let merged = app.fleet();
+            let Some((si, ei)) = merged.get(app.list_sel).copied() else { return };
+            let Some(ev) = app.sessions.get(si).and_then(|s| s.events.get(ei)) else { return };
+            event_popup(ev)
+        }
+        View::Plan => return,
         _ => match app.event_at(app.feed_sel) {
-            Some(ev) => {
-                let (tag, color) = kind_tag(ev);
-                (tag, color, ev.body.clone())
-            }
+            Some(ev) => event_popup(ev),
             None => return,
         },
     };
@@ -759,7 +1181,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
         ("J / K", "move in the right pane from anywhere"),
         ("g / G", "top / bottom (G resumes following)"),
         ("enter, v", "open the full text — command, output, diff"),
-        ("1 2 3", "feed · files · stats"),
+        ("1 … 9", "feed files stats plan agents mirror tree errors fleet"),
         ("w", "cycle the right pane"),
         ("f", "filter feed: all, tools, bash, files, talk"),
         ("$", "subscription view or API-equivalent cost"),
@@ -768,6 +1190,16 @@ fn draw_help(f: &mut Frame, area: Rect) {
         ("i", "interrupt the selected session (sends Escape)"),
         ("a", "attach to it full-screen; detach to come back"),
         ("n", "start a new session in a tmux session"),
+        ("A", "resume a non-tmux session inside tmux (steerable)"),
+        ("", ""),
+        ("y / d", "accept or decline what a session is asking"),
+        ("p", "jump to the next session waiting on you"),
+        ("ctrl+digit", "pick another option on that prompt"),
+        ("m", "passthrough: every key goes to the session"),
+        ("Q", "queue a message to send when it next goes idle"),
+        ("/", "search every loaded session"),
+        ("L", "launch the fleet from ~/.config/nyfe-scope/fleet.json"),
+        ("N", "desktop notifications on or off"),
         ("l", "only sessions with a running process"),
         ("tab", "switch pane focus"),
         ("r", "rescan for new sessions"),

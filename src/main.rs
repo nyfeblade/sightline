@@ -2,6 +2,8 @@
 
 mod app;
 mod control;
+mod git;
+mod notify;
 mod event;
 mod pricing;
 mod registry;
@@ -21,8 +23,11 @@ const USAGE: &str = "\
 nyfe scope — live view of what Claude Code is doing
 
 usage: scope [options]
-       scope new [path]        start a Claude Code session in tmux and exit
+       scope new [path] [--model M] [--effort E] [--permission-mode P] [--prompt T]
+                               start a Claude Code session in tmux and exit
        scope send <who> <text> type a line into a running session and submit it
+       scope waiting            list sessions blocked on a prompt
+       scope approve <who> [n]  answer a blocked session (default option 1)
 
 options:
   --since <dur>   include sessions touched within this window (default 24h)
@@ -59,6 +64,43 @@ fn main() -> Result<()> {
     let mut root = app::default_root();
 
     let args: Vec<String> = std::env::args().skip(1).collect();
+
+    if matches!(args.first().map(String::as_str), Some("waiting") | Some("approve")) {
+        let mut app = App::new(
+            app::default_root(),
+            app::default_sessions_dir(),
+            Duration::from_secs(7 * 86_400),
+            true,
+        );
+        app.rescan_panes();
+        app.probe();
+        if args[0] == "waiting" {
+            if app.approvals.is_empty() {
+                println!("nothing is waiting");
+                return Ok(());
+            }
+            for s in &app.sessions {
+                if let Some(a) = app.approvals.get(&s.id) {
+                    println!("{:<24} {}", s.label(), a.question);
+                    for o in &a.options {
+                        println!("{:<24}   {o}", "");
+                    }
+                }
+            }
+            return Ok(());
+        }
+        let who = args.get(1).ok_or_else(|| anyhow::anyhow!("usage: scope approve <who> [n]"))?;
+        let n: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(1);
+        let idx = app
+            .sessions
+            .iter()
+            .position(|s| s.id.starts_with(who.as_str()) || s.label().eq_ignore_ascii_case(who))
+            .ok_or_else(|| anyhow::anyhow!("no live session matching {who}"))?;
+        app.sel = idx;
+        app.answer(n);
+        println!("{}", app.note);
+        return Ok(());
+    }
 
     if args.first().map(String::as_str) == Some("send") {
         let who = args.get(1).ok_or_else(|| anyhow::anyhow!("usage: scope send <who> <text>"))?;
@@ -104,9 +146,25 @@ fn main() -> Result<()> {
     }
 
     if args.first().map(String::as_str) == Some("new") {
-        let path = args.get(1).cloned().unwrap_or_else(|| ".".into());
-        let name = control::new_session(std::path::Path::new(&path), None)
-            .map_err(|e| anyhow::anyhow!(e))?;
+        let path = args
+            .get(1)
+            .filter(|a| !a.starts_with("--"))
+            .cloned()
+            .unwrap_or_else(|| ".".into());
+        let opt = |name: &str| {
+            args.iter()
+                .position(|a| a == name)
+                .and_then(|i| args.get(i + 1))
+                .cloned()
+        };
+        let name = control::new_session_with(
+            std::path::Path::new(&path),
+            opt("--model").as_deref(),
+            opt("--effort").as_deref(),
+            opt("--permission-mode").as_deref(),
+            opt("--prompt").as_deref(),
+        )
+        .map_err(|e| anyhow::anyhow!(e))?;
         println!("started tmux session {name} — attach with: tmux attach -t {name}");
         return Ok(());
     }
@@ -259,6 +317,22 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     }
                     continue;
                 }
+                if app.passthrough {
+                    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+                    if ctrl && key.code == KeyCode::Char(']') {
+                        app.toggle_passthrough();
+                        continue;
+                    }
+                    app.forward_key(key.code, ctrl);
+                    continue;
+                }
+                // ctrl+<digit> answers a prompt with that option
+                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                    if let KeyCode::Char(c @ '1'..='9') = key.code {
+                        app.answer(c as usize - '0' as usize);
+                        continue;
+                    }
+                }
                 if let Some(input) = app.input.as_mut() {
                     match key.code {
                         KeyCode::Esc => app.input = None,
@@ -277,7 +351,13 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                 }
                 let move_right = |app: &mut App, d: isize| match app.view {
                     View::Files => app.move_files(d),
-                    _ => app.move_feed(d),
+                    View::Feed => app.move_feed(d),
+                    View::Plan | View::Stats | View::Mirror => {}
+                    // the simple list views share one cursor
+                    _ => {
+                        let next = (app.list_sel as isize + d).max(0);
+                        app.list_sel = next as usize;
+                    }
                 };
                 match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
@@ -305,10 +385,19 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     }
                     KeyCode::PageDown => move_right(app, 20),
                     KeyCode::PageUp => move_right(app, -20),
-                    KeyCode::Char('1') => app.view = View::Feed,
-                    KeyCode::Char('2') => app.view = View::Files,
-                    KeyCode::Char('3') => app.view = View::Stats,
-                    KeyCode::Char('w') => app.view = app.view.next(),
+                    KeyCode::Char(c @ '1'..='9') => {
+                        let i = c as usize - '1' as usize;
+                        if let Some(v) = app::VIEWS.get(i) {
+                            app.view = *v;
+                            app.list_sel = 0;
+                            app.list_top_right = 0;
+                        }
+                    }
+                    KeyCode::Char('w') => {
+                        app.view = app.view.next();
+                        app.list_sel = 0;
+                        app.list_top_right = 0;
+                    }
                     KeyCode::Char('$') => app.show_cost = !app.show_cost,
                     KeyCode::Char('g') | KeyCode::Home => {
                         app.focus = Focus::Feed;
@@ -352,6 +441,21 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     KeyCode::Char('n') => app.open_input(Prompt::NewSession),
                     KeyCode::Char('i') => app.interrupt(),
                     KeyCode::Char('a') => app.attach(),
+                    KeyCode::Char('A') => app.adopt(),
+                    KeyCode::Char('y') => app.answer(1),
+                    KeyCode::Char('d') => app.answer(0),
+                    KeyCode::Char('p') => app.next_blocked(),
+                    KeyCode::Char('Q') => app.open_input(Prompt::Queue),
+                    KeyCode::Char('/') => app.open_input(Prompt::Search),
+                    KeyCode::Char(']') => app.cycle_hit(1),
+                    KeyCode::Char('[') => app.cycle_hit(-1),
+                    KeyCode::Char('m') => app.toggle_passthrough(),
+                    KeyCode::Char('L') => app.launch_fleet(),
+                    KeyCode::Char('N') => {
+                        app.notify_on = !app.notify_on;
+                        let on = app.notify_on;
+                        app.say(if on { "notifications on" } else { "notifications off" });
+                    }
                     KeyCode::Char('?') => app.help = true,
                     _ => {}
                 }
@@ -373,6 +477,7 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
 
         if last_tick.elapsed() >= tick {
             app.refresh();
+            app.probe();
             if app.last_discover.elapsed() >= Duration::from_secs(3) {
                 app.discover();
             }

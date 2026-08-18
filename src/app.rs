@@ -1,7 +1,9 @@
 //! Discovery, refresh, and view state.
 
 use crate::event::{Ev, Filter};
-use crate::control::{self, Pane};
+use crate::control::{self, Approval, Pane};
+use crate::git;
+use crate::notify;
 use crate::registry;
 use crate::session::{Session, Status};
 use std::collections::HashMap;
@@ -14,6 +16,9 @@ pub enum Prompt {
     Send,
     Broadcast,
     NewSession,
+    /// hold the message until the session goes idle
+    Queue,
+    Search,
 }
 
 pub struct Input {
@@ -34,7 +39,25 @@ pub enum View {
     Feed,
     Files,
     Stats,
+    Plan,
+    Agents,
+    Mirror,
+    Tree,
+    Errors,
+    Fleet,
 }
+
+pub const VIEWS: [View; 9] = [
+    View::Feed,
+    View::Files,
+    View::Stats,
+    View::Plan,
+    View::Agents,
+    View::Mirror,
+    View::Tree,
+    View::Errors,
+    View::Fleet,
+];
 
 impl View {
     pub fn label(self) -> &'static str {
@@ -42,15 +65,18 @@ impl View {
             View::Feed => "feed",
             View::Files => "files",
             View::Stats => "stats",
+            View::Plan => "plan",
+            View::Agents => "agents",
+            View::Mirror => "mirror",
+            View::Tree => "tree",
+            View::Errors => "errors",
+            View::Fleet => "fleet",
         }
     }
 
     pub fn next(self) -> Self {
-        match self {
-            View::Feed => View::Files,
-            View::Files => View::Stats,
-            View::Stats => View::Feed,
-        }
+        let i = VIEWS.iter().position(|v| *v == self).unwrap_or(0);
+        VIEWS[(i + 1) % VIEWS.len()]
     }
 }
 
@@ -85,6 +111,28 @@ pub struct App {
     pub input: Option<Input>,
     /// set when the user asks to hand the terminal over to tmux
     pub attach_to: Option<String>,
+    /// sessions blocked on a numbered prompt, by session id
+    pub approvals: HashMap<String, Approval>,
+    /// last rendered pane text, by session id
+    pub mirror: HashMap<String, String>,
+    /// working-tree state, by session id
+    pub trees: HashMap<String, git::Tree>,
+    /// messages to deliver when a session next goes idle
+    pub queues: HashMap<String, Vec<String>>,
+    /// every key goes to the selected session while this is on
+    pub passthrough: bool,
+    pub notify_on: bool,
+    pub search: String,
+    /// (session index, event slot) for the current search
+    pub hits: Vec<(usize, usize)>,
+    pub hit_sel: usize,
+    /// generic cursor for the simple list views
+    pub list_sel: usize,
+    /// scroll offset for the right-hand list views
+    pub list_top_right: usize,
+    prev_status: HashMap<String, String>,
+    prev_errors: HashMap<String, usize>,
+    last_probe: Instant,
 }
 
 impl App {
@@ -116,6 +164,20 @@ impl App {
             steer: HashMap::new(),
             input: None,
             attach_to: None,
+            approvals: HashMap::new(),
+            mirror: HashMap::new(),
+            trees: HashMap::new(),
+            queues: HashMap::new(),
+            passthrough: false,
+            notify_on: notify::available(),
+            search: String::new(),
+            hits: Vec::new(),
+            hit_sel: 0,
+            list_sel: 0,
+            list_top_right: 0,
+            prev_status: HashMap::new(),
+            prev_errors: HashMap::new(),
+            last_probe: Instant::now() - Duration::from_secs(10),
         };
         app.discover();
         app.refresh();
@@ -163,19 +225,36 @@ impl App {
     /// file is gone.
     pub fn discover(&mut self) {
         let want = self.candidates();
+        let live = registry::scan(&self.sessions_dir);
         let keep: Vec<String> = want
             .iter()
             .filter_map(|p| p.file_stem().and_then(|s| s.to_str()).map(str::to_string))
             .collect();
-        self.sessions.retain(|s| keep.contains(&s.id));
+        self.sessions.retain(|s| keep.contains(&s.id) || live.contains_key(&s.id));
         for path in want {
             let id = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
-            if self.sessions.iter().any(|s| s.id == id) {
-                continue;
+            match self.sessions.iter().position(|s| s.id == id) {
+                // A session that was known only from the registry has started
+                // writing: swap the placeholder for the real thing.
+                Some(i) if self.sessions[i].placeholder => {
+                    let mut sess = Session::open(path);
+                    sess.backfill();
+                    self.sessions[i] = sess;
+                    continue;
+                }
+                Some(_) => continue,
+                None => {}
             }
             let mut sess = Session::open(path);
             sess.backfill();
             self.sessions.push(sess);
+        }
+        // Live sessions that have not written anything yet are still real, and
+        // they can already be blocked on a prompt.
+        for (id, l) in live {
+            if !self.sessions.iter().any(|s| s.id == id) {
+                self.sessions.push(Session::pending(id, l));
+            }
         }
         self.rescan_panes();
         self.last_discover = Instant::now();
@@ -222,6 +301,11 @@ impl App {
             },
             Prompt::Broadcast => format!("send to all {} steerable", self.steer.len()),
             Prompt::NewSession => "new session in".into(),
+            Prompt::Queue => match self.current() {
+                Some(s) => format!("queue for {} (sends when idle)", s.label()),
+                None => return,
+            },
+            Prompt::Search => "search all sessions".into(),
         };
         let buf = if kind == Prompt::NewSession {
             self.current()
@@ -262,6 +346,23 @@ impl App {
                     }
                 }
                 self.say(format!("sent to {ok} sessions"));
+            }
+            Prompt::Queue => {
+                let Some(id) = self.current().map(|s| s.id.clone()) else { return };
+                if !self.steer.contains_key(&id) {
+                    self.say("that session is not running in tmux");
+                    return;
+                }
+                let q = self.queues.entry(id).or_default();
+                q.push(text);
+                let n = q.len();
+                self.say(format!("queued — {n} waiting for the next idle moment"));
+            }
+            Prompt::Search => {
+                self.run_search(&text);
+                if !self.hits.is_empty() {
+                    self.goto_hit();
+                }
             }
             Prompt::NewSession => {
                 let path = PathBuf::from(if text.is_empty() { ".".into() } else { text });
@@ -306,14 +407,20 @@ impl App {
             s.registry_seen = seen;
         }
         let selected_id = self.sessions.get(self.sel).map(|s| s.id.clone());
+        let blocked: Vec<String> = self.approvals.keys().cloned().collect();
         self.sessions.sort_by(|a, b| {
-            fn rank(s: &Session) -> u8 {
-                match s.status() {
-                    Status::Running(_) | Status::Working => 0,
-                    Status::Waiting => 1,
-                    Status::Ended => 2,
+            let rank = |s: &Session| -> u8 {
+                // A session waiting on a person outranks everything: it is the
+                // only state that cannot make progress on its own.
+                if blocked.contains(&s.id) {
+                    return 0;
                 }
-            }
+                match s.status() {
+                    Status::Running(_) | Status::Working => 1,
+                    Status::Waiting => 2,
+                    Status::Ended => 3,
+                }
+            };
             rank(a)
                 .cmp(&rank(b))
                 .then(b.last.cmp(&a.last))
@@ -326,6 +433,335 @@ impl App {
         if self.sel >= self.sessions.len() {
             self.sel = self.sessions.len().saturating_sub(1);
         }
+    }
+
+    /// Read every steerable session's pane: feeds the mirror, spots sessions
+    /// blocked on a prompt, and drives notifications. One tmux call per
+    /// steerable session, at most once a second.
+    pub fn probe(&mut self) {
+        if self.last_probe.elapsed() < Duration::from_millis(900) {
+            return;
+        }
+        self.last_probe = Instant::now();
+        let targets: Vec<(String, String, String)> = self
+            .sessions
+            .iter()
+            .filter_map(|s| {
+                let p = self.steer.get(&s.id)?;
+                Some((s.id.clone(), p.id.clone(), s.label()))
+            })
+            .collect();
+        for (id, pane, label) in targets {
+            let Some(text) = control::capture(&pane) else { continue };
+            let approval = control::pending_approval(&text);
+            self.mirror.insert(id.clone(), text);
+            match approval {
+                Some(a) => {
+                    let fresh = self.approvals.get(&id) != Some(&a);
+                    if fresh {
+                        self.notify(&format!("{label} needs a decision"), &a.question);
+                    }
+                    self.approvals.insert(id, a);
+                }
+                None => {
+                    self.approvals.remove(&id);
+                }
+            }
+        }
+        self.watch_transitions();
+        self.drain_queues();
+    }
+
+    /// Notify on the two moments worth interrupting someone for: a session
+    /// that stopped and wants input, and a session that hit an error.
+    fn watch_transitions(&mut self) {
+        let snapshot: Vec<(String, String, String, usize)> = self
+            .sessions
+            .iter()
+            .map(|s| {
+                let state = match s.status() {
+                    Status::Running(_) | Status::Working => "working",
+                    Status::Waiting => "waiting",
+                    Status::Ended => "ended",
+                };
+                (s.id.clone(), s.label(), state.to_string(), s.errors)
+            })
+            .collect();
+        for (id, label, state, errors) in snapshot {
+            if let Some(prev) = self.prev_status.get(&id) {
+                if prev == "working" && state == "waiting" {
+                    self.notify(&format!("{label} is waiting on you"), "turn finished");
+                }
+            }
+            if let Some(prev) = self.prev_errors.get(&id) {
+                if errors > *prev {
+                    self.notify(&format!("{label} hit an error"), "check the errors pane");
+                }
+            }
+            self.prev_status.insert(id.clone(), state);
+            self.prev_errors.insert(id, errors);
+        }
+    }
+
+    /// Deliver queued messages to sessions that have gone idle.
+    fn drain_queues(&mut self) {
+        let ready: Vec<String> = self
+            .sessions
+            .iter()
+            .filter(|s| matches!(s.status(), Status::Waiting))
+            .map(|s| s.id.clone())
+            .filter(|id| {
+                !self.approvals.contains_key(id)
+                    && self.queues.get(id).map(|q| !q.is_empty()).unwrap_or(false)
+            })
+            .collect();
+        for id in ready {
+            let Some(pane) = self.steer.get(&id).cloned() else { continue };
+            let Some(queue) = self.queues.get_mut(&id) else { continue };
+            let msg = queue.remove(0);
+            let left = queue.len();
+            match control::send_text(&pane.id, &msg) {
+                Ok(()) => self.say(format!("delivered a queued message ({left} left)")),
+                Err(e) => self.say(e),
+            }
+        }
+    }
+
+    pub fn notify(&mut self, title: &str, body: &str) {
+        self.say(format!("{title} — {body}"));
+        if self.notify_on {
+            notify::send(title, body);
+        }
+    }
+
+    /// The prompt to show and answer: the selected session if it is blocked,
+    /// otherwise the first blocked session, so an answer is always one key away
+    /// no matter where the cursor is.
+    pub fn approval(&self) -> Option<(&Session, &Approval)> {
+        if let Some(s) = self.current() {
+            if let Some(a) = self.approvals.get(&s.id) {
+                return Some((s, a));
+            }
+        }
+        self.sessions
+            .iter()
+            .find_map(|s| self.approvals.get(&s.id).map(|a| (s, a)))
+    }
+
+    fn answer_target(&self) -> Option<String> {
+        self.approval().map(|(s, _)| s.id.clone())
+    }
+
+    /// Answer the prompt shown in the strip with option `n`; 0 means escape.
+    pub fn answer(&mut self, n: usize) {
+        let Some(id) = self.answer_target() else {
+            self.say("nothing is waiting on you");
+            return;
+        };
+        let Some(pane) = self.steer.get(&id).cloned() else {
+            self.say("that session is not running in tmux");
+            return;
+        };
+        let outcome = if n == 0 {
+            control::send_key(&pane.id, "Escape")
+        } else {
+            control::answer(&pane.id, n)
+        };
+        match outcome {
+            Ok(()) => {
+                self.approvals.remove(&id);
+                self.say(if n == 0 { "declined".into() } else { format!("answered {n}") });
+            }
+            Err(e) => self.say(e),
+        }
+    }
+
+    /// Continue a non-tmux session inside tmux so it becomes steerable.
+    pub fn adopt(&mut self) {
+        let Some(s) = self.current() else { return };
+        if self.steer.contains_key(&s.id) {
+            self.say("already steerable");
+            return;
+        }
+        let cwd = if s.cwd.is_empty() { ".".to_string() } else { s.cwd.clone() };
+        let id = s.id.clone();
+        match control::adopt(PathBuf::from(cwd).as_path(), &id) {
+            Ok(name) => {
+                self.say(format!("resumed in tmux as {name} — close the old window"));
+                self.discover();
+            }
+            Err(e) => self.say(e),
+        }
+    }
+
+    /// Move the selection to the next session that is blocked on a question.
+    pub fn next_blocked(&mut self) {
+        if self.approvals.is_empty() {
+            self.say("nothing is waiting on you");
+            return;
+        }
+        let n = self.sessions.len();
+        for step in 1..=n {
+            let i = (self.sel + step) % n;
+            if self.approvals.contains_key(&self.sessions[i].id) {
+                self.sel = i;
+                return;
+            }
+        }
+    }
+
+    pub fn cycle_hit(&mut self, delta: isize) {
+        if self.hits.is_empty() {
+            return;
+        }
+        let n = self.hits.len() as isize;
+        self.hit_sel = (((self.hit_sel as isize + delta) % n + n) % n) as usize;
+        self.goto_hit();
+        let (i, total) = (self.hit_sel + 1, self.hits.len());
+        self.say(format!("match {i} of {total}"));
+    }
+
+    pub fn toggle_passthrough(&mut self) {
+        if !self.passthrough {
+            let Some(id) = self.current().map(|s| s.id.clone()) else { return };
+            if !self.steer.contains_key(&id) {
+                self.say("that session is not running in tmux");
+                return;
+            }
+            self.view = View::Mirror;
+            self.passthrough = true;
+            self.say("passthrough on — ctrl+] to stop");
+        } else {
+            self.passthrough = false;
+            self.say("passthrough off");
+        }
+    }
+
+    /// Forward one key press to the selected session.
+    pub fn forward_key(&mut self, code: crossterm::event::KeyCode, ctrl: bool) {
+        let Some(id) = self.current().map(|s| s.id.clone()) else { return };
+        let Some(pane) = self.steer.get(&id).cloned() else { return };
+        if let Some(key) = control::tmux_key(code, ctrl) {
+            let _ = control::forward(&pane.id, &key);
+        }
+        // Show the result immediately rather than waiting for the next probe.
+        if let Some(text) = control::capture(&pane.id) {
+            self.mirror.insert(id, text);
+        }
+    }
+
+    pub fn tree(&mut self) -> Option<&git::Tree> {
+        let s = self.current()?;
+        let (id, cwd) = (s.id.clone(), s.cwd.clone());
+        if cwd.is_empty() {
+            return None;
+        }
+        let stale = self
+            .trees
+            .get(&id)
+            .map(|t| t.fetched.elapsed() > Duration::from_secs(5))
+            .unwrap_or(true);
+        if stale {
+            if let Some(t) = git::status(PathBuf::from(&cwd).as_path()) {
+                self.trees.insert(id.clone(), t);
+            }
+        }
+        self.trees.get(&id)
+    }
+
+    /// Substring search across every loaded session.
+    pub fn run_search(&mut self, needle: &str) {
+        self.search = needle.to_string();
+        self.hits.clear();
+        self.hit_sel = 0;
+        if needle.is_empty() {
+            return;
+        }
+        let n = needle.to_lowercase();
+        for (si, s) in self.sessions.iter().enumerate() {
+            for (ei, ev) in s.events.iter().enumerate() {
+                if ev.head.to_lowercase().contains(&n) || ev.body.to_lowercase().contains(&n) {
+                    self.hits.push((si, ei));
+                }
+            }
+        }
+        let count = self.hits.len();
+        self.say(format!("{count} matches for \"{needle}\""));
+    }
+
+    /// Jump to the selected search hit.
+    pub fn goto_hit(&mut self) {
+        let Some((si, ei)) = self.hits.get(self.hit_sel).copied() else { return };
+        self.sel = si;
+        self.view = View::Feed;
+        self.filter = Filter::All;
+        self.follow = false;
+        let slot = self
+            .feed_indices()
+            .iter()
+            .position(|i| *i == ei)
+            .unwrap_or(0);
+        self.feed_sel = slot;
+        self.feed_top = slot.saturating_sub(5);
+    }
+
+    /// One timeline across every session, newest last.
+    pub fn fleet(&self) -> Vec<(usize, usize)> {
+        let mut all: Vec<(usize, usize, chrono::DateTime<chrono::Utc>)> = Vec::new();
+        for (si, s) in self.sessions.iter().enumerate() {
+            let start = s.events.len().saturating_sub(400);
+            for (ei, ev) in s.events.iter().enumerate().skip(start) {
+                if let Some(ts) = ev.ts {
+                    all.push((si, ei, ts));
+                }
+            }
+        }
+        all.sort_by_key(|(_, _, ts)| *ts);
+        all.into_iter().map(|(si, ei, _)| (si, ei)).collect()
+    }
+
+    /// Events that failed, for the errors pane.
+    pub fn errors(&self) -> Vec<usize> {
+        match self.current() {
+            Some(s) => s
+                .events
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| !e.ok)
+                .map(|(i, _)| i)
+                .collect(),
+            None => Vec::new(),
+        }
+    }
+
+    /// Launch every session described in ~/.config/nyfe-scope/fleet.json.
+    pub fn launch_fleet(&mut self) {
+        let path = fleet_path();
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            self.say(format!("no fleet file at {}", path.display()));
+            return;
+        };
+        let Ok(items) = serde_json::from_str::<Vec<serde_json::Value>>(&text) else {
+            self.say("fleet file is not a JSON array");
+            return;
+        };
+        let mut started = 0;
+        for item in items {
+            let g = |k: &str| item.get(k).and_then(|v| v.as_str()).map(str::to_string);
+            let cwd = g("cwd").unwrap_or_else(|| ".".into());
+            match control::new_session_with(
+                PathBuf::from(cwd).as_path(),
+                g("model").as_deref(),
+                g("effort").as_deref(),
+                g("permission_mode").as_deref(),
+                g("prompt").as_deref(),
+            ) {
+                Ok(_) => started += 1,
+                Err(e) => self.say(e),
+            }
+        }
+        self.say(format!("launched {started} sessions"));
+        self.discover();
     }
 
     pub fn current(&self) -> Option<&Session> {
@@ -456,6 +892,16 @@ pub fn config_dir() -> PathBuf {
         Ok(dir) if !dir.is_empty() => PathBuf::from(dir),
         _ => home().join(".claude"),
     }
+}
+
+/// Where the fleet template lives.
+pub fn fleet_path() -> PathBuf {
+    if let Ok(dir) = std::env::var("XDG_CONFIG_HOME") {
+        if !dir.is_empty() {
+            return PathBuf::from(dir).join("nyfe-scope").join("fleet.json");
+        }
+    }
+    home().join(".config").join("nyfe-scope").join("fleet.json")
 }
 
 pub fn default_root() -> PathBuf {
