@@ -118,6 +118,8 @@ pub struct Session {
     pub placeholder: bool,
     /// whether this Claude Code install keeps a live-session registry
     pub registry_seen: bool,
+    /// running in a tmux pane, even if the registry has not caught up
+    pub in_pane: bool,
     skip_first: bool,
     /// requests per model id
     pub models: BTreeMap<String, usize>,
@@ -176,6 +178,7 @@ impl Session {
             partial: false,
             placeholder: false,
             registry_seen: true,
+            in_pane: false,
             skip_first: false,
             models: BTreeMap::new(),
             todos: Vec::new(),
@@ -669,6 +672,8 @@ impl Session {
                 }
             }
             Some(_) => Status::Waiting,
+            // Adopted a moment ago: alive in its pane, not yet in the registry.
+            None if self.in_pane => Status::Waiting,
             // No registry entry. With a registry present that means the process
             // is gone; without one (older Claude Code) fall back to recency.
             None if self.registry_seen => Status::Ended,

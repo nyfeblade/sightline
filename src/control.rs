@@ -526,3 +526,16 @@ pub fn end_process(pid: i64) -> bool {
         .map(|s| s.success())
         .unwrap_or(false)
 }
+
+/// Session ids that a pane is currently resuming. A session adopted into tmux
+/// is running even when the registry has not caught up, and this is the only
+/// evidence of that until it does.
+pub fn adopted_ids(panes: &[Pane]) -> std::collections::HashSet<String> {
+    panes
+        .iter()
+        .filter_map(|p| {
+            let rest = p.cmd.split("--resume").nth(1)?;
+            rest.split_whitespace().next().map(str::to_string)
+        })
+        .collect()
+}

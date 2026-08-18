@@ -227,6 +227,7 @@ impl App {
     /// live session however old.
     fn candidates(&self) -> Vec<PathBuf> {
         let live = registry::scan(&self.sessions_dir);
+        let adopted = control::adopted_ids(&control::panes());
         let cutoff = SystemTime::now() - self.since;
         let mut out = Vec::new();
         let Ok(projects) = std::fs::read_dir(&self.root) else {
@@ -242,7 +243,7 @@ impl App {
                     continue;
                 }
                 let id = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-                let is_live = live.contains_key(id);
+                let is_live = live.contains_key(id) || adopted.contains(id);
                 if self.only_live && !is_live {
                     continue;
                 }
@@ -314,10 +315,17 @@ impl App {
             return;
         }
         for s in &self.sessions {
-            if let Some(live) = &s.live {
-                if let Some(p) = control::pane_for(live.pid, &panes) {
-                    self.steer.insert(s.id.clone(), p);
-                }
+            // Normally: the registry gives a pid, and the pid leads to a pane.
+            let by_pid = s
+                .live
+                .as_ref()
+                .and_then(|live| control::pane_for(live.pid, &panes));
+            // Just after adopting there is no registry entry yet — the new
+            // process only registers once it is used — but the pane was started
+            // as `claude --resume <id>`, which identifies it just as well.
+            let pane = by_pid.or_else(|| control::adopted_pane(&s.id, &panes));
+            if let Some(p) = pane {
+                self.steer.insert(s.id.clone(), p);
             }
         }
     }
@@ -340,7 +348,7 @@ impl App {
     /// Why a session cannot be typed into, and what to do about it.
     fn not_steerable(&self) -> String {
         match self.current() {
-            Some(s) if s.live.is_none() => "that session has ended".into(),
+            Some(s) if s.live.is_none() && !s.in_pane => "that session has ended".into(),
             Some(s) if !self.tmux_ok => {
                 format!("{} is not in tmux, and tmux is not installed", s.label())
             }
@@ -545,6 +553,9 @@ impl App {
             s.pump();
             s.live = live.get(&s.id).cloned();
             s.registry_seen = seen;
+            // A session running in a pane is running, whether or not it has
+            // got round to registering itself.
+            s.in_pane = self.steer.contains_key(&s.id);
         }
         let selected_id = self.sessions.get(self.sel).map(|s| s.id.clone());
         let blocked: Vec<String> = self.approvals.keys().cloned().collect();
@@ -772,7 +783,8 @@ impl App {
         let Some(s) = self.current() else {
             return Vec::new();
         };
-        let (id, live, cwd) = (s.id.clone(), s.live.is_some(), s.cwd.clone());
+        let (id, cwd) = (s.id.clone(), s.cwd.clone());
+        let live = s.live.is_some() || s.in_pane;
         let name = s.label();
         let steerable = self.steer.contains_key(&id);
         let blocked = self.approvals.contains_key(&id);
