@@ -38,14 +38,7 @@ pub struct Totals {
     pub requests: usize,
 }
 
-impl Totals {
-    /// Every input token ever billed, cache reads included. Useful for cost,
-    /// misleading as a size — a long session re-reads its cached prefix each
-    /// turn, so this runs to hundreds of millions.
-    pub fn billed_input(&self) -> u64 {
-        self.input + self.cache_read + self.cache_write
-    }
-}
+impl Totals {}
 
 /// One item from the session's plan.
 #[derive(Clone)]
@@ -231,10 +224,6 @@ impl Session {
             }
         }
         n
-    }
-
-    pub fn bytes_read(&self) -> u64 {
-        self.tail.offset()
     }
 
     fn push(&mut self, ev: Ev) {

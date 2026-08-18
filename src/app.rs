@@ -23,6 +23,7 @@ pub enum Prompt {
     Isolate,
     Merge,
     Discard,
+    Stop,
 }
 
 /// A session working in its own checkout.
@@ -32,6 +33,15 @@ pub struct Iso {
     pub branch: String,
     pub base: String,
     pub ahead: usize,
+}
+
+/// One thing you can do to the selected session, with the reason when you
+/// cannot. Shown in the actions menu so nothing has to be memorised.
+pub struct Action {
+    pub key: char,
+    pub label: &'static str,
+    pub enabled: bool,
+    pub why: String,
 }
 
 pub struct Input {
@@ -134,6 +144,9 @@ pub struct App {
     pub queues: HashMap<String, Vec<String>>,
     /// every key goes to the selected session while this is on
     pub passthrough: bool,
+    /// the actions menu for the selected session
+    pub menu: bool,
+    pub menu_sel: usize,
     pub notify_on: bool,
     pub search: String,
     /// (session index, event slot) for the current search
@@ -183,6 +196,8 @@ impl App {
             trees: HashMap::new(),
             queues: HashMap::new(),
             passthrough: false,
+            menu: false,
+            menu_sel: 0,
             notify_on: notify::available(),
             search: String::new(),
             hits: Vec::new(),
@@ -307,6 +322,18 @@ impl App {
         self.steer.get(id)
     }
 
+    /// Why a session cannot be typed into, and what to do about it.
+    fn not_steerable(&self) -> String {
+        match self.current() {
+            Some(s) if s.live.is_none() => "that session has ended".into(),
+            Some(s) if !self.tmux_ok => {
+                format!("{} is not in tmux, and tmux is not installed", s.label())
+            }
+            Some(s) => format!("{} is not in tmux — press A to adopt it", s.label()),
+            None => "no session selected".into(),
+        }
+    }
+
     pub fn say(&mut self, msg: impl Into<String>) {
         self.note = msg.into();
         self.note_at = Instant::now();
@@ -337,6 +364,10 @@ impl App {
                     self.say("this session is not in a worktree");
                     return;
                 }
+            },
+            Prompt::Stop => match self.current() {
+                Some(s) => format!("stop {}? type yes", s.label()),
+                None => return,
             },
             Prompt::Discard => match self.isolation() {
                 Some(i) => format!("remove the {} worktree? type yes", i.branch),
@@ -379,7 +410,7 @@ impl App {
                         Ok(()) => self.say(format!("sent to {}", p.session)),
                         Err(e) => self.say(e),
                     },
-                    None => self.say("that session is not running in tmux"),
+                    None => self.say(self.not_steerable()),
                 }
             }
             Prompt::Broadcast => {
@@ -397,7 +428,8 @@ impl App {
                     return;
                 };
                 if !self.steer.contains_key(&id) {
-                    self.say("that session is not running in tmux");
+                    let msg = self.not_steerable();
+                    self.say(msg);
                     return;
                 }
                 let q = self.queues.entry(id).or_default();
@@ -411,6 +443,13 @@ impl App {
                     self.merge_isolated();
                 } else {
                     self.say("not merged");
+                }
+            }
+            Prompt::Stop => {
+                if text.eq_ignore_ascii_case("yes") || text.eq_ignore_ascii_case("y") {
+                    self.stop_session();
+                } else {
+                    self.say("left running");
                 }
             }
             Prompt::Discard => {
@@ -459,7 +498,10 @@ impl App {
         };
         match self.pane_of(&id) {
             Some(p) => self.attach_to = Some(p.session.clone()),
-            None => self.say("that session is not running in tmux"),
+            None => {
+                let msg = self.not_steerable();
+                self.say(msg);
+            }
         }
     }
 
@@ -629,7 +671,8 @@ impl App {
             return;
         };
         let Some(pane) = self.steer.get(&id).cloned() else {
-            self.say("that session is not running in tmux");
+            let msg = self.not_steerable();
+            self.say(msg);
             return;
         };
         let outcome = if n == 0 {
@@ -672,6 +715,142 @@ impl App {
         }
     }
 
+    /// What can be done to the selected session right now. Disabled entries
+    /// carry the reason, which is usually also the fix.
+    pub fn actions(&mut self) -> Vec<Action> {
+        let Some(s) = self.current() else {
+            return Vec::new();
+        };
+        let (id, live, cwd) = (s.id.clone(), s.live.is_some(), s.cwd.clone());
+        let name = s.label();
+        let steerable = self.steer.contains_key(&id);
+        let blocked = self.approvals.contains_key(&id);
+        let iso = self.isolation();
+        let in_repo =
+            !cwd.is_empty() && crate::git::repo_root(std::path::Path::new(&cwd)).is_some();
+
+        let why_steer = if !live {
+            "this session has ended".to_string()
+        } else {
+            format!("{name} is not running in tmux — adopt it first")
+        };
+        let mut v = vec![
+            Action {
+                key: 'y',
+                label: "Answer what it is asking",
+                enabled: blocked,
+                why: "it is not waiting on you".into(),
+            },
+            Action {
+                key: 's',
+                label: "Send it a message",
+                enabled: steerable,
+                why: why_steer.clone(),
+            },
+            Action {
+                key: 'Q',
+                label: "Queue a message for when it is idle",
+                enabled: steerable,
+                why: why_steer.clone(),
+            },
+            Action {
+                key: 'i',
+                label: "Interrupt what it is doing",
+                enabled: steerable,
+                why: why_steer.clone(),
+            },
+            Action {
+                key: 'm',
+                label: "Type into it directly",
+                enabled: steerable,
+                why: why_steer.clone(),
+            },
+            Action {
+                key: 'a',
+                label: "Attach full-screen",
+                enabled: steerable,
+                why: why_steer,
+            },
+            Action {
+                key: 'A',
+                label: "Adopt into tmux so it can be steered",
+                enabled: live && !steerable,
+                why: if steerable {
+                    "already steerable".into()
+                } else {
+                    "this session has ended".into()
+                },
+            },
+        ];
+        if iso.is_some() {
+            v.push(Action {
+                key: 'M',
+                label: "Merge its branch back",
+                enabled: true,
+                why: String::new(),
+            });
+            v.push(Action {
+                key: 'X',
+                label: "Remove its checkout",
+                enabled: true,
+                why: String::new(),
+            });
+        }
+        v.push(Action {
+            key: 'K',
+            label: "Stop this session",
+            enabled: steerable,
+            why: "only sessions scope can reach in tmux can be stopped".into(),
+        });
+        v.push(Action {
+            key: 'n',
+            label: "Start a new session",
+            enabled: self.tmux_ok,
+            why: "tmux is not installed".into(),
+        });
+        v.push(Action {
+            key: 'W',
+            label: "Start one isolated on its own branch",
+            enabled: self.tmux_ok && in_repo,
+            why: if self.tmux_ok {
+                "this session is not inside a git repository".into()
+            } else {
+                "tmux is not installed".into()
+            },
+        });
+        v
+    }
+
+    /// Run an action by its key, reporting why when it cannot run.
+    pub fn run_action(&mut self, key: char) {
+        let action = self.actions().into_iter().find(|a| a.key == key);
+        if let Some(a) = &action {
+            if !a.enabled {
+                let why = a.why.clone();
+                self.say(why);
+                return;
+            }
+        }
+        self.menu = false;
+        match key {
+            'y' => self.answer(1),
+            'd' => self.answer(0),
+            's' => self.open_input(Prompt::Send),
+            'Q' => self.open_input(Prompt::Queue),
+            'i' => self.interrupt(),
+            'm' => self.toggle_passthrough(),
+            'a' => self.attach(),
+            'A' => self.adopt(),
+            'M' => self.open_input(Prompt::Merge),
+            'X' => self.open_input(Prompt::Discard),
+            'K' => self.open_input(Prompt::Stop),
+            'n' => self.open_input(Prompt::NewSession),
+            'W' => self.open_input(Prompt::Isolate),
+            'L' => self.launch_fleet(),
+            _ => {}
+        }
+    }
+
     /// Move the selection to the next session that is blocked on a question.
     pub fn next_blocked(&mut self) {
         if self.approvals.is_empty() {
@@ -705,7 +884,8 @@ impl App {
                 return;
             };
             if !self.steer.contains_key(&id) {
-                self.say("that session is not running in tmux");
+                let msg = self.not_steerable();
+                self.say(msg);
                 return;
             }
             self.view = View::Mirror;
@@ -821,6 +1001,26 @@ impl App {
         };
         match git::remove_worktree(&repo, &cwd) {
             Ok(()) => self.say(format!("removed the {branch} worktree")),
+            Err(e) => self.say(e),
+        }
+    }
+
+    /// End a session by closing the tmux session it runs in. Claude Code exits
+    /// with it; the transcript stays on disk.
+    pub fn stop_session(&mut self) {
+        let Some(id) = self.current().map(|s| s.id.clone()) else {
+            return;
+        };
+        let Some(pane) = self.steer.get(&id).cloned() else {
+            let msg = self.not_steerable();
+            self.say(msg);
+            return;
+        };
+        match control::kill_session(&pane.session) {
+            Ok(()) => {
+                self.say(format!("stopped {}", pane.session));
+                self.discover();
+            }
             Err(e) => self.say(e),
         }
     }

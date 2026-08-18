@@ -55,10 +55,17 @@ scope waiting              # what is blocked, and what it is asking
 scope approve api-7c       # answer it (option 1 by default)
 ```
 
-## Steering
+## Managing sessions
+
+Press `enter` on a session and scope shows everything you can do to it, with the
+reason spelled out for anything it cannot do — so nothing has to be memorised
+and no key is a dead end.
+
+![actions](docs/actions.png)
 
 Sessions running in a tmux pane can be driven exactly as you would drive them by
-hand, which keeps slash commands, permission prompts and plan mode working:
+hand, which keeps slash commands, permission prompts and plan mode working. The
+same actions have direct keys once you know them:
 
 | key | does |
 |---|---|
@@ -71,6 +78,7 @@ hand, which keeps slash commands, permission prompts and plan mode working:
 | `n` `A` | start a new session · adopt a running one into tmux |
 | `W` | start one on its own branch in its own checkout |
 | `M` `X` | merge that branch back · remove the checkout |
+| `K` | stop the session |
 | `L` | launch a whole fleet from a config file |
 
 Sessions started outside tmux are fully visible but cannot be typed into; they
@@ -124,7 +132,8 @@ Nine panes on keys `1` to `9`.
 
 ![stats](docs/stats.png)
 
-Other keys: `j`/`k` select a session, `J`/`K` move in the right pane, `f`
+Other keys: `enter` on a session opens its actions, `j`/`k` select a session,
+`J`/`K` move in the right pane, `f`
 filters the feed, `g`/`G` jump to top or bottom, `l` hides sessions with no
 running process, `r` rescans, `$` switches between the subscription view and an
 API-equivalent cost estimate, `?` shows help, `q` quits — `esc` only dismisses.

@@ -84,14 +84,6 @@ pub fn diff(cwd: &Path, path: &str) -> Option<String> {
     })
 }
 
-/// A checkout of one repository at one branch. Each isolated session gets its
-/// own, so parallel agents never fight over the same working tree.
-#[derive(Clone, Debug)]
-pub struct Worktree {
-    pub path: String,
-    pub branch: String,
-}
-
 pub fn repo_root(cwd: &Path) -> Option<std::path::PathBuf> {
     let out = git(cwd, &["rev-parse", "--show-toplevel"])?;
     let trimmed = out.trim();
@@ -138,25 +130,6 @@ pub fn create_worktree(repo: &Path, branch: &str) -> Result<std::path::PathBuf, 
     git(repo, &["worktree", "add", "-b", &branch, &dir_str])
         .ok_or_else(|| format!("git worktree add failed for {branch} (does the branch exist?)"))?;
     Ok(dir)
-}
-
-pub fn list_worktrees(repo: &Path) -> Vec<Worktree> {
-    let Some(out) = git(repo, &["worktree", "list", "--porcelain"]) else {
-        return Vec::new();
-    };
-    let mut trees = Vec::new();
-    let mut path = String::new();
-    for line in out.lines() {
-        if let Some(p) = line.strip_prefix("worktree ") {
-            path = p.to_string();
-        } else if let Some(b) = line.strip_prefix("branch ") {
-            trees.push(Worktree {
-                path: std::mem::take(&mut path),
-                branch: b.trim_start_matches("refs/heads/").to_string(),
-            });
-        }
-    }
-    trees
 }
 
 /// Commits on this branch that the base does not have, and vice versa.

@@ -374,6 +374,24 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     }
                     continue;
                 }
+                if app.menu {
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => app.menu = false,
+                        KeyCode::Down | KeyCode::Char('j') => app.menu_sel += 1,
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            app.menu_sel = app.menu_sel.saturating_sub(1)
+                        }
+                        KeyCode::Enter => {
+                            let key = app.actions().get(app.menu_sel).map(|a| a.key);
+                            if let Some(k) = key {
+                                app.run_action(k);
+                            }
+                        }
+                        KeyCode::Char(c) => app.run_action(c),
+                        _ => {}
+                    }
+                    continue;
+                }
                 if app.help {
                     app.help = false;
                     continue;
@@ -446,6 +464,14 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                         app.feed_top = 0;
                     }
                     KeyCode::Char('G') | KeyCode::End => app.follow = true,
+                    KeyCode::Enter if app.focus == Focus::Sessions => {
+                        app.menu = true;
+                        app.menu_sel = 0;
+                    }
+                    KeyCode::Char('.') => {
+                        app.menu = true;
+                        app.menu_sel = 0;
+                    }
                     KeyCode::Enter | KeyCode::Char('v') => {
                         let has = match app.view {
                             View::Files => !app.file_keys().is_empty(),
@@ -470,7 +496,7 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                         app.discover();
                         app.refresh();
                     }
-                    KeyCode::Char('s') => app.open_input(Prompt::Send),
+                    KeyCode::Char('s') => app.run_action('s'),
                     KeyCode::Char('b') => {
                         if app.steer.is_empty() {
                             app.say("no sessions are running in tmux");
@@ -478,22 +504,23 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                             app.open_input(Prompt::Broadcast);
                         }
                     }
-                    KeyCode::Char('n') => app.open_input(Prompt::NewSession),
-                    KeyCode::Char('i') => app.interrupt(),
-                    KeyCode::Char('a') => app.attach(),
-                    KeyCode::Char('A') => app.adopt(),
+                    KeyCode::Char('n') => app.run_action('n'),
+                    KeyCode::Char('i') => app.run_action('i'),
+                    KeyCode::Char('a') => app.run_action('a'),
+                    KeyCode::Char('A') => app.run_action('A'),
                     KeyCode::Char('y') => app.answer(1),
                     KeyCode::Char('d') => app.answer(0),
+
                     KeyCode::Char('p') => app.next_blocked(),
-                    KeyCode::Char('Q') => app.open_input(Prompt::Queue),
+                    KeyCode::Char('Q') => app.run_action('Q'),
                     KeyCode::Char('/') => app.open_input(Prompt::Search),
                     KeyCode::Char(']') => app.cycle_hit(1),
                     KeyCode::Char('[') => app.cycle_hit(-1),
-                    KeyCode::Char('m') => app.toggle_passthrough(),
+                    KeyCode::Char('m') => app.run_action('m'),
                     KeyCode::Char('L') => app.launch_fleet(),
-                    KeyCode::Char('W') => app.open_input(Prompt::Isolate),
-                    KeyCode::Char('M') => app.open_input(Prompt::Merge),
-                    KeyCode::Char('X') => app.open_input(Prompt::Discard),
+                    KeyCode::Char('W') => app.run_action('W'),
+                    KeyCode::Char('M') => app.run_action('M'),
+                    KeyCode::Char('X') => app.run_action('X'),
                     KeyCode::Char('N') => {
                         app.notify_on = !app.notify_on;
                         let on = app.notify_on;

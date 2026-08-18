@@ -13,13 +13,11 @@ use std::process::Command;
 #[derive(Clone, Debug)]
 pub struct Live {
     pub pid: i64,
-    pub session_id: String,
     pub cwd: String,
     pub name: String,
     pub status: String,
     pub kind: String,
     pub version: String,
-    pub status_updated_ms: i64,
 }
 
 /// Decides whether a pid from the registry is still the process that wrote it.
@@ -107,16 +105,11 @@ pub fn scan(dir: &Path) -> HashMap<String, Live> {
             session_id.clone(),
             Live {
                 pid,
-                session_id,
                 cwd: s("cwd"),
                 name: s("name"),
                 status: s("status"),
                 kind: s("kind"),
                 version: s("version"),
-                status_updated_ms: v
-                    .get("statusUpdatedAt")
-                    .and_then(Value::as_i64)
-                    .unwrap_or(0),
             },
         );
     }

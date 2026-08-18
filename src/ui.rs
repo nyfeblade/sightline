@@ -196,7 +196,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     .areas(area);
     let [left, right] =
         Layout::horizontal([Constraint::Length(42), Constraint::Min(20)]).areas(body);
-    let [list, card] = Layout::vertical([Constraint::Min(6), Constraint::Length(9)]).areas(left);
+    let [list, card] = Layout::vertical([Constraint::Min(6), Constraint::Length(10)]).areas(left);
 
     draw_header(f, app, header);
     draw_sessions(f, app, list);
@@ -217,6 +217,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
     draw_footer(f, app, footer);
 
+    if app.menu {
+        draw_menu(f, app, area);
+    }
     if app.popup {
         draw_popup(f, app, area);
     }
@@ -394,6 +397,16 @@ fn draw_card(f: &mut Frame, app: &App, area: Rect) {
         Some(l) => format!("{} · pid {}", l.kind, l.pid),
         None => "closed".to_string(),
     };
+    let control = if app.steer.contains_key(&s.id) {
+        match app.steer.get(&s.id) {
+            Some(p) => format!("steerable · tmux {}", p.session),
+            None => "steerable".into(),
+        }
+    } else if s.live.is_some() {
+        "watch only · A adopts it".into()
+    } else {
+        "ended".into()
+    };
     let money = if app.show_cost {
         format!("~${:.2} if API", t.cost)
     } else {
@@ -427,6 +440,7 @@ fn draw_card(f: &mut Frame, app: &App, area: Rect) {
             format!("out {} · ctx {}", fmt_tokens(t.output), fmt_tokens(t.ctx)),
         ),
         field("usage", money),
+        field("control", control),
     ];
     f.render_widget(Paragraph::new(lines), inner);
 }
@@ -1218,11 +1232,9 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
             return;
         }
     }
-    let keys = if app.tmux_ok {
-        "  j/k session · 1…9 panes · s send · y/d answer · i interrupt · a attach · / search · ? help"
-    } else {
-        "  j/k session · 1…9 panes · enter open · f filter · / search · $ cost · ? help"
-    };
+    // Deliberately short: everything else is one keypress away behind the
+    // actions menu and the help sheet.
+    let keys = "  j/k session · enter actions · 1…9 panes · / search · ? help";
     let state = format!(
         "{} · {} · {} ",
         app.view.label(),
@@ -1287,6 +1299,71 @@ fn event_popup(ev: &Ev) -> (String, Color, String) {
         None => ev.body.clone(),
     };
     (tag, color, body)
+}
+
+/// Everything you can do to the selected session, in one place, with the
+/// reason spelled out when you cannot do it.
+fn draw_menu(f: &mut Frame, app: &mut App, area: Rect) {
+    let name = app.current().map(|s| s.label()).unwrap_or_default();
+    let items = app.actions();
+    if items.is_empty() {
+        return;
+    }
+    if app.menu_sel >= items.len() {
+        app.menu_sel = 0;
+    }
+    let height = (items.len() + 4).min(area.height as usize) as u16;
+    let width = 62.min(area.width.saturating_sub(4)) as u16;
+    let rect = Rect {
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    };
+    f.render_widget(Clear, rect);
+    let block = Block::bordered()
+        .border_style(Style::new().fg(pal().gold))
+        .style(Style::new().bg(pal().midnight))
+        .title(Span::styled(
+            format!(" {name} "),
+            Style::new().fg(pal().gold).add_modifier(Modifier::BOLD),
+        ))
+        .title_bottom(Span::styled(" enter to run · esc to close ", muted()));
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, a) in items.iter().enumerate() {
+        let selected = i == app.menu_sel;
+        let key_style = if a.enabled {
+            Style::new().fg(pal().gold)
+        } else {
+            Style::new().fg(pal().muted)
+        };
+        let label_style = if !a.enabled {
+            Style::new().fg(pal().muted)
+        } else if selected {
+            Style::new().fg(pal().text).add_modifier(Modifier::BOLD)
+        } else {
+            Style::new().fg(pal().body)
+        };
+        lines.push(Line::from(vec![
+            cursor(selected),
+            Span::styled(format!(" {}  ", a.key), key_style),
+            Span::styled(a.label.to_string(), label_style),
+        ]));
+    }
+    // The reason for the highlighted entry, so the fix is always on screen.
+    if let Some(a) = items.get(app.menu_sel) {
+        lines.push(Line::from(""));
+        let note = if a.enabled {
+            String::new()
+        } else {
+            format!(" {}", a.why)
+        };
+        lines.push(Line::from(Span::styled(note, Style::new().fg(pal().bad))));
+    }
+    f.render_widget(Paragraph::new(lines), inner);
 }
 
 fn draw_popup(f: &mut Frame, app: &App, area: Rect) {
@@ -1371,7 +1448,7 @@ fn draw_popup(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_help(f: &mut Frame, area: Rect) {
-    let rect = centered(area, 64, 70);
+    let rect = centered(area, 70, 86);
     f.render_widget(Clear, rect);
     let block = Block::bordered()
         .border_style(Style::new().fg(pal().gold))
@@ -1379,49 +1456,54 @@ fn draw_help(f: &mut Frame, area: Rect) {
         .title(Span::styled(" keys ", Style::new().fg(pal().gold)));
     let inner = block.inner(rect);
     f.render_widget(block, rect);
-    let rows = [
-        ("j / k, ↓ ↑", "select session, or move in the focused pane"),
-        ("J / K", "move in the right pane from anywhere"),
-        ("g / G", "top / bottom (G resumes following)"),
-        ("enter, v", "open the full text — command, output, diff"),
+    let rows: [(&str, &str); 27] = [
+        ("  look", ""),
+        ("j / k, ↓ ↑", "select a session"),
         (
             "1 … 9",
             "feed files stats plan agents mirror tree errors fleet",
         ),
-        ("w", "cycle the right pane"),
-        ("f", "filter feed: all, tools, bash, files, talk"),
-        ("$", "subscription view or API-equivalent cost"),
-        ("s", "type a message into the selected session"),
-        ("b", "send one message to every steerable session"),
-        ("i", "interrupt the selected session (sends Escape)"),
-        ("a", "attach to it full-screen; detach to come back"),
-        ("n", "start a new session in a tmux session"),
-        ("A", "resume a non-tmux session inside tmux (steerable)"),
+        (
+            "J / K",
+            "move in the right pane · enter opens the full text",
+        ),
+        ("g / G", "top / bottom — G resumes following"),
+        ("f", "filter the feed: all, tools, bash, files, talk"),
+        ("/ then ] [", "search every session · step the matches"),
         ("", ""),
+        ("  manage", ""),
+        ("enter", "actions for the selected session"),
         ("y / d", "accept or decline what a session is asking"),
-        ("p", "jump to the next session waiting on you"),
         ("ctrl+digit", "pick another option on that prompt"),
-        ("m", "passthrough: every key goes to the session"),
-        ("Q", "queue a message to send when it next goes idle"),
-        ("/", "search every loaded session"),
-        ("L", "launch the fleet from ~/.config/nyfe-scope/fleet.json"),
-        ("W", "new session on its own branch and checkout"),
+        ("p", "jump to the next session waiting on you"),
+        (
+            "s / Q",
+            "send a message · queue it for the next idle moment",
+        ),
+        ("i / m", "interrupt · type into it directly, ctrl+] to stop"),
+        ("a / A", "attach full-screen · adopt into tmux"),
+        ("n / W", "new session · new isolated session on a branch"),
         ("M / X", "merge that branch back · remove the checkout"),
+        ("b / L", "broadcast a message · launch the fleet file"),
+        ("", ""),
+        ("  other", ""),
+        ("$", "subscription view or API-equivalent cost"),
         ("N", "desktop notifications on or off"),
-        ("l", "only sessions with a running process"),
+        ("l / r", "only live sessions · rescan"),
         ("tab", "switch pane focus"),
-        ("r", "rescan for new sessions"),
         ("q", "quit — esc only dismisses"),
         ("", ""),
-        ("⌁", "session runs in tmux, so it can be steered"),
-        ("", ""),
-        ("cost", "an estimate of what these tokens would cost"),
-        ("", "at API rates — a subscription is not billed"),
-        ("", "this way. * marks an unknown model rate."),
     ];
     let lines: Vec<Line> = rows
         .iter()
         .map(|(k, d)| {
+            if d.is_empty() {
+                // section heading
+                return Line::from(Span::styled(
+                    (*k).to_string(),
+                    Style::new().fg(pal().gold).add_modifier(Modifier::BOLD),
+                ));
+            }
             Line::from(vec![
                 Span::styled(format!(" {k:<12}"), Style::new().fg(pal().gold)),
                 Span::styled((*d).to_string(), Style::new().fg(pal().text)),

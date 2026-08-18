@@ -23,10 +23,6 @@ impl Tail {
         }
     }
 
-    pub fn offset(&self) -> u64 {
-        self.offset
-    }
-
     /// Start reading from `offset` instead of the top. Used to cap how much
     /// history a very large transcript replays at startup.
     pub fn skip_to(&mut self, offset: u64) {
