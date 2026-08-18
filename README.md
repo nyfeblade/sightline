@@ -76,7 +76,7 @@ same actions have direct keys once you know them:
 | `Q` | queue a message; it is delivered when that session next goes idle |
 | `i` | interrupt (sends Escape) |
 | `m` | passthrough — every key goes to the session until `ctrl+]` |
-| `a` | show it full-screen — `ctrl+b` then `d` comes back |
+| `a` `O` | show it full-screen · open it in its own window |
 | `n` `A` | start a new session · adopt a running one into tmux |
 | `W` | start one on its own branch in its own checkout |
 | `M` `X` | merge that branch back · remove the checkout |
@@ -90,7 +90,9 @@ tmux it switches the client instead of nesting, and `ctrl+b L` returns.
 Sessions started outside tmux are fully visible but cannot be typed into; they
 are marked, so it is always clear which is which. `A` moves one: it resumes the
 same conversation inside tmux and closes the original window, so the
-conversation continues in one place rather than two. It asks first.
+conversation continues in one place rather than two. It asks first, and it
+immediately reopens the session in a fresh window, so nothing you were watching
+disappears — `O` does the same for any session on demand.
 
 ### Isolated sessions
 

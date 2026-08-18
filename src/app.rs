@@ -859,10 +859,15 @@ impl App {
                 // Two clients on one conversation would both append to the same
                 // transcript, so the original goes as soon as the copy is up.
                 let closed = original.map(control::end_process).unwrap_or(false);
-                self.say(if closed {
-                    format!("moved into tmux as {name} — the old window has closed")
-                } else {
-                    format!("resumed in tmux as {name} — close the old window yourself")
+                // The window that just closed was probably the one being
+                // watched, so put an equivalent one straight back.
+                let reopened = control::open_window(&name).is_ok();
+                self.say(match (closed, reopened) {
+                    (true, true) => format!("{name} moved into tmux — reopened in a new window"),
+                    (true, false) => {
+                        format!("{name} moved into tmux — attach with: tmux attach -t {name}")
+                    }
+                    (false, _) => format!("resumed as {name} — close the old window yourself"),
                 });
                 self.discover();
             }
@@ -885,6 +890,11 @@ impl App {
         let in_repo =
             !cwd.is_empty() && crate::git::repo_root(std::path::Path::new(&cwd)).is_some();
 
+        let why_steer_open = if !live {
+            "this session has ended".to_string()
+        } else {
+            format!("{name} is not running in tmux — adopt it first")
+        };
         let why_steer = if !live {
             "this session has ended".to_string()
         } else {
@@ -959,6 +969,12 @@ impl App {
             why: "only sessions scope can reach in tmux can be stopped".into(),
         });
         v.push(Action {
+            key: 'O',
+            label: "Open it in its own window",
+            enabled: steerable,
+            why: why_steer_open,
+        });
+        v.push(Action {
             key: 'P',
             label: "Tidy up finished scope sessions",
             enabled: self.tmux_ok,
@@ -1006,6 +1022,21 @@ impl App {
             'M' => self.open_input(Prompt::Merge),
             'X' => self.open_input(Prompt::Discard),
             'K' => self.open_input(Prompt::Stop),
+            'O' => {
+                let Some(id) = self.current().map(|s| s.id.clone()) else {
+                    return;
+                };
+                match self.steer.get(&id).cloned() {
+                    Some(p) => match control::open_window(&p.session) {
+                        Ok(term) => self.say(format!("opened {} in {term}", p.session)),
+                        Err(e) => self.say(e),
+                    },
+                    None => {
+                        let msg = self.not_steerable();
+                        self.say(msg);
+                    }
+                }
+            }
             'P' => {
                 let n = control::prune();
                 self.say(format!(
