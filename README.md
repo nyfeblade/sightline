@@ -53,6 +53,8 @@ From a script, without opening the UI:
 ```sh
 scope waiting              # what is blocked, and what it is asking
 scope approve api-7c       # answer it (option 1 by default)
+scope adopt nyfe-32        # resume a session in tmux so it can be steered
+scope prune                # close scope sessions whose process has exited
 ```
 
 ## Managing sessions
@@ -78,7 +80,7 @@ same actions have direct keys once you know them:
 | `n` `A` | start a new session · adopt a running one into tmux |
 | `W` | start one on its own branch in its own checkout |
 | `M` `X` | merge that branch back · remove the checkout |
-| `K` | stop the session |
+| `K` `P` | stop the session · tidy up finished scope sessions |
 | `L` | launch a whole fleet from a config file |
 
 Sessions started outside tmux are fully visible but cannot be typed into; they

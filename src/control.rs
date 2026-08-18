@@ -17,6 +17,26 @@ pub struct Pane {
     pub id: String,
     pub pid: i64,
     pub session: String,
+    /// the command the pane was started with, e.g. "claude --resume <id>"
+    pub cmd: String,
+}
+
+/// The next free scope-N. Counting up from the highest existing name rather
+/// than searching a fixed range means the pool can never be "full" — an early
+/// version scanned scope-1..scope-98 and refused to start anything once those
+/// were taken.
+fn next_name_after(existing: &str) -> String {
+    let highest = existing
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("scope-"))
+        .filter_map(|n| n.parse::<u64>().ok())
+        .max()
+        .unwrap_or(0);
+    format!("scope-{}", highest + 1)
+}
+
+fn next_name() -> String {
+    next_name_after(&tmux(&["list-sessions", "-F", "#{session_name}"]).unwrap_or_default())
 }
 
 fn tmux(args: &[&str]) -> Option<String> {
@@ -47,7 +67,7 @@ pub fn panes() -> Vec<Pane> {
         "list-panes",
         "-a",
         "-F",
-        "#{pane_id}\t#{pane_pid}\t#{session_name}",
+        "#{pane_id}\t#{pane_pid}\t#{session_name}\t#{pane_start_command}",
     ]) else {
         return Vec::new();
     };
@@ -57,7 +77,13 @@ pub fn panes() -> Vec<Pane> {
             let id = f.next()?.to_string();
             let pid = f.next()?.parse().ok()?;
             let session = f.next()?.to_string();
-            Some(Pane { id, pid, session })
+            let cmd = f.next().unwrap_or("").to_string();
+            Some(Pane {
+                id,
+                pid,
+                session,
+                cmd,
+            })
         })
         .collect()
 }
@@ -115,11 +141,7 @@ pub fn new_session(cwd: &Path, prompt: Option<&str>) -> Result<String, String> {
     if !available() {
         return Err("tmux is not installed".into());
     }
-    let existing = tmux(&["list-sessions", "-F", "#{session_name}"]).unwrap_or_default();
-    let name = (1..99)
-        .map(|n| format!("scope-{n}"))
-        .find(|n| !existing.lines().any(|l| l == n))
-        .ok_or("no free session name")?;
+    let name = next_name();
     let cwd = cwd.to_string_lossy().to_string();
     tmux(&["new-session", "-d", "-s", &name, "-c", &cwd, "--", "claude"])
         .ok_or("tmux could not start the session (is claude on PATH?)")?;
@@ -274,6 +296,36 @@ pub fn forward(pane: &str, key: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Close scope-created tmux sessions that no longer have a live process in
+/// them. Returns how many were removed.
+pub fn prune() -> usize {
+    let Some(out) = tmux(&[
+        "list-panes",
+        "-a",
+        "-F",
+        "#{session_name}\t#{pane_dead}\t#{pane_current_command}",
+    ]) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for line in out.lines() {
+        let mut f = line.split('\t');
+        let (Some(session), Some(dead), cmd) = (f.next(), f.next(), f.next().unwrap_or("")) else {
+            continue;
+        };
+        if !session.starts_with("scope-") {
+            continue;
+        }
+        let idle_shell = matches!(cmd, "bash" | "zsh" | "sh" | "fish");
+        if dead == "1" || idle_shell {
+            if kill_session(session).is_ok() {
+                removed += 1;
+            }
+        }
+    }
+    removed
+}
+
 pub fn kill_session(session: &str) -> Result<(), String> {
     tmux(&["kill-session", "-t", session])
         .ok_or_else(|| "tmux kill-session failed".into())
@@ -291,11 +343,7 @@ pub fn new_session_with(
     if !available() {
         return Err("tmux is not installed".into());
     }
-    let existing = tmux(&["list-sessions", "-F", "#{session_name}"]).unwrap_or_default();
-    let name = (1..99)
-        .map(|n| format!("scope-{n}"))
-        .find(|n| !existing.lines().any(|l| l == n))
-        .ok_or("no free session name")?;
+    let name = next_name();
     let mut cmd = vec!["claude".to_string()];
     if let Some(m) = model {
         cmd.push("--model".into());
@@ -323,15 +371,21 @@ pub fn new_session_with(
 /// Continue an existing conversation inside tmux, so a session that was
 /// started in a plain terminal becomes steerable. The original window is left
 /// alone; the user closes it once the adopted one is up.
+/// A pane already running `claude --resume <session_id>`, if there is one.
+pub fn adopted_pane(session_id: &str, panes: &[Pane]) -> Option<Pane> {
+    panes.iter().find(|p| p.cmd.contains(session_id)).cloned()
+}
+
 pub fn adopt(cwd: &Path, session_id: &str) -> Result<String, String> {
     if !available() {
         return Err("tmux is not installed".into());
     }
-    let existing = tmux(&["list-sessions", "-F", "#{session_name}"]).unwrap_or_default();
-    let name = (1..99)
-        .map(|n| format!("scope-{n}"))
-        .find(|n| !existing.lines().any(|l| l == n))
-        .ok_or("no free session name")?;
+    // Adopting the same conversation twice would leave two clients on one
+    // session, so return the existing one instead of starting another.
+    if let Some(p) = adopted_pane(session_id, &panes()) {
+        return Ok(p.session);
+    }
+    let name = next_name();
     let cwd = cwd.to_string_lossy().to_string();
     tmux(&[
         "new-session",
@@ -378,6 +432,40 @@ mod tests {
    2. change the import
    3. run the tests
  ❯ ";
+
+    #[test]
+    fn names_never_run_out() {
+        assert_eq!(next_name_after(""), "scope-1");
+        assert_eq!(next_name_after("work\nnotes"), "scope-1");
+        assert_eq!(next_name_after("scope-1\nscope-2"), "scope-3");
+        // The pool used to stop at 98; it must simply keep counting.
+        let many: String = (1..=98).map(|n| format!("scope-{n}\n")).collect();
+        assert_eq!(next_name_after(&many), "scope-99");
+        assert_eq!(next_name_after("scope-7\nother\nscope-3"), "scope-8");
+    }
+
+    #[test]
+    fn spots_a_conversation_already_adopted() {
+        let panes = vec![
+            Pane {
+                id: "%1".into(),
+                pid: 1,
+                session: "scope-1".into(),
+                cmd: "claude --resume abc-123".into(),
+            },
+            Pane {
+                id: "%2".into(),
+                pid: 2,
+                session: "work".into(),
+                cmd: "bash".into(),
+            },
+        ];
+        assert_eq!(
+            adopted_pane("abc-123", &panes).map(|p| p.session),
+            Some("scope-1".into())
+        );
+        assert!(adopted_pane("def-456", &panes).is_none());
+    }
 
     #[test]
     fn reads_a_trust_prompt() {

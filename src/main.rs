@@ -27,6 +27,8 @@ usage: scope [options]
                  [--prompt T] [--worktree BRANCH]
                                start a Claude Code session in tmux and exit
        scope send <who> <text> type a line into a running session and submit it
+       scope adopt <who>        resume a session in tmux so it can be steered
+       scope prune              close scope sessions whose process has exited
        scope waiting            list sessions blocked on a prompt
        scope approve <who> [n]  answer a blocked session (default option 1)
 
@@ -69,9 +71,18 @@ fn main() -> Result<()> {
 
     let args: Vec<String> = std::env::args().skip(1).collect();
 
+    if args.first().map(String::as_str) == Some("prune") {
+        let n = control::prune();
+        println!(
+            "closed {n} finished session{}",
+            if n == 1 { "" } else { "s" }
+        );
+        return Ok(());
+    }
+
     if matches!(
         args.first().map(String::as_str),
-        Some("waiting") | Some("approve")
+        Some("waiting") | Some("approve") | Some("adopt")
     ) {
         let mut app = App::new(
             app::default_root(),
@@ -94,6 +105,20 @@ fn main() -> Result<()> {
                     }
                 }
             }
+            return Ok(());
+        }
+        if args[0] == "adopt" {
+            let who = args
+                .get(1)
+                .ok_or_else(|| anyhow::anyhow!("usage: scope adopt <who>"))?;
+            let idx = app
+                .sessions
+                .iter()
+                .position(|s| s.id.starts_with(who.as_str()) || s.label().eq_ignore_ascii_case(who))
+                .ok_or_else(|| anyhow::anyhow!("no live session matching {who}"))?;
+            app.sel = idx;
+            app.adopt();
+            println!("{}", app.note);
             return Ok(());
         }
         let who = args

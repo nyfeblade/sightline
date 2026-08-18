@@ -156,6 +156,8 @@ pub struct App {
     pub list_sel: usize,
     /// scroll offset for the right-hand list views
     pub list_top_right: usize,
+    /// when a session was last started or adopted, to absorb key repeats
+    last_spawn: Instant,
     iso_cache: HashMap<String, (Instant, Option<Iso>)>,
     prev_status: HashMap<String, String>,
     prev_errors: HashMap<String, usize>,
@@ -204,6 +206,7 @@ impl App {
             hit_sel: 0,
             list_sel: 0,
             list_top_right: 0,
+            last_spawn: Instant::now() - Duration::from_secs(60),
             iso_cache: HashMap::new(),
             prev_status: HashMap::new(),
             prev_errors: HashMap::new(),
@@ -320,6 +323,17 @@ impl App {
 
     pub fn pane_of(&self, id: &str) -> Option<&Pane> {
         self.steer.get(id)
+    }
+
+    /// Starting a session takes a second or two, and a held-down key must never
+    /// turn into a second, third, hundredth process.
+    fn may_spawn(&mut self) -> bool {
+        if self.last_spawn.elapsed() < Duration::from_secs(3) {
+            self.say("still starting the last one — give it a moment");
+            return false;
+        }
+        self.last_spawn = Instant::now();
+        true
     }
 
     /// Why a session cannot be typed into, and what to do about it.
@@ -466,6 +480,9 @@ impl App {
                 }
             }
             Prompt::NewSession => {
+                if !self.may_spawn() {
+                    return;
+                }
                 let path = PathBuf::from(if text.is_empty() { ".".into() } else { text });
                 match control::new_session(&path, None) {
                     Ok(name) => {
@@ -695,17 +712,28 @@ impl App {
 
     /// Continue a non-tmux session inside tmux so it becomes steerable.
     pub fn adopt(&mut self) {
-        let Some(s) = self.current() else { return };
-        if self.steer.contains_key(&s.id) {
+        let Some((id, cwd)) = self.current().map(|s| {
+            let cwd = if s.cwd.is_empty() {
+                ".".to_string()
+            } else {
+                s.cwd.clone()
+            };
+            (s.id.clone(), cwd)
+        }) else {
+            return;
+        };
+        if self.steer.contains_key(&id) {
             self.say("already steerable");
             return;
         }
-        let cwd = if s.cwd.is_empty() {
-            ".".to_string()
-        } else {
-            s.cwd.clone()
-        };
-        let id = s.id.clone();
+        if let Some(p) = control::adopted_pane(&id, &control::panes()) {
+            let name = p.session;
+            self.say(format!("already adopted as {name} — press a to attach"));
+            return;
+        }
+        if !self.may_spawn() {
+            return;
+        }
         match control::adopt(PathBuf::from(cwd).as_path(), &id) {
             Ok(name) => {
                 self.say(format!("resumed in tmux as {name} — close the old window"));
@@ -803,6 +831,12 @@ impl App {
             why: "only sessions scope can reach in tmux can be stopped".into(),
         });
         v.push(Action {
+            key: 'P',
+            label: "Tidy up finished scope sessions",
+            enabled: self.tmux_ok,
+            why: "tmux is not installed".into(),
+        });
+        v.push(Action {
             key: 'n',
             label: "Start a new session",
             enabled: self.tmux_ok,
@@ -844,6 +878,14 @@ impl App {
             'M' => self.open_input(Prompt::Merge),
             'X' => self.open_input(Prompt::Discard),
             'K' => self.open_input(Prompt::Stop),
+            'P' => {
+                let n = control::prune();
+                self.say(format!(
+                    "closed {n} finished session{}",
+                    if n == 1 { "" } else { "s" }
+                ));
+                self.discover();
+            }
             'n' => self.open_input(Prompt::NewSession),
             'W' => self.open_input(Prompt::Isolate),
             'L' => self.launch_fleet(),
@@ -951,6 +993,9 @@ impl App {
     /// Start a session on a fresh branch in its own checkout, so several
     /// sessions can work the same repository without colliding.
     pub fn isolate(&mut self, branch: &str) {
+        if !self.may_spawn() {
+            return;
+        }
         let branch = if branch.trim().is_empty() {
             "scope-work"
         } else {
@@ -1113,6 +1158,9 @@ impl App {
 
     /// Launch every session described in ~/.config/nyfe-scope/fleet.json.
     pub fn launch_fleet(&mut self) {
+        if !self.may_spawn() {
+            return;
+        }
         let path = fleet_path();
         let Ok(text) = std::fs::read_to_string(&path) else {
             self.say(format!("no fleet file at {}", path.display()));
