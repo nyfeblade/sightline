@@ -23,7 +23,8 @@ const USAGE: &str = "\
 nyfe scope — live view of what Claude Code is doing
 
 usage: scope [options]
-       scope new [path] [--model M] [--effort E] [--permission-mode P] [--prompt T]
+       scope new [path] [--model M] [--effort E] [--permission-mode P]
+                 [--prompt T] [--worktree BRANCH]
                                start a Claude Code session in tmux and exit
        scope send <who> <text> type a line into a running session and submit it
        scope waiting            list sessions blocked on a prompt
@@ -156,6 +157,17 @@ fn main() -> Result<()> {
                 .position(|a| a == name)
                 .and_then(|i| args.get(i + 1))
                 .cloned()
+        };
+        // --worktree runs the session in its own branch and checkout.
+        let path = match opt("--worktree") {
+            Some(branch) => {
+                let repo = git::repo_root(std::path::Path::new(&path))
+                    .ok_or_else(|| anyhow::anyhow!("{path} is not inside a git repository"))?;
+                let dir = git::create_worktree(&repo, &branch).map_err(|e| anyhow::anyhow!(e))?;
+                println!("worktree {} on branch {branch}", dir.display());
+                dir.to_string_lossy().into_owned()
+            }
+            None => path,
         };
         let name = control::new_session_with(
             std::path::Path::new(&path),
@@ -451,6 +463,9 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     KeyCode::Char('[') => app.cycle_hit(-1),
                     KeyCode::Char('m') => app.toggle_passthrough(),
                     KeyCode::Char('L') => app.launch_fleet(),
+                    KeyCode::Char('W') => app.open_input(Prompt::Isolate),
+                    KeyCode::Char('M') => app.open_input(Prompt::Merge),
+                    KeyCode::Char('X') => app.open_input(Prompt::Discard),
                     KeyCode::Char('N') => {
                         app.notify_on = !app.notify_on;
                         let on = app.notify_on;

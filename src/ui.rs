@@ -716,6 +716,7 @@ fn draw_tree(f: &mut Frame, app: &mut App, area: Rect) {
     let w = inner.width as usize;
     let (sel, top) = (app.list_sel, app.list_top_right);
     let tree = app.tree().cloned();
+    let iso = app.isolation();
     let lines: Vec<Line> = match &tree {
         Some(t) => {
             let mut v = vec![Line::from(vec![
@@ -726,6 +727,21 @@ fn draw_tree(f: &mut Frame, app: &mut App, area: Rect) {
                     muted(),
                 ),
             ])];
+            if let Some(i) = &iso {
+                v.push(Line::from(vec![
+                    Span::styled("  isolated ", Style::new().fg(pal().gold)),
+                    Span::styled(
+                        format!(
+                            "· {} commit{} ahead of {} · M merge · X remove",
+                            i.ahead,
+                            if i.ahead == 1 { "" } else { "s" },
+                            i.base
+                        ),
+                        muted(),
+                    ),
+                ]));
+            }
+            v.push(Line::from(""));
             v.extend(t.entries.iter().enumerate().map(|(i, e)| {
                 let color = match e.code.trim() {
                     "??" => pal().muted,
@@ -1199,6 +1215,8 @@ fn draw_help(f: &mut Frame, area: Rect) {
         ("Q", "queue a message to send when it next goes idle"),
         ("/", "search every loaded session"),
         ("L", "launch the fleet from ~/.config/nyfe-scope/fleet.json"),
+        ("W", "new session on its own branch and checkout"),
+        ("M / X", "merge that branch back · remove the checkout"),
         ("N", "desktop notifications on or off"),
         ("l", "only sessions with a running process"),
         ("tab", "switch pane focus"),

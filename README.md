@@ -14,6 +14,7 @@ scope new [path]          # start a session in tmux (so it can be steered)
 scope send <who> <text>   # type a line into a running session and submit it
 scope waiting             # list sessions blocked on a prompt
 scope approve <who> [n]   # answer a blocked session, default option 1
+scope new <path> --worktree <branch>   # …on its own branch, in its own checkout
 ```
 
 ## Where the data comes from
@@ -97,6 +98,8 @@ is not installed.
 | `m` | passthrough: every key goes to the session until `ctrl+]` |
 | `a` | attach to it full-screen; detach and you are back in scope |
 | `n` `A` | start a new session · adopt an existing one into tmux |
+| `W` | new session on its own branch and checkout |
+| `M` `X` | merge that branch back · remove the checkout |
 | `L` | launch a fleet from `~/.config/nyfe-scope/fleet.json` |
 | `N` | desktop notifications on or off |
 
@@ -116,6 +119,20 @@ error, or starts waiting on you. `Q` queues a message for a session that is
 mid-turn; scope delivers it the moment that session is free, so you can line up
 the next instruction without watching for the gap.
 
+### Isolated sessions
+
+Several sessions working the same repository will trample each other. `W` starts
+one on a fresh branch in its own checkout — a git worktree — so each session
+edits its own files and commits its own history while the original working tree
+stays untouched. The tree pane then shows how many commits that branch is ahead
+of the base, `M` merges it back with `--no-ff`, and `X` removes the checkout.
+Worktrees live under `~/.local/share/nyfe-scope/worktrees/<repo>/<branch>`, well
+away from the repository, so they never show up as untracked noise.
+
+Merging refuses rather than guesses: if the repository is not on the base branch
+it says so and does nothing, and a conflicting merge reports the conflict and
+leaves the tree for you to resolve.
+
 ### Fleets
 
 `~/.config/nyfe-scope/fleet.json` is a list of sessions to start together:
@@ -123,7 +140,8 @@ the next instruction without watching for the gap.
 ```json
 [
   {"cwd": "~/api", "prompt": "run the test suite and fix what fails", "effort": "high"},
-  {"cwd": "~/web", "model": "claude-opus-5", "permission_mode": "plan"}
+  {"cwd": "~/web", "model": "claude-opus-5", "permission_mode": "plan"},
+  {"cwd": "~/api", "worktree": "refactor-auth", "prompt": "extract the auth middleware"}
 ]
 ```
 

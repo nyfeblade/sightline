@@ -19,6 +19,19 @@ pub enum Prompt {
     /// hold the message until the session goes idle
     Queue,
     Search,
+    /// start a session on its own branch in its own checkout
+    Isolate,
+    Merge,
+    Discard,
+}
+
+/// A session working in its own checkout.
+#[derive(Clone)]
+pub struct Iso {
+    pub repo: PathBuf,
+    pub branch: String,
+    pub base: String,
+    pub ahead: usize,
 }
 
 pub struct Input {
@@ -130,6 +143,7 @@ pub struct App {
     pub list_sel: usize,
     /// scroll offset for the right-hand list views
     pub list_top_right: usize,
+    iso_cache: HashMap<String, (Instant, Option<Iso>)>,
     prev_status: HashMap<String, String>,
     prev_errors: HashMap<String, usize>,
     last_probe: Instant,
@@ -175,6 +189,7 @@ impl App {
             hit_sel: 0,
             list_sel: 0,
             list_top_right: 0,
+            iso_cache: HashMap::new(),
             prev_status: HashMap::new(),
             prev_errors: HashMap::new(),
             last_probe: Instant::now() - Duration::from_secs(10),
@@ -306,8 +321,25 @@ impl App {
                 None => return,
             },
             Prompt::Search => "search all sessions".into(),
+            Prompt::Isolate => "isolated session · branch name".into(),
+            Prompt::Merge => match self.isolation() {
+                Some(i) => format!("merge {} into {}? type yes", i.branch, i.base),
+                None => {
+                    self.say("this session is not in a worktree");
+                    return;
+                }
+            },
+            Prompt::Discard => match self.isolation() {
+                Some(i) => format!("remove the {} worktree? type yes", i.branch),
+                None => {
+                    self.say("this session is not in a worktree");
+                    return;
+                }
+            },
         };
-        let buf = if kind == Prompt::NewSession {
+        let buf = if kind == Prompt::Isolate {
+            String::new()
+        } else if kind == Prompt::NewSession {
             self.current()
                 .map(|s| s.cwd.clone())
                 .filter(|c| !c.is_empty())
@@ -357,6 +389,21 @@ impl App {
                 q.push(text);
                 let n = q.len();
                 self.say(format!("queued — {n} waiting for the next idle moment"));
+            }
+            Prompt::Isolate => self.isolate(&text),
+            Prompt::Merge => {
+                if text.eq_ignore_ascii_case("yes") || text.eq_ignore_ascii_case("y") {
+                    self.merge_isolated();
+                } else {
+                    self.say("not merged");
+                }
+            }
+            Prompt::Discard => {
+                if text.eq_ignore_ascii_case("yes") || text.eq_ignore_ascii_case("y") {
+                    self.discard_isolated();
+                } else {
+                    self.say("kept");
+                }
             }
             Prompt::Search => {
                 self.run_search(&text);
@@ -650,6 +697,83 @@ impl App {
         }
     }
 
+    /// Whether the selected session works in its own checkout, cached — this
+    /// asks git several questions and the answer changes slowly.
+    pub fn isolation(&mut self) -> Option<Iso> {
+        let s = self.current()?;
+        let (id, cwd) = (s.id.clone(), s.cwd.clone());
+        if cwd.is_empty() {
+            return None;
+        }
+        let fresh = self
+            .iso_cache
+            .get(&id)
+            .map(|(at, _)| at.elapsed() < Duration::from_secs(5))
+            .unwrap_or(false);
+        if !fresh {
+            let path = PathBuf::from(&cwd);
+            let found = git::is_worktree(&path)
+                .then(|| {
+                    let repo = git::main_repo(&path)?;
+                    let branch = git::status(&path)?.branch;
+                    let base = git::base_branch(&repo);
+                    let ahead = git::ahead_behind(&path, &base).map(|(a, _)| a).unwrap_or(0);
+                    Some(Iso { repo, branch, base, ahead })
+                })
+                .flatten();
+            self.iso_cache.insert(id.clone(), (Instant::now(), found));
+        }
+        self.iso_cache.get(&id).and_then(|(_, v)| v.clone())
+    }
+
+    /// Start a session on a fresh branch in its own checkout, so several
+    /// sessions can work the same repository without colliding.
+    pub fn isolate(&mut self, branch: &str) {
+        let branch = if branch.trim().is_empty() { "scope-work" } else { branch.trim() };
+        let cwd = self
+            .current()
+            .map(|s| s.cwd.clone())
+            .filter(|c| !c.is_empty())
+            .unwrap_or_else(|| {
+                std::env::current_dir().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default()
+            });
+        let Some(repo) = git::repo_root(PathBuf::from(&cwd).as_path()) else {
+            self.say("not inside a git repository");
+            return;
+        };
+        match git::create_worktree(&repo, branch) {
+            Ok(dir) => match control::new_session_with(&dir, None, None, None, None) {
+                Ok(name) => {
+                    self.say(format!("{name} on branch {branch} in {}", dir.display()));
+                    self.discover();
+                }
+                Err(e) => self.say(e),
+            },
+            Err(e) => self.say(e),
+        }
+    }
+
+    pub fn merge_isolated(&mut self) {
+        let Some(iso) = self.isolation() else { return };
+        let (repo, branch, base) = (iso.repo, iso.branch, iso.base);
+        match git::merge(&repo, &branch, &base) {
+            Ok(out) => {
+                self.say(format!("merged {branch} into {base} · {}", out.lines().next().unwrap_or("")))
+            }
+            Err(e) => self.say(e),
+        }
+    }
+
+    pub fn discard_isolated(&mut self) {
+        let Some(iso) = self.isolation() else { return };
+        let (repo, branch) = (iso.repo, iso.branch);
+        let Some(cwd) = self.current().map(|s| s.cwd.clone()) else { return };
+        match git::remove_worktree(&repo, &cwd) {
+            Ok(()) => self.say(format!("removed the {branch} worktree")),
+            Err(e) => self.say(e),
+        }
+    }
+
     pub fn tree(&mut self) -> Option<&git::Tree> {
         let s = self.current()?;
         let (id, cwd) = (s.id.clone(), s.cwd.clone());
@@ -748,7 +872,19 @@ impl App {
         let mut started = 0;
         for item in items {
             let g = |k: &str| item.get(k).and_then(|v| v.as_str()).map(str::to_string);
-            let cwd = g("cwd").unwrap_or_else(|| ".".into());
+            let mut cwd = g("cwd").unwrap_or_else(|| ".".into());
+            if let Some(branch) = g("worktree") {
+                match git::repo_root(PathBuf::from(&cwd).as_path())
+                    .ok_or_else(|| format!("{cwd} is not a git repository"))
+                    .and_then(|repo| git::create_worktree(&repo, &branch))
+                {
+                    Ok(dir) => cwd = dir.to_string_lossy().into_owned(),
+                    Err(e) => {
+                        self.say(e);
+                        continue;
+                    }
+                }
+            }
             match control::new_session_with(
                 PathBuf::from(cwd).as_path(),
                 g("model").as_deref(),
