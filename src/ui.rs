@@ -215,12 +215,14 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         View::Tree => draw_tree(f, app, right),
         View::Errors => draw_errors(f, app, right),
         View::Fleet => draw_fleet(f, app, right),
+        View::Read => draw_read(f, app, right),
     }
     if blocked {
         draw_approval(f, app, strip);
     }
     draw_footer(f, app, footer);
 
+    app.regions.menu = None;
     if app.menu {
         draw_menu(f, app, area);
     }
@@ -287,6 +289,7 @@ fn draw_sessions(f: &mut Frame, app: &mut App, area: Rect) {
         ));
     let inner = block.inner(area);
     f.render_widget(block, area);
+    app.regions.list = (inner.x, inner.y, inner.width, inner.height);
 
     let rows = (inner.height as usize) / 2;
     if rows == 0 {
@@ -297,6 +300,7 @@ fn draw_sessions(f: &mut Frame, app: &mut App, area: Rect) {
     } else if app.sel >= app.list_top + rows {
         app.list_top = app.sel + 1 - rows;
     }
+    app.regions.list_top = app.list_top;
 
     let w = inner.width as usize;
     let steerable: Vec<bool> = app
@@ -468,6 +472,7 @@ fn pane_legend(name: &str) -> String {
         "tree" => " tree · working directory as it stands ".into(),
         "errors" => " errors · failed tools and API errors ".into(),
         "fleet" => " fleet · every session on one timeline ".into(),
+        "read" => " read · the conversation, without the machinery ".into(),
         other => format!(" {other} "),
     }
 }
@@ -511,6 +516,7 @@ fn draw_feed(f: &mut Frame, app: &mut App, area: Rect) {
     let (block, focused) = pane(app, "feed");
     let inner = block.inner(area);
     f.render_widget(block, area);
+    app.regions.right = (inner.x, inner.y, inner.width, inner.height);
 
     let filtered = app.feed_indices();
     let h = inner.height as usize;
@@ -528,6 +534,7 @@ fn draw_feed(f: &mut Frame, app: &mut App, area: Rect) {
     if filtered.len() < app.feed_top + h {
         app.feed_top = filtered.len().saturating_sub(h);
     }
+    app.regions.right_top = app.feed_top;
 
     let w = inner.width as usize;
     let (top, sel) = (app.feed_top, app.feed_sel);
@@ -547,9 +554,17 @@ fn draw_feed(f: &mut Frame, app: &mut App, area: Rect) {
             })
             .unwrap_or_else(|| "--:--:--".into());
         let (tag, color) = kind_tag(ev);
-        let tag = clip_to(&tag, 14);
-        let pad = " ".repeat(14usize.saturating_sub(tag.chars().count()));
-        let text = clip_to(&ev.head, w.saturating_sub(25));
+        // Narrow panes give their columns to the text rather than to
+        // decoration: the clock goes first, then the tool name is squeezed.
+        let (stamp, tag_w) = match w {
+            0..=54 => (String::new(), 6),
+            55..=79 => (String::new(), 14),
+            _ => (format!("{time} "), 14),
+        };
+        let tag = clip_to(&tag, tag_w);
+        let pad = " ".repeat(tag_w.saturating_sub(tag.chars().count()));
+        let used = 2 + stamp.chars().count() + tag_w;
+        let text = clip_to(&ev.head, w.saturating_sub(used));
         let body_style = if selected {
             Style::new().fg(pal().text).bg(pal().panel)
         } else {
@@ -564,7 +579,7 @@ fn draw_feed(f: &mut Frame, app: &mut App, area: Rect) {
                 if selected { "▌" } else { " " },
                 Style::new().fg(pal().gold),
             ),
-            Span::styled(format!("{time} "), Style::new().fg(pal().muted)),
+            Span::styled(stamp, Style::new().fg(pal().muted)),
             Span::styled(format!("{tag}{pad} "), Style::new().fg(color)),
             Span::styled(text, body_style),
         ]));
@@ -588,6 +603,7 @@ fn draw_files(f: &mut Frame, app: &mut App, area: Rect) {
     let (block, focused) = pane(app, "files");
     let inner = block.inner(area);
     f.render_widget(block, area);
+    app.regions.right = (inner.x, inner.y, inner.width, inner.height);
 
     let keys = app.file_keys();
     let h = inner.height as usize;
@@ -711,10 +727,70 @@ fn cursor(selected: bool) -> Span<'static> {
     )
 }
 
+/// The conversation as prose: what was asked and what was answered, wrapped
+/// and readable, with the tool calls left out.
+fn draw_read(f: &mut Frame, app: &mut App, area: Rect) {
+    let (block, _) = pane(app, "read");
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    app.regions.right = (inner.x, inner.y, inner.width, inner.height);
+    let Some(s) = app.current() else { return };
+
+    let mut lines: Vec<Line> = Vec::new();
+    for ev in &s.events {
+        let who = match ev.kind {
+            Kind::Prompt => "you",
+            Kind::Text => "claude",
+            _ => continue,
+        };
+        let time = ev
+            .ts
+            .map(|t| t.with_timezone(&chrono::Local).format("%H:%M").to_string())
+            .unwrap_or_default();
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!(" {who} "),
+                Style::new()
+                    .fg(if who == "you" { pal().gold } else { pal().text })
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(time, muted()),
+        ]));
+        for para in ev.body.lines() {
+            lines.push(Line::from(Span::styled(
+                format!("   {para}"),
+                Style::new().fg(pal().body),
+            )));
+        }
+        lines.push(Line::from(""));
+    }
+    if lines.is_empty() {
+        lines.push(Line::from(Span::styled(
+            " nothing said yet in this session",
+            muted(),
+        )));
+    }
+    // Scrolling by line, and following the end until the reader scrolls back.
+    let total = lines.len();
+    let h = inner.height as usize;
+    let max_top = total.saturating_sub(h);
+    if app.list_top_right > max_top || app.follow {
+        app.list_top_right = max_top;
+    }
+    let top = app.list_top_right.min(max_top);
+    f.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((top as u16, 0)),
+        inner,
+    );
+}
+
 fn draw_plan(f: &mut Frame, app: &mut App, area: Rect) {
     let (block, _) = pane(app, "plan");
     let inner = block.inner(area);
     f.render_widget(block, area);
+    app.regions.right = (inner.x, inner.y, inner.width, inner.height);
     let Some(s) = app.current() else { return };
     let w = inner.width as usize;
     let mut lines: Vec<Line> = Vec::new();
@@ -778,6 +854,7 @@ fn draw_agents(f: &mut Frame, app: &mut App, area: Rect) {
     let (block, _) = pane(app, "agents");
     let inner = block.inner(area);
     f.render_widget(block, area);
+    app.regions.right = (inner.x, inner.y, inner.width, inner.height);
     let w = inner.width as usize;
     let (sel, top) = (app.list_sel, app.list_top_right);
     let lines: Vec<Line> = match app.current() {
@@ -822,12 +899,14 @@ fn draw_agents(f: &mut Frame, app: &mut App, area: Rect) {
     draw_list(f, inner, lines, &mut sel, &mut top, "no subagents launched");
     app.list_sel = sel;
     app.list_top_right = top;
+    app.regions.right_top = top;
 }
 
 fn draw_mirror(f: &mut Frame, app: &mut App, area: Rect) {
     let (block, _) = pane(app, "mirror");
     let inner = block.inner(area);
     f.render_widget(block, area);
+    app.regions.right = (inner.x, inner.y, inner.width, inner.height);
     let Some(s) = app.current() else { return };
     let text = match app.mirror.get(&s.id) {
         Some(t) => t.clone(),
@@ -855,6 +934,7 @@ fn draw_tree(f: &mut Frame, app: &mut App, area: Rect) {
     let (block, _) = pane(app, "tree");
     let inner = block.inner(area);
     f.render_widget(block, area);
+    app.regions.right = (inner.x, inner.y, inner.width, inner.height);
     let w = inner.width as usize;
     let (sel, top) = (app.list_sel, app.list_top_right);
     let tree = app.tree().cloned();
@@ -916,6 +996,7 @@ fn draw_tree(f: &mut Frame, app: &mut App, area: Rect) {
     );
     app.list_sel = sel;
     app.list_top_right = top;
+    app.regions.right_top = top;
 }
 
 fn event_line(ev: &Ev, w: usize, selected: bool, tag_extra: Option<&str>) -> Line<'static> {
@@ -948,6 +1029,7 @@ fn draw_errors(f: &mut Frame, app: &mut App, area: Rect) {
     let (block, _) = pane(app, "errors");
     let inner = block.inner(area);
     f.render_widget(block, area);
+    app.regions.right = (inner.x, inner.y, inner.width, inner.height);
     let w = inner.width as usize;
     let (sel, top) = (app.list_sel, app.list_top_right);
     let idxs = app.errors();
@@ -971,12 +1053,14 @@ fn draw_errors(f: &mut Frame, app: &mut App, area: Rect) {
     );
     app.list_sel = sel;
     app.list_top_right = top;
+    app.regions.right_top = top;
 }
 
 fn draw_fleet(f: &mut Frame, app: &mut App, area: Rect) {
     let (block, _) = pane(app, "fleet");
     let inner = block.inner(area);
     f.render_widget(block, area);
+    app.regions.right = (inner.x, inner.y, inner.width, inner.height);
     let w = inner.width as usize;
     let (sel, top) = (app.list_sel, app.list_top_right);
     let merged = app.fleet();
@@ -999,6 +1083,7 @@ fn draw_fleet(f: &mut Frame, app: &mut App, area: Rect) {
     draw_list(f, inner, lines, &mut sel, &mut top, "nothing yet");
     app.list_sel = sel;
     app.list_top_right = top;
+    app.regions.right_top = top;
 }
 
 fn bar(n: usize, max: usize, width: usize) -> String {
@@ -1013,6 +1098,7 @@ fn draw_stats(f: &mut Frame, app: &mut App, area: Rect) {
     let (block, _) = pane(app, "stats");
     let inner = block.inner(area);
     f.render_widget(block, area);
+    app.regions.right = (inner.x, inner.y, inner.width, inner.height);
     let Some(s) = app.current() else { return };
     let t = &s.totals;
     let w = inner.width as usize;
@@ -1356,6 +1442,7 @@ fn draw_menu(f: &mut Frame, app: &mut App, area: Rect) {
         .title_bottom(Span::styled(" enter to run · esc to close ", muted()));
     let inner = block.inner(rect);
     f.render_widget(block, rect);
+    app.regions.menu = Some((inner.x, inner.y, inner.width, inner.height));
 
     let mut lines: Vec<Line> = Vec::new();
     for (i, a) in items.iter().enumerate() {
@@ -1481,12 +1568,17 @@ fn draw_help(f: &mut Frame, area: Rect) {
         .title(Span::styled(" keys ", Style::new().fg(pal().gold)));
     let inner = block.inner(rect);
     f.render_widget(block, rect);
-    let rows: [(&str, &str); 29] = [
+    let rows: [(&str, &str); 31] = [
         ("  look", ""),
         ("j / k, ↓ ↑", "select a session"),
         (
-            "1 … 9",
-            "feed files stats plan agents mirror tree errors fleet",
+            "1 … 9, 0",
+            "feed files stats plan agents mirror tree errors",
+        ),
+        ("", "  fleet · 0 reads the conversation on its own"),
+        (
+            "mouse",
+            "click to select, click again to open, wheel scrolls",
         ),
         (
             "J / K",

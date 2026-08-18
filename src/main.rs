@@ -13,7 +13,10 @@ mod ui;
 
 use anyhow::Result;
 use app::{App, Prompt, View};
-use crossterm::event::{self as cevent, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self as cevent, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind,
+    KeyModifiers, MouseButton, MouseEventKind,
+};
 use ratatui::DefaultTerminal;
 use session::Status;
 use std::path::PathBuf;
@@ -39,6 +42,7 @@ options:
   --cost          show API-equivalent cost (default: subscription view)
   --view <name>   start on feed, files, or stats
   --plain         no colour (also honours NO_COLOR)
+  --no-mouse      do not capture the mouse (restores terminal text selection)
   --once          print a one-shot table instead of the live view
   --root <path>   transcript root (default ~/.claude/projects)
   -h, --help      this text
@@ -67,6 +71,7 @@ fn main() -> Result<()> {
     let mut show_cost = false;
     let mut view = View::Feed;
     let mut plain = std::env::var_os("NO_COLOR").is_some();
+    let mut mouse = true;
     let mut root = app::default_root();
 
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -236,6 +241,7 @@ fn main() -> Result<()> {
             "--live" => only_live = true,
             "--cost" => show_cost = true,
             "--plain" => plain = true,
+            "--no-mouse" => mouse = false,
             "--view" => {
                 i += 1;
                 view = match args.get(i).map(String::as_str) {
@@ -284,7 +290,13 @@ fn main() -> Result<()> {
     }
 
     let mut term = ratatui::init();
+    if mouse {
+        let _ = crossterm::execute!(std::io::stdout(), EnableMouseCapture);
+    }
     let result = run(&mut term, &mut app);
+    if mouse {
+        let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
+    }
     ratatui::restore();
     result
 }
@@ -346,7 +358,51 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
 
         let timeout = tick.saturating_sub(last_tick.elapsed());
         if cevent::poll(timeout)? {
-            if let Event::Key(key) = cevent::read()? {
+            let event = cevent::read()?;
+            // Clicks and the wheel, so the thing on screen can just be pointed at.
+            if let Event::Mouse(m) = event {
+                let (col, row) = (m.column, m.row);
+                match m.kind {
+                    MouseEventKind::Down(MouseButton::Left) => {
+                        if let Some(i) = app.regions.menu_at(col, row) {
+                            let keys: Vec<char> = app.actions().iter().map(|a| a.key).collect();
+                            if let Some(k) = keys.get(i) {
+                                app.menu_sel = i;
+                                app.run_action(*k);
+                            }
+                        } else if app.menu {
+                            app.menu = false;
+                        } else if let Some(i) = app.regions.session_at(col, row) {
+                            if i < app.sessions.len() {
+                                app.sel = i;
+                            }
+                        } else if let Some(i) = app.regions.right_at(col, row) {
+                            // A second click on the same row opens it.
+                            if app.point_right(i) {
+                                app.popup = true;
+                                app.popup_scroll = 0;
+                            }
+                        }
+                    }
+                    MouseEventKind::ScrollDown => {
+                        if app.regions.over_list(col, row) {
+                            app.select_session(1);
+                        } else {
+                            app.move_right(3);
+                        }
+                    }
+                    MouseEventKind::ScrollUp => {
+                        if app.regions.over_list(col, row) {
+                            app.select_session(-1);
+                        } else {
+                            app.move_right(-3);
+                        }
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+            if let Event::Key(key) = event {
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
@@ -429,16 +485,6 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     app.help = false;
                     continue;
                 }
-                let move_right = |app: &mut App, d: isize| match app.view {
-                    View::Files => app.move_files(d),
-                    View::Feed => app.move_feed(d),
-                    View::Plan | View::Stats | View::Mirror => {}
-                    // the simple list views share one cursor
-                    _ => {
-                        let next = (app.list_sel as isize + d).max(0);
-                        app.list_sel = next as usize;
-                    }
-                };
                 match key.code {
                     // Esc dismisses; it does not quit. An accidental Esc should
                     // never take the monitor down with it.
@@ -456,12 +502,17 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     KeyCode::Char('k') | KeyCode::Up => app.select_session(-1),
                     KeyCode::Tab => app.select_session(1),
                     KeyCode::BackTab => app.select_session(-1),
-                    KeyCode::Char('J') => move_right(app, 1),
-                    KeyCode::Char('K') => move_right(app, -1),
-                    KeyCode::PageDown => move_right(app, 20),
-                    KeyCode::PageUp => move_right(app, -20),
-                    KeyCode::Char(c @ '1'..='9') => {
-                        let i = c as usize - '1' as usize;
+                    KeyCode::Char('J') => app.move_right(1),
+                    KeyCode::Char('K') => app.move_right(-1),
+                    KeyCode::PageDown => app.move_right(20),
+                    KeyCode::PageUp => app.move_right(-20),
+                    KeyCode::Char(c @ '0'..='9') => {
+                        // 1-9 pick the first nine panes, 0 the tenth.
+                        let i = if c == '0' {
+                            9
+                        } else {
+                            c as usize - '1' as usize
+                        };
                         if let Some(v) = app::VIEWS.get(i) {
                             app.view = *v;
                             app.list_sel = 0;

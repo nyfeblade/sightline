@@ -74,6 +74,7 @@ same actions have direct keys once you know them:
 | `s` | type a message into the selected session |
 | `b` | send one message to every steerable session |
 | `Q` | queue a message; it is delivered when that session next goes idle |
+| | sending to a busy session says so, rather than looking delivered |
 | `i` | interrupt (sends Escape) |
 | `m` | passthrough — every key goes to the session until `ctrl+]` |
 | `a` `O` | show it full-screen · open it in its own window |
@@ -121,7 +122,10 @@ launches all of them:
 
 ## What it shows
 
-Nine panes on keys `1` to `9`.
+Ten panes, on keys `1` to `9` and `0`. The mouse works too: click a session or
+a row to select it, click again to open it, and the wheel scrolls. `--no-mouse`
+turns capture off if you would rather keep the terminal's own text selection
+(shift-drag usually still selects while capture is on).
 
 | pane | what it is for |
 |---|---|
@@ -134,6 +138,7 @@ Nine panes on keys `1` to `9`.
 | tree | the working directory as it stands: branch, changed files, diffs |
 | errors | every failed tool call and API error in one list |
 | fleet | every session on a single timeline |
+| read | the conversation on its own — what was asked and answered, wrapped and readable, with the machinery left out |
 
 `/` searches everything loaded across all sessions; `]` and `[` step the matches.
 

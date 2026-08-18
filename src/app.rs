@@ -27,6 +27,46 @@ pub enum Prompt {
     Adopt,
 }
 
+/// Where things were drawn last frame, so a click can be turned back into the
+/// thing that was clicked.
+#[derive(Clone, Copy, Default)]
+pub struct Regions {
+    /// inner area of the session list (x, y, w, h) and the index of its top row
+    pub list: (u16, u16, u16, u16),
+    pub list_top: usize,
+    /// inner area of the right-hand pane and the index of its top row
+    pub right: (u16, u16, u16, u16),
+    pub right_top: usize,
+    /// the actions menu, when it is open
+    pub menu: Option<(u16, u16, u16, u16)>,
+}
+
+fn inside(area: (u16, u16, u16, u16), col: u16, row: u16) -> bool {
+    let (x, y, w, h) = area;
+    col >= x && col < x + w && row >= y && row < y + h
+}
+
+impl Regions {
+    /// Which session row is under the pointer. Rows are two lines tall.
+    pub fn session_at(&self, col: u16, row: u16) -> Option<usize> {
+        inside(self.list, col, row).then(|| self.list_top + ((row - self.list.1) / 2) as usize)
+    }
+
+    /// Which right-pane row is under the pointer.
+    pub fn right_at(&self, col: u16, row: u16) -> Option<usize> {
+        inside(self.right, col, row).then(|| self.right_top + (row - self.right.1) as usize)
+    }
+
+    pub fn menu_at(&self, col: u16, row: u16) -> Option<usize> {
+        let area = self.menu?;
+        inside(area, col, row).then(|| (row - area.1) as usize)
+    }
+
+    pub fn over_list(&self, col: u16, row: u16) -> bool {
+        inside(self.list, col, row)
+    }
+}
+
 /// A session working in its own checkout.
 #[derive(Clone)]
 pub struct Iso {
@@ -136,9 +176,10 @@ pub enum View {
     Tree,
     Errors,
     Fleet,
+    Read,
 }
 
-pub const VIEWS: [View; 9] = [
+pub const VIEWS: [View; 10] = [
     View::Feed,
     View::Files,
     View::Stats,
@@ -148,6 +189,7 @@ pub const VIEWS: [View; 9] = [
     View::Tree,
     View::Errors,
     View::Fleet,
+    View::Read,
 ];
 
 impl View {
@@ -162,6 +204,7 @@ impl View {
             View::Tree => "tree",
             View::Errors => "errors",
             View::Fleet => "fleet",
+            View::Read => "read",
         }
     }
 
@@ -224,6 +267,8 @@ pub struct App {
     /// scroll offset for the right-hand list views
     pub list_top_right: usize,
     /// when a session was last started or adopted, to absorb key repeats
+    /// what was drawn where last frame, for mouse hit-testing
+    pub regions: Regions,
     last_spawn: Instant,
     iso_cache: HashMap<String, (Instant, Option<Iso>)>,
     prev_status: HashMap<String, String>,
@@ -272,6 +317,7 @@ impl App {
             hit_sel: 0,
             list_sel: 0,
             list_top_right: 0,
+            regions: Regions::default(),
             last_spawn: Instant::now() - Duration::from_secs(60),
             iso_cache: HashMap::new(),
             prev_status: HashMap::new(),
@@ -525,8 +571,21 @@ impl App {
                 let Some(id) = input.target.clone() else {
                     return;
                 };
+                let busy = self
+                    .sessions
+                    .iter()
+                    .find(|s| s.id == id)
+                    .map(|s| matches!(s.status(), Status::Running(_) | Status::Working))
+                    .unwrap_or(false);
                 match self.pane_of(&id).cloned() {
                     Some(p) => match control::send_text(&p.id, &text) {
+                        // Claude Code holds typed input until the current turn
+                        // ends, which looks identical to a delivered message
+                        // unless it is said out loud.
+                        Ok(()) if busy => self.say(format!(
+                            "queued for {} — it is mid-turn and will pick this up after",
+                            p.session
+                        )),
                         Ok(()) => self.say(format!("sent to {}", p.session)),
                         Err(e) => self.say(e),
                     },
@@ -1410,6 +1469,54 @@ impl App {
         let mut keys: Vec<(&String, &crate::session::FileTouch)> = s.files.iter().collect();
         keys.sort_by(|a, b| b.1.last.cmp(&a.1.last));
         keys.into_iter().map(|(k, _)| k.clone()).collect()
+    }
+
+    /// Move the cursor in whichever right-hand pane is showing.
+    pub fn move_right(&mut self, delta: isize) {
+        match self.view {
+            View::Files => self.move_files(delta),
+            View::Feed => self.move_feed(delta),
+            View::Plan | View::Stats | View::Mirror => {}
+            // the reading view scrolls by lines rather than by item
+            View::Read => {
+                let next = (self.list_top_right as isize + delta * 3).max(0);
+                self.list_top_right = next as usize;
+            }
+            _ => {
+                let next = (self.list_sel as isize + delta).max(0);
+                self.list_sel = next as usize;
+            }
+        }
+    }
+
+    /// Put the right-hand cursor on a specific row, as a click does.
+    pub fn point_right(&mut self, index: usize) -> bool {
+        match self.view {
+            View::Feed => {
+                let len = self.feed_len();
+                if index >= len {
+                    return false;
+                }
+                let already = !self.follow && self.feed_sel == index;
+                self.feed_sel = index;
+                self.follow = index + 1 == len;
+                already
+            }
+            View::Files => {
+                if index >= self.file_keys().len() {
+                    return false;
+                }
+                let already = self.file_sel == index;
+                self.file_sel = index;
+                already
+            }
+            View::Plan | View::Stats | View::Mirror | View::Read => false,
+            _ => {
+                let already = self.list_sel == index;
+                self.list_sel = index;
+                already
+            }
+        }
     }
 
     pub fn move_files(&mut self, delta: isize) {
