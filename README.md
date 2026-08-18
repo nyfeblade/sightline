@@ -84,8 +84,9 @@ same actions have direct keys once you know them:
 | `L` | launch a whole fleet from a config file |
 
 Sessions started outside tmux are fully visible but cannot be typed into; they
-are marked, so it is always clear which is which. `A` fixes that by resuming the
-same conversation inside tmux.
+are marked, so it is always clear which is which. `A` moves one: it resumes the
+same conversation inside tmux and closes the original window, so the
+conversation continues in one place rather than two. It asks first.
 
 ### Isolated sessions
 

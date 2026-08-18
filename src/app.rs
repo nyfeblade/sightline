@@ -24,6 +24,7 @@ pub enum Prompt {
     Merge,
     Discard,
     Stop,
+    Adopt,
 }
 
 /// A session working in its own checkout.
@@ -379,6 +380,13 @@ impl App {
                     return;
                 }
             },
+            Prompt::Adopt => match self.current() {
+                Some(s) => format!(
+                    "move {} into tmux and close the original window? type yes",
+                    s.label()
+                ),
+                None => return,
+            },
             Prompt::Stop => match self.current() {
                 Some(s) => format!("stop {}? type yes", s.label()),
                 None => return,
@@ -457,6 +465,13 @@ impl App {
                     self.merge_isolated();
                 } else {
                     self.say("not merged");
+                }
+            }
+            Prompt::Adopt => {
+                if text.eq_ignore_ascii_case("yes") || text.eq_ignore_ascii_case("y") {
+                    self.adopt();
+                } else {
+                    self.say("left where it was");
                 }
             }
             Prompt::Stop => {
@@ -734,9 +749,17 @@ impl App {
         if !self.may_spawn() {
             return;
         }
+        let original = self.current().and_then(|s| s.live.as_ref().map(|l| l.pid));
         match control::adopt(PathBuf::from(cwd).as_path(), &id) {
             Ok(name) => {
-                self.say(format!("resumed in tmux as {name} — close the old window"));
+                // Two clients on one conversation would both append to the same
+                // transcript, so the original goes as soon as the copy is up.
+                let closed = original.map(control::end_process).unwrap_or(false);
+                self.say(if closed {
+                    format!("moved into tmux as {name} — the old window has closed")
+                } else {
+                    format!("resumed in tmux as {name} — close the old window yourself")
+                });
                 self.discover();
             }
             Err(e) => self.say(e),
@@ -874,7 +897,7 @@ impl App {
             'i' => self.interrupt(),
             'm' => self.toggle_passthrough(),
             'a' => self.attach(),
-            'A' => self.adopt(),
+            'A' => self.open_input(Prompt::Adopt),
             'M' => self.open_input(Prompt::Merge),
             'X' => self.open_input(Prompt::Discard),
             'K' => self.open_input(Prompt::Stop),

@@ -513,3 +513,16 @@ mod tests {
         assert!(pending_approval("❯ Try \"fix typecheck errors\"").is_none());
     }
 }
+
+/// End the Claude Code process behind a session. It runs its terminal in raw
+/// mode, so Ctrl-C never reaches it as a signal and SIGINT terminates it
+/// outright — which is what is wanted when moving a conversation into tmux.
+pub fn end_process(pid: i64) -> bool {
+    Command::new("kill")
+        .args(["-INT", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
