@@ -16,7 +16,11 @@ pub struct Tail {
 
 impl Tail {
     pub fn new(path: PathBuf) -> Self {
-        Tail { path, offset: 0, partial: Vec::new() }
+        Tail {
+            path,
+            offset: 0,
+            partial: Vec::new(),
+        }
     }
 
     pub fn offset(&self) -> u64 {

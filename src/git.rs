@@ -29,16 +29,23 @@ fn git(cwd: &Path, args: &[&str]) -> Option<String> {
         .stderr(Stdio::null())
         .output()
         .ok()?;
-    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 pub fn status(cwd: &Path) -> Option<Tree> {
-    let branch = git(cwd, &["rev-parse", "--abbrev-ref", "HEAD"])?.trim().to_string();
+    let branch = git(cwd, &["rev-parse", "--abbrev-ref", "HEAD"])?
+        .trim()
+        .to_string();
     let porcelain = git(cwd, &["status", "--porcelain=v1"])?;
     let entries = porcelain
         .lines()
         .filter(|l| l.len() > 3)
-        .map(|l| Entry { code: l[..2].to_string(), path: l[3..].to_string() })
+        .map(|l| Entry {
+            code: l[..2].to_string(),
+            path: l[3..].to_string(),
+        })
         .collect();
     let (mut insertions, mut deletions) = (0, 0);
     if let Some(stat) = git(cwd, &["diff", "--shortstat"]) {
@@ -56,7 +63,13 @@ pub fn status(cwd: &Path) -> Option<Tree> {
             }
         }
     }
-    Some(Tree { branch, entries, insertions, deletions, fetched: Instant::now() })
+    Some(Tree {
+        branch,
+        entries,
+        insertions,
+        deletions,
+        fetched: Instant::now(),
+    })
 }
 
 /// The working-tree diff for one path, for the detail view.
@@ -93,14 +106,23 @@ pub fn worktree_root(repo: &Path) -> std::path::PathBuf {
         .filter(|s| !s.is_empty())
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| crate::app::home().join(".local").join("share"));
-    let name = repo.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "repo".into());
+    let name = repo
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "repo".into());
     base.join("nyfe-scope").join("worktrees").join(name)
 }
 
 /// Branch names are used as directory names, so keep them to safe characters.
 fn slug(s: &str) -> String {
     s.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect()
 }
 
@@ -119,7 +141,9 @@ pub fn create_worktree(repo: &Path, branch: &str) -> Result<std::path::PathBuf, 
 }
 
 pub fn list_worktrees(repo: &Path) -> Vec<Worktree> {
-    let Some(out) = git(repo, &["worktree", "list", "--porcelain"]) else { return Vec::new() };
+    let Some(out) = git(repo, &["worktree", "list", "--porcelain"]) else {
+        return Vec::new();
+    };
     let mut trees = Vec::new();
     let mut path = String::new();
     for line in out.lines() {
@@ -137,7 +161,15 @@ pub fn list_worktrees(repo: &Path) -> Vec<Worktree> {
 
 /// Commits on this branch that the base does not have, and vice versa.
 pub fn ahead_behind(cwd: &Path, base: &str) -> Option<(usize, usize)> {
-    let out = git(cwd, &["rev-list", "--left-right", "--count", &format!("{base}...HEAD")])?;
+    let out = git(
+        cwd,
+        &[
+            "rev-list",
+            "--left-right",
+            "--count",
+            &format!("{base}...HEAD"),
+        ],
+    )?;
     let mut parts = out.split_whitespace();
     let behind = parts.next()?.parse().ok()?;
     let ahead = parts.next()?.parse().ok()?;
@@ -163,7 +195,9 @@ pub fn merge(repo: &Path, branch: &str, base: &str) -> Result<String, String> {
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
     if current != base {
-        return Err(format!("the repository is on {current}, not {base} — switch it first"));
+        return Err(format!(
+            "the repository is on {current}, not {base} — switch it first"
+        ));
     }
     let out = Command::new("git")
         .arg("-C")
@@ -171,8 +205,8 @@ pub fn merge(repo: &Path, branch: &str, base: &str) -> Result<String, String> {
         .args(["merge", "--no-ff", branch])
         .output()
         .map_err(|e| e.to_string())?;
-    let text = String::from_utf8_lossy(&out.stdout).into_owned()
-        + &String::from_utf8_lossy(&out.stderr);
+    let text =
+        String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
     if out.status.success() {
         Ok(text.trim().to_string())
     } else {
@@ -190,7 +224,10 @@ pub fn remove_worktree(repo: &Path, path: &str) -> Result<(), String> {
 pub fn is_worktree(cwd: &Path) -> bool {
     let (dir, common) = (
         git(cwd, &["rev-parse", "--absolute-git-dir"]),
-        git(cwd, &["rev-parse", "--path-format=absolute", "--git-common-dir"]),
+        git(
+            cwd,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        ),
     );
     match (dir, common) {
         (Some(d), Some(c)) => d.trim() != c.trim(),
@@ -200,8 +237,13 @@ pub fn is_worktree(cwd: &Path) -> bool {
 
 /// The repository a linked worktree belongs to.
 pub fn main_repo(cwd: &Path) -> Option<std::path::PathBuf> {
-    let common = git(cwd, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
-    std::path::Path::new(common.trim()).parent().map(|p| p.to_path_buf())
+    let common = git(
+        cwd,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?;
+    std::path::Path::new(common.trim())
+        .parent()
+        .map(|p| p.to_path_buf())
 }
 
 #[cfg(test)]
@@ -217,7 +259,11 @@ mod tests {
             .args(args)
             .output()
             .expect("git should run");
-        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
 
     /// A repository with one commit on main, in a temp directory of its own.
@@ -236,7 +282,10 @@ mod tests {
     fn isolates_commits_then_merges_them_back() {
         let repo = scratch("merge");
         let tree = create_worktree(&repo, "feature/one").expect("worktree should be created");
-        assert!(tree.join("a.txt").exists(), "the worktree is a full checkout");
+        assert!(
+            tree.join("a.txt").exists(),
+            "the worktree is a full checkout"
+        );
         assert!(is_worktree(&tree), "and it reads as a linked worktree");
         assert_eq!(main_repo(&tree).as_deref(), Some(repo.as_path()));
 
@@ -244,8 +293,15 @@ mod tests {
         run(&tree, &["add", "."]);
         run(&tree, &["commit", "-qm", "work from the session"]);
 
-        assert_eq!(ahead_behind(&tree, "main"), Some((1, 0)), "one commit ahead of main");
-        assert!(!repo.join("b.txt").exists(), "the original checkout is untouched");
+        assert_eq!(
+            ahead_behind(&tree, "main"),
+            Some((1, 0)),
+            "one commit ahead of main"
+        );
+        assert!(
+            !repo.join("b.txt").exists(),
+            "the original checkout is untouched"
+        );
 
         merge(&repo, "feature-one", "main").expect("merge should succeed");
         assert!(repo.join("b.txt").exists(), "the work is now on main");
@@ -270,7 +326,11 @@ mod tests {
         std::fs::write(repo.join("new.txt"), "fresh\n").unwrap();
         let t = status(&repo).expect("status should read");
         assert_eq!(t.branch, "main");
-        assert!(t.entries.iter().any(|e| e.path == "new.txt" && e.code.trim() == "??"));
+        assert!(
+            t.entries
+                .iter()
+                .any(|e| e.path == "new.txt" && e.code.trim() == "??")
+        );
         assert_eq!(t.insertions, 1, "one line added to the tracked file");
         let _ = std::fs::remove_dir_all(&repo);
     }

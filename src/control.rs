@@ -20,7 +20,11 @@ pub struct Pane {
 }
 
 fn tmux(args: &[&str]) -> Option<String> {
-    let out = Command::new("tmux").args(args).stderr(Stdio::null()).output().ok()?;
+    let out = Command::new("tmux")
+        .args(args)
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
     if !out.status.success() {
         return None;
     }
@@ -101,7 +105,9 @@ pub fn send_text(pane: &str, text: &str) -> Result<(), String> {
 
 /// Send a named key — Escape to interrupt a turn, Enter to accept a prompt.
 pub fn send_key(pane: &str, key: &str) -> Result<(), String> {
-    tmux(&["send-keys", "-t", pane, key]).ok_or_else(|| "tmux send-keys failed".into()).map(|_| ())
+    tmux(&["send-keys", "-t", pane, key])
+        .ok_or_else(|| "tmux send-keys failed".into())
+        .map(|_| ())
 }
 
 /// Start a fresh Claude Code session in its own tmux session.
@@ -132,7 +138,11 @@ pub fn attach(session: &str) -> Result<(), String> {
         .args(["attach", "-t", session])
         .status()
         .map_err(|e| e.to_string())?;
-    if status.success() { Ok(()) } else { Err("tmux attach failed".into()) }
+    if status.success() {
+        Ok(())
+    } else {
+        Err("tmux attach failed".into())
+    }
 }
 
 /// What a session's pane currently shows. Used both for the live mirror and
@@ -168,7 +178,9 @@ pub fn pending_approval(text: &str) -> Option<Approval> {
     let lines: Vec<&str> = text.lines().collect();
     // The cursor marker is what distinguishes a live choice from transcript
     // text that merely happens to contain a numbered list.
-    let cursor = lines.iter().rposition(|l| l.contains('❯') && is_option(l))?;
+    let cursor = lines
+        .iter()
+        .rposition(|l| l.contains('❯') && is_option(l))?;
     let mut start = cursor;
     while start > 0 && is_option(lines[start - 1]) {
         start -= 1;
@@ -263,7 +275,9 @@ pub fn forward(pane: &str, key: &str) -> Result<(), String> {
 }
 
 pub fn kill_session(session: &str) -> Result<(), String> {
-    tmux(&["kill-session", "-t", session]).ok_or_else(|| "tmux kill-session failed".into()).map(|_| ())
+    tmux(&["kill-session", "-t", session])
+        .ok_or_else(|| "tmux kill-session failed".into())
+        .map(|_| ())
 }
 
 /// Start a session with explicit Claude Code options.
@@ -320,7 +334,16 @@ pub fn adopt(cwd: &Path, session_id: &str) -> Result<String, String> {
         .ok_or("no free session name")?;
     let cwd = cwd.to_string_lossy().to_string();
     tmux(&[
-        "new-session", "-d", "-s", &name, "-c", &cwd, "--", "claude", "--resume", session_id,
+        "new-session",
+        "-d",
+        "-s",
+        &name,
+        "-c",
+        &cwd,
+        "--",
+        "claude",
+        "--resume",
+        session_id,
     ])
     .ok_or("tmux could not start the session (is claude on PATH?)")?;
     Ok(name)
@@ -382,7 +405,11 @@ mod tests {
     #[test]
     fn keeps_options_whose_text_wrapped() {
         let a = pending_approval(WRAPPED).expect("prompt should be seen");
-        assert_eq!(a.options.len(), 3, "wrapped text must not end the option list");
+        assert_eq!(
+            a.options.len(),
+            3,
+            "wrapped text must not end the option list"
+        );
         assert!(a.options[1].ends_with("and echo"));
         assert_eq!(a.options[2], "3. No");
     }

@@ -2,9 +2,9 @@
 
 mod app;
 mod control;
+mod event;
 mod git;
 mod notify;
-mod event;
 mod pricing;
 mod registry;
 mod session;
@@ -52,7 +52,10 @@ fn parse_since(s: &str) -> Option<Duration> {
         's' => (&s[..s.len() - 1], 1),
         _ => (s, 1),
     };
-    num.trim().parse::<u64>().ok().map(|n| Duration::from_secs(n * mult))
+    num.trim()
+        .parse::<u64>()
+        .ok()
+        .map(|n| Duration::from_secs(n * mult))
 }
 
 fn main() -> Result<()> {
@@ -66,7 +69,10 @@ fn main() -> Result<()> {
 
     let args: Vec<String> = std::env::args().skip(1).collect();
 
-    if matches!(args.first().map(String::as_str), Some("waiting") | Some("approve")) {
+    if matches!(
+        args.first().map(String::as_str),
+        Some("waiting") | Some("approve")
+    ) {
         let mut app = App::new(
             app::default_root(),
             app::default_sessions_dir(),
@@ -90,7 +96,9 @@ fn main() -> Result<()> {
             }
             return Ok(());
         }
-        let who = args.get(1).ok_or_else(|| anyhow::anyhow!("usage: scope approve <who> [n]"))?;
+        let who = args
+            .get(1)
+            .ok_or_else(|| anyhow::anyhow!("usage: scope approve <who> [n]"))?;
         let n: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(1);
         let idx = app
             .sessions
@@ -104,7 +112,9 @@ fn main() -> Result<()> {
     }
 
     if args.first().map(String::as_str) == Some("send") {
-        let who = args.get(1).ok_or_else(|| anyhow::anyhow!("usage: scope send <who> <text>"))?;
+        let who = args
+            .get(1)
+            .ok_or_else(|| anyhow::anyhow!("usage: scope send <who> <text>"))?;
         let text = args[2..].join(" ");
         if text.is_empty() {
             anyhow::bail!("usage: scope send <who> <text>");
@@ -130,7 +140,11 @@ fn main() -> Result<()> {
             .sessions
             .iter()
             .find(|s| {
-                let name = app.steer.get(&s.id).map(|p| p.session.clone()).unwrap_or_default();
+                let name = app
+                    .steer
+                    .get(&s.id)
+                    .map(|p| p.session.clone())
+                    .unwrap_or_default();
                 s.id.starts_with(who.as_str())
                     || s.label().eq_ignore_ascii_case(who)
                     || name == *who
@@ -139,7 +153,9 @@ fn main() -> Result<()> {
             .ok_or_else(|| anyhow::anyhow!("no live session matching {who}"))?;
         let pane = app
             .pane_of(&hit)
-            .ok_or_else(|| anyhow::anyhow!("{who} is not running in tmux, so it cannot be typed into"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!("{who} is not running in tmux, so it cannot be typed into")
+            })?
             .clone();
         control::send_text(&pane.id, &text).map_err(|e| anyhow::anyhow!(e))?;
         println!("sent to {} ({})", pane.session, pane.id);
@@ -215,7 +231,8 @@ fn main() -> Result<()> {
             "--root" => {
                 i += 1;
                 root = PathBuf::from(
-                    args.get(i).ok_or_else(|| anyhow::anyhow!("--root wants a path"))?,
+                    args.get(i)
+                        .ok_or_else(|| anyhow::anyhow!("--root wants a path"))?,
                 );
             }
             other => anyhow::bail!("unknown option {other}\n\n{USAGE}"),
@@ -372,7 +389,18 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     }
                 };
                 match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                    // Esc dismisses; it does not quit. An accidental Esc should
+                    // never take the monitor down with it.
+                    KeyCode::Char('q') => return Ok(()),
+                    KeyCode::Esc => {
+                        if app.passthrough {
+                            app.toggle_passthrough();
+                        } else if !app.search.is_empty() {
+                            app.search.clear();
+                            app.hits.clear();
+                            app.say("search cleared");
+                        }
+                    }
                     KeyCode::Tab => {
                         app.focus = match app.focus {
                             Focus::Sessions => Focus::Feed,
@@ -469,7 +497,11 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     KeyCode::Char('N') => {
                         app.notify_on = !app.notify_on;
                         let on = app.notify_on;
-                        app.say(if on { "notifications on" } else { "notifications off" });
+                        app.say(if on {
+                            "notifications on"
+                        } else {
+                            "notifications off"
+                        });
                     }
                     KeyCode::Char('?') => app.help = true,
                     _ => {}

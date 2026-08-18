@@ -30,7 +30,15 @@ pub struct Ev {
 
 impl Ev {
     pub fn new(ts: Option<DateTime<Utc>>, kind: Kind, head: String, body: String) -> Self {
-        Ev { ts, kind, tool: None, head, body, ok: true, spill: None }
+        Ev {
+            ts,
+            kind,
+            tool: None,
+            head,
+            body,
+            ok: true,
+            spill: None,
+        }
     }
 }
 
@@ -86,12 +94,18 @@ pub fn spill_path(text: &str) -> Option<String> {
     let rest = &text[at..];
     let end = rest.find(|c: char| c.is_whitespace()).unwrap_or(rest.len());
     let path = rest[..end].trim();
-    if path.starts_with('/') { Some(path.to_string()) } else { None }
+    if path.starts_with('/') {
+        Some(path.to_string())
+    } else {
+        None
+    }
 }
 
 pub fn ts_of(rec: &Value) -> Option<DateTime<Utc>> {
     let s = rec.get("timestamp")?.as_str()?;
-    DateTime::parse_from_rfc3339(s).ok().map(|t| t.with_timezone(&Utc))
+    DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|t| t.with_timezone(&Utc))
 }
 
 /// Collapse whitespace and cut to `n` display characters.
@@ -129,7 +143,11 @@ pub fn tool_summary(name: &str, input: &Value) -> String {
     let flag = |k: &str| input.get(k).and_then(Value::as_bool).unwrap_or(false);
     match name {
         "Bash" => {
-            let bg = if flag("run_in_background") { "[bg] " } else { "" };
+            let bg = if flag("run_in_background") {
+                "[bg] "
+            } else {
+                ""
+            };
             format!("{bg}{}", s("command"))
         }
         "Read" => {
@@ -144,7 +162,10 @@ pub fn tool_summary(name: &str, input: &Value) -> String {
             format!("{}{all}", short_path(s("file_path")))
         }
         "Write" => {
-            let n = input.get("content").and_then(Value::as_str).map_or(0, str::len);
+            let n = input
+                .get("content")
+                .and_then(Value::as_str)
+                .map_or(0, str::len);
             format!("{} ({})", short_path(s("file_path")), bytes(n))
         }
         "Agent" => {
@@ -154,21 +175,30 @@ pub fn tool_summary(name: &str, input: &Value) -> String {
                 .unwrap_or("general-purpose");
             format!("{kind} · {}", s("description"))
         }
-        "Skill" => format!("{} {}", s("skill"), s("args")).trim_end().to_string(),
+        "Skill" => format!("{} {}", s("skill"), s("args"))
+            .trim_end()
+            .to_string(),
         "WebSearch" => s("query").to_string(),
         "WebFetch" => s("url").to_string(),
-        "Grep" => format!("{} {}", s("pattern"), s("path")).trim_end().to_string(),
+        "Grep" => format!("{} {}", s("pattern"), s("path"))
+            .trim_end()
+            .to_string(),
         "Glob" => s("pattern").to_string(),
         "TodoWrite" => {
-            let n = input.get("todos").and_then(Value::as_array).map_or(0, Vec::len);
+            let n = input
+                .get("todos")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len);
             format!("{n} items")
         }
-        "Task" | "TaskCreate" | "TaskUpdate" => {
-            format!("{} {}", s("description"), s("prompt")).trim().to_string()
-        }
+        "Task" | "TaskCreate" | "TaskUpdate" => format!("{} {}", s("description"), s("prompt"))
+            .trim()
+            .to_string(),
         "ToolSearch" => s("query").to_string(),
         "Workflow" => s("name").to_string(),
-        "Artifact" => format!("{} {}", s("action"), s("file_path")).trim().to_string(),
+        "Artifact" => format!("{} {}", s("action"), s("file_path"))
+            .trim()
+            .to_string(),
         "SendMessage" => format!("→ {} {}", s("to"), s("message")),
         _ => input.to_string(),
     }
@@ -181,14 +211,20 @@ pub fn result_summary(tur: Option<&Value>, is_error: bool, fallback: &str) -> (S
         return (clip(fallback, 400), !is_error);
     };
     if let Some(text) = v.as_str() {
-        return (format!("{} · {}", bytes(text.len()), clip(text, 300)), !is_error);
+        return (
+            format!("{} · {}", bytes(text.len()), clip(text, 300)),
+            !is_error,
+        );
     }
     let obj = match v.as_object() {
         Some(o) => o,
         None => return (clip(&v.to_string(), 300), !is_error),
     };
     let get_str = |k: &str| obj.get(k).and_then(Value::as_str).unwrap_or("");
-    let interrupted = obj.get("interrupted").and_then(Value::as_bool).unwrap_or(false);
+    let interrupted = obj
+        .get("interrupted")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
 
     // Bash
     if obj.contains_key("stdout") || obj.contains_key("stderr") {
@@ -216,7 +252,11 @@ pub fn result_summary(tur: Option<&Value>, is_error: bool, fallback: &str) -> (S
     if let Some(patch) = obj.get("structuredPatch").and_then(Value::as_array) {
         let (mut add, mut del) = (0usize, 0usize);
         for hunk in patch {
-            for line in hunk.get("lines").and_then(Value::as_array).unwrap_or(&vec![]) {
+            for line in hunk
+                .get("lines")
+                .and_then(Value::as_array)
+                .unwrap_or(&vec![])
+            {
                 match line.as_str().unwrap_or("").chars().next() {
                     Some('+') => add += 1,
                     Some('-') => del += 1,
@@ -233,11 +273,21 @@ pub fn result_summary(tur: Option<&Value>, is_error: bool, fallback: &str) -> (S
         let kind = file.get("type").and_then(Value::as_str).unwrap_or("");
         if kind == "image" || file.get("numLines").is_none() {
             let src = obj.get("type").and_then(Value::as_str).unwrap_or(kind);
-            let path = if path.is_empty() { short_path(get_str("filePath")) } else { path };
-            return (format!("{path} · {}", if src.is_empty() { "binary" } else { src }), !is_error);
+            let path = if path.is_empty() {
+                short_path(get_str("filePath"))
+            } else {
+                path
+            };
+            return (
+                format!("{path} · {}", if src.is_empty() { "binary" } else { src }),
+                !is_error,
+            );
         }
         let lines = file.get("numLines").and_then(Value::as_u64).unwrap_or(0);
-        let total = file.get("totalLines").and_then(Value::as_u64).unwrap_or(lines);
+        let total = file
+            .get("totalLines")
+            .and_then(Value::as_u64)
+            .unwrap_or(lines);
         return (format!("{path} · {lines}/{total} lines"), !is_error);
     }
     // Agent
@@ -248,11 +298,20 @@ pub fn result_summary(tur: Option<&Value>, is_error: bool, fallback: &str) -> (S
     }
     // WebSearch
     if let Some(n) = obj.get("searchCount").and_then(Value::as_u64) {
-        let secs = obj.get("durationSeconds").and_then(Value::as_f64).unwrap_or(0.0);
-        return (format!("{n} searches · {secs:.1}s · {}", get_str("query")), !is_error);
+        let secs = obj
+            .get("durationSeconds")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0);
+        return (
+            format!("{n} searches · {secs:.1}s · {}", get_str("query")),
+            !is_error,
+        );
     }
     if obj.contains_key("newTodos") {
-        let n = obj.get("newTodos").and_then(Value::as_array).map_or(0, Vec::len);
+        let n = obj
+            .get("newTodos")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
         return (format!("{n} todos"), !is_error);
     }
     (clip(&v.to_string(), 300), !is_error)
@@ -284,12 +343,18 @@ pub fn patch_text(tur: &Value) -> Option<(String, usize, usize)> {
             out.push('\n');
         }
     }
-    if out.is_empty() { None } else { Some((out, add, del)) }
+    if out.is_empty() {
+        None
+    } else {
+        Some((out, add, del))
+    }
 }
 
 /// Full text for the detail popup.
 pub fn result_body(tur: Option<&Value>, fallback: &str) -> String {
-    let Some(v) = tur else { return fallback.to_string() };
+    let Some(v) = tur else {
+        return fallback.to_string();
+    };
     if let Some(text) = v.as_str() {
         return text.to_string();
     }
@@ -307,7 +372,11 @@ pub fn result_body(tur: Option<&Value>, fallback: &str) -> String {
             }
             return s;
         }
-        if let Some(file) = obj.get("file").and_then(|f| f.get("content")).and_then(Value::as_str) {
+        if let Some(file) = obj
+            .get("file")
+            .and_then(|f| f.get("content"))
+            .and_then(Value::as_str)
+        {
             return file.to_string();
         }
     }

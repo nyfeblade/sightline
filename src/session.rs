@@ -13,6 +13,11 @@ use std::path::PathBuf;
 /// only the tail is kept for display.
 pub const MAX_EVENTS: usize = 4000;
 
+/// Claude Code versions whose transcript format this was built against. A
+/// different minor is not fatal — the parser ignores what it does not know —
+/// but the user should be told rather than shown quietly incomplete numbers.
+pub const TESTED: (u32, u32) = (2, 1);
+
 /// How much of a transcript to replay at startup. Long-running sessions reach
 /// hundreds of megabytes; reading the tail keeps start-up instant on any
 /// machine, at the cost of totals that only cover the part that was read.
@@ -133,6 +138,9 @@ pub struct Session {
     pub denials: usize,
     /// effort level of the most recent request
     pub effort: String,
+    /// transcript lines seen, and how many carried something we understood
+    pub lines_seen: usize,
+    pub lines_used: usize,
     /// skills that drove a turn, by name
     pub skills: BTreeMap<String, usize>,
     agent_by_tool: HashMap<String, usize>,
@@ -182,6 +190,8 @@ impl Session {
             queued: Vec::new(),
             denials: 0,
             effort: String::new(),
+            lines_seen: 0,
+            lines_used: 0,
             skills: BTreeMap::new(),
             agent_by_tool: HashMap::new(),
             pending: HashMap::new(),
@@ -210,8 +220,13 @@ impl Session {
         }
         let mut n = 0;
         for line in lines {
+            self.lines_seen += 1;
             if let Ok(v) = serde_json::from_str::<Value>(&line) {
+                let before = self.events.len() + self.dropped + self.totals.requests;
                 self.apply(&v);
+                if self.events.len() + self.dropped + self.totals.requests > before {
+                    self.lines_used += 1;
+                }
                 n += 1;
             }
         }
@@ -316,9 +331,14 @@ impl Session {
                                             .unwrap_or_default();
                                     }
                                     if let Some(idx) = self.agent_by_tool.get(&id).copied() {
-                                        if let (Some(run), Some(v)) = (self.agents.get_mut(idx), tur) {
+                                        if let (Some(run), Some(v)) =
+                                            (self.agents.get_mut(idx), tur)
+                                        {
                                             let g = |k: &str| {
-                                                v.get(k).and_then(Value::as_str).unwrap_or("").to_string()
+                                                v.get(k)
+                                                    .and_then(Value::as_str)
+                                                    .unwrap_or("")
+                                                    .to_string()
                                             };
                                             run.id = g("agentId");
                                             run.model = g("resolvedModel");
@@ -364,7 +384,11 @@ impl Session {
                             self.add_usage(model, usage);
                         }
                     }
-                    for b in m.get("content").and_then(Value::as_array).unwrap_or(&vec![]) {
+                    for b in m
+                        .get("content")
+                        .and_then(Value::as_array)
+                        .unwrap_or(&vec![])
+                    {
                         match b.get("type").and_then(Value::as_str) {
                             Some("thinking") => {
                                 let t = b.get("thinking").and_then(Value::as_str).unwrap_or("");
@@ -394,8 +418,11 @@ impl Session {
                                     .and_then(Value::as_str)
                                     .unwrap_or("tool")
                                     .to_string();
-                                let id =
-                                    b.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+                                let id = b
+                                    .get("id")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("")
+                                    .to_string();
                                 let input = b.get("input").cloned().unwrap_or(Value::Null);
                                 let summary = event::tool_summary(&name, &input);
                                 let body = serde_json::to_string_pretty(&input)
@@ -403,7 +430,11 @@ impl Session {
                                 *self.tools.entry(name.clone()).or_insert(0) += 1;
                                 if name == "Agent" {
                                     let g = |k: &str| {
-                                        input.get(k).and_then(Value::as_str).unwrap_or("").to_string()
+                                        input
+                                            .get(k)
+                                            .and_then(Value::as_str)
+                                            .unwrap_or("")
+                                            .to_string()
                                     };
                                     self.agents.push(AgentRun {
                                         id: String::new(),
@@ -430,7 +461,11 @@ impl Session {
                         }
                     }
                 }
-                if rec.get("isApiErrorMessage").and_then(Value::as_bool).unwrap_or(false) {
+                if rec
+                    .get("isApiErrorMessage")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                {
                     let mut ev = Ev::new(ts, Kind::System, "api error".into(), take("error"));
                     ev.ok = false;
                     self.push(ev);
@@ -510,7 +545,11 @@ impl Session {
         let path = v
             .get("filePath")
             .and_then(Value::as_str)
-            .or_else(|| v.get("file").and_then(|f| f.get("filePath")).and_then(Value::as_str))
+            .or_else(|| {
+                v.get("file")
+                    .and_then(|f| f.get("filePath"))
+                    .and_then(Value::as_str)
+            })
             .unwrap_or("");
         if path.is_empty() {
             return;
@@ -538,7 +577,9 @@ impl Session {
     }
 
     pub fn lines_changed(&self) -> (usize, usize) {
-        self.files.values().fold((0, 0), |(a, d), f| (a + f.added, d + f.removed))
+        self.files
+            .values()
+            .fold((0, 0), |(a, d), f| (a + f.added, d + f.removed))
     }
 
     /// (mean, worst) tool round-trip in milliseconds.
@@ -575,7 +616,12 @@ impl Session {
         if self.first_prompt.is_empty() {
             self.first_prompt = event::clip(t, 120);
         }
-        self.push(Ev::new(ts, Kind::Prompt, event::clip(t, 400), t.to_string()));
+        self.push(Ev::new(
+            ts,
+            Kind::Prompt,
+            event::clip(t, 400),
+            t.to_string(),
+        ));
     }
 
     fn add_usage(&mut self, model: &str, usage: &Value) {
@@ -585,8 +631,12 @@ impl Session {
         let cache_read = g("cache_read_input_tokens");
         let (w5, w1) = match usage.get("cache_creation") {
             Some(c) => (
-                c.get("ephemeral_5m_input_tokens").and_then(Value::as_u64).unwrap_or(0),
-                c.get("ephemeral_1h_input_tokens").and_then(Value::as_u64).unwrap_or(0),
+                c.get("ephemeral_5m_input_tokens")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0),
+                c.get("ephemeral_1h_input_tokens")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0),
             ),
             None => (g("cache_creation_input_tokens"), 0),
         };
@@ -617,9 +667,12 @@ impl Session {
     pub fn status(&self) -> Status {
         match &self.live {
             Some(live) if live.status == "busy" => {
-                match self.events.iter().rev().find(|e| {
-                    matches!(e.kind, Kind::Tool | Kind::Result)
-                }) {
+                match self
+                    .events
+                    .iter()
+                    .rev()
+                    .find(|e| matches!(e.kind, Kind::Tool | Kind::Result))
+                {
                     Some(ev) if ev.kind == Kind::Tool => {
                         Status::Running(ev.tool.clone().unwrap_or_default())
                     }
@@ -670,7 +723,10 @@ impl Session {
 
     pub fn where_(&self) -> String {
         let cwd = if self.cwd.is_empty() {
-            self.live.as_ref().map(|l| l.cwd.clone()).unwrap_or_default()
+            self.live
+                .as_ref()
+                .map(|l| l.cwd.clone())
+                .unwrap_or_default()
         } else {
             self.cwd.clone()
         };
@@ -682,12 +738,29 @@ impl Session {
         }
     }
 
+    /// Version of Claude Code that wrote this transcript, as (major, minor).
+    pub fn client_version(&self) -> Option<(u32, u32)> {
+        let mut parts = self.version.split('.');
+        Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
+    }
+
+    /// True when a transcript was read but almost nothing in it was understood,
+    /// which means the format moved rather than the session being quiet.
+    pub fn unreadable(&self) -> bool {
+        self.lines_seen > 40 && self.lines_used * 20 < self.lines_seen
+    }
+
     /// Context window for the model in play, for the "how full" bar.
     pub fn window(&self) -> u64 {
-        if self.model.contains("haiku") { 200_000 } else { 1_000_000 }
+        if self.model.contains("haiku") {
+            200_000
+        } else {
+            1_000_000
+        }
     }
 
     pub fn age_secs(&self) -> i64 {
-        self.last.map_or(i64::MAX, |t| (Utc::now() - t).num_seconds().max(0))
+        self.last
+            .map_or(i64::MAX, |t| (Utc::now() - t).num_seconds().max(0))
     }
 }

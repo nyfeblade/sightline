@@ -20,7 +20,8 @@ pub const CACHE_WRITE_1H: f64 = 2.0;
 /// taken from `usage.speed` — fast mode is priced at a premium on the two
 /// models that offer it.
 pub fn rates(model: &str, fast: bool) -> Option<Rates> {
-    let (input, output) = if model.starts_with("claude-fable") || model.starts_with("claude-mythos") {
+    let (input, output) = if model.starts_with("claude-fable") || model.starts_with("claude-mythos")
+    {
         (10.0, 50.0)
     } else if model.starts_with("claude-opus-5") || model.starts_with("claude-opus-4-8") {
         if fast { (10.0, 50.0) } else { (5.0, 25.0) }

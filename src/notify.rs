@@ -22,7 +22,11 @@ pub fn send(title: &str, body: &str) {
 }
 
 pub fn available() -> bool {
-    let probe = if cfg!(target_os = "macos") { "osascript" } else { "notify-send" };
+    let probe = if cfg!(target_os = "macos") {
+        "osascript"
+    } else {
+        "notify-send"
+    };
     Command::new("which")
         .arg(probe)
         .stdout(Stdio::null())

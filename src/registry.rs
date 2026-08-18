@@ -61,7 +61,9 @@ impl Prober {
                 let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
                     return false;
                 };
-                let Some(close) = stat.rfind(')') else { return false };
+                let Some(close) = stat.rfind(')') else {
+                    return false;
+                };
                 match stat[close + 1..].split_whitespace().nth(19) {
                     // No procStart recorded (older client): existence is all we have.
                     Some(got) => want.is_empty() || got == want,
@@ -76,15 +78,21 @@ impl Prober {
 /// Live sessions keyed by session id. Empty when the registry is absent.
 pub fn scan(dir: &Path) -> HashMap<String, Live> {
     let mut out = HashMap::new();
-    let Ok(entries) = std::fs::read_dir(dir) else { return out };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return out;
+    };
     let prober = Prober::new();
     for entry in entries.flatten() {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
         }
-        let Ok(text) = std::fs::read_to_string(&path) else { continue };
-        let Ok(v) = serde_json::from_str::<Value>(&text) else { continue };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(v) = serde_json::from_str::<Value>(&text) else {
+            continue;
+        };
         let pid = v.get("pid").and_then(Value::as_i64).unwrap_or(0);
         let want = v.get("procStart").and_then(Value::as_str).unwrap_or("");
         if pid == 0 || !prober.alive(pid, want) {
@@ -105,7 +113,10 @@ pub fn scan(dir: &Path) -> HashMap<String, Live> {
                 status: s("status"),
                 kind: s("kind"),
                 version: s("version"),
-                status_updated_ms: v.get("statusUpdatedAt").and_then(Value::as_i64).unwrap_or(0),
+                status_updated_ms: v
+                    .get("statusUpdatedAt")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0),
             },
         );
     }
@@ -115,9 +126,11 @@ pub fn scan(dir: &Path) -> HashMap<String, Live> {
 /// Whether this Claude Code install maintains the registry at all.
 pub fn available(dir: &Path) -> bool {
     std::fs::read_dir(dir)
-        .map(|mut e| e.any(|f| {
-            f.map(|f| f.path().extension().and_then(|x| x.to_str()) == Some("json"))
-                .unwrap_or(false)
-        }))
+        .map(|mut e| {
+            e.any(|f| {
+                f.map(|f| f.path().extension().and_then(|x| x.to_str()) == Some("json"))
+                    .unwrap_or(false)
+            })
+        })
         .unwrap_or(false)
 }

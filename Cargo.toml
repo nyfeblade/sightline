@@ -1,6 +1,6 @@
 [package]
 name = "nyfe-scope"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "Live view of every Claude Code session on your machine, with tmux-based control"
 license = "MIT"

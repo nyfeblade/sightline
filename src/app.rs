@@ -1,7 +1,7 @@
 //! Discovery, refresh, and view state.
 
-use crate::event::{Ev, Filter};
 use crate::control::{self, Approval, Pane};
+use crate::event::{Ev, Filter};
 use crate::git;
 use crate::notify;
 use crate::registry;
@@ -210,9 +210,13 @@ impl App {
         let live = registry::scan(&self.sessions_dir);
         let cutoff = SystemTime::now() - self.since;
         let mut out = Vec::new();
-        let Ok(projects) = std::fs::read_dir(&self.root) else { return out };
+        let Ok(projects) = std::fs::read_dir(&self.root) else {
+            return out;
+        };
         for project in projects.flatten() {
-            let Ok(files) = std::fs::read_dir(project.path()) else { continue };
+            let Ok(files) = std::fs::read_dir(project.path()) else {
+                continue;
+            };
             for f in files.flatten() {
                 let path = f.path();
                 if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
@@ -245,9 +249,14 @@ impl App {
             .iter()
             .filter_map(|p| p.file_stem().and_then(|s| s.to_str()).map(str::to_string))
             .collect();
-        self.sessions.retain(|s| keep.contains(&s.id) || live.contains_key(&s.id));
+        self.sessions
+            .retain(|s| keep.contains(&s.id) || live.contains_key(&s.id));
         for path in want {
-            let id = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            let id = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
             match self.sessions.iter().position(|s| s.id == id) {
                 // A session that was known only from the registry has started
                 // writing: swap the placeholder for the real thing.
@@ -356,11 +365,15 @@ impl App {
 
     /// Run whatever the input bar was collecting.
     pub fn submit_input(&mut self) {
-        let Some(input) = self.input.take() else { return };
+        let Some(input) = self.input.take() else {
+            return;
+        };
         let text = input.buf.trim().to_string();
         match input.kind {
             Prompt::Send => {
-                let Some(id) = self.current().map(|s| s.id.clone()) else { return };
+                let Some(id) = self.current().map(|s| s.id.clone()) else {
+                    return;
+                };
                 match self.pane_of(&id).cloned() {
                     Some(p) => match control::send_text(&p.id, &text) {
                         Ok(()) => self.say(format!("sent to {}", p.session)),
@@ -380,7 +393,9 @@ impl App {
                 self.say(format!("sent to {ok} sessions"));
             }
             Prompt::Queue => {
-                let Some(id) = self.current().map(|s| s.id.clone()) else { return };
+                let Some(id) = self.current().map(|s| s.id.clone()) else {
+                    return;
+                };
                 if !self.steer.contains_key(&id) {
                     self.say("that session is not running in tmux");
                     return;
@@ -426,7 +441,9 @@ impl App {
 
     /// Escape interrupts the current turn, exactly as pressing it would.
     pub fn interrupt(&mut self) {
-        let Some(id) = self.current().map(|s| s.id.clone()) else { return };
+        let Some(id) = self.current().map(|s| s.id.clone()) else {
+            return;
+        };
         match self.pane_of(&id).cloned() {
             Some(p) => match control::send_key(&p.id, "Escape") {
                 Ok(()) => self.say("interrupt sent"),
@@ -437,7 +454,9 @@ impl App {
     }
 
     pub fn attach(&mut self) {
-        let Some(id) = self.current().map(|s| s.id.clone()) else { return };
+        let Some(id) = self.current().map(|s| s.id.clone()) else {
+            return;
+        };
         match self.pane_of(&id) {
             Some(p) => self.attach_to = Some(p.session.clone()),
             None => self.say("that session is not running in tmux"),
@@ -468,9 +487,7 @@ impl App {
                     Status::Ended => 3,
                 }
             };
-            rank(a)
-                .cmp(&rank(b))
-                .then(b.last.cmp(&a.last))
+            rank(a).cmp(&rank(b)).then(b.last.cmp(&a.last))
         });
         if let Some(id) = selected_id {
             if let Some(i) = self.sessions.iter().position(|s| s.id == id) {
@@ -499,7 +516,9 @@ impl App {
             })
             .collect();
         for (id, pane, label) in targets {
-            let Some(text) = control::capture(&pane) else { continue };
+            let Some(text) = control::capture(&pane) else {
+                continue;
+            };
             let approval = control::pending_approval(&text);
             self.mirror.insert(id.clone(), text);
             match approval {
@@ -563,8 +582,12 @@ impl App {
             })
             .collect();
         for id in ready {
-            let Some(pane) = self.steer.get(&id).cloned() else { continue };
-            let Some(queue) = self.queues.get_mut(&id) else { continue };
+            let Some(pane) = self.steer.get(&id).cloned() else {
+                continue;
+            };
+            let Some(queue) = self.queues.get_mut(&id) else {
+                continue;
+            };
             let msg = queue.remove(0);
             let left = queue.len();
             match control::send_text(&pane.id, &msg) {
@@ -617,7 +640,11 @@ impl App {
         match outcome {
             Ok(()) => {
                 self.approvals.remove(&id);
-                self.say(if n == 0 { "declined".into() } else { format!("answered {n}") });
+                self.say(if n == 0 {
+                    "declined".into()
+                } else {
+                    format!("answered {n}")
+                });
             }
             Err(e) => self.say(e),
         }
@@ -630,7 +657,11 @@ impl App {
             self.say("already steerable");
             return;
         }
-        let cwd = if s.cwd.is_empty() { ".".to_string() } else { s.cwd.clone() };
+        let cwd = if s.cwd.is_empty() {
+            ".".to_string()
+        } else {
+            s.cwd.clone()
+        };
         let id = s.id.clone();
         match control::adopt(PathBuf::from(cwd).as_path(), &id) {
             Ok(name) => {
@@ -670,7 +701,9 @@ impl App {
 
     pub fn toggle_passthrough(&mut self) {
         if !self.passthrough {
-            let Some(id) = self.current().map(|s| s.id.clone()) else { return };
+            let Some(id) = self.current().map(|s| s.id.clone()) else {
+                return;
+            };
             if !self.steer.contains_key(&id) {
                 self.say("that session is not running in tmux");
                 return;
@@ -686,8 +719,12 @@ impl App {
 
     /// Forward one key press to the selected session.
     pub fn forward_key(&mut self, code: crossterm::event::KeyCode, ctrl: bool) {
-        let Some(id) = self.current().map(|s| s.id.clone()) else { return };
-        let Some(pane) = self.steer.get(&id).cloned() else { return };
+        let Some(id) = self.current().map(|s| s.id.clone()) else {
+            return;
+        };
+        let Some(pane) = self.steer.get(&id).cloned() else {
+            return;
+        };
         if let Some(key) = control::tmux_key(code, ctrl) {
             let _ = control::forward(&pane.id, &key);
         }
@@ -718,7 +755,12 @@ impl App {
                     let branch = git::status(&path)?.branch;
                     let base = git::base_branch(&repo);
                     let ahead = git::ahead_behind(&path, &base).map(|(a, _)| a).unwrap_or(0);
-                    Some(Iso { repo, branch, base, ahead })
+                    Some(Iso {
+                        repo,
+                        branch,
+                        base,
+                        ahead,
+                    })
                 })
                 .flatten();
             self.iso_cache.insert(id.clone(), (Instant::now(), found));
@@ -729,13 +771,19 @@ impl App {
     /// Start a session on a fresh branch in its own checkout, so several
     /// sessions can work the same repository without colliding.
     pub fn isolate(&mut self, branch: &str) {
-        let branch = if branch.trim().is_empty() { "scope-work" } else { branch.trim() };
+        let branch = if branch.trim().is_empty() {
+            "scope-work"
+        } else {
+            branch.trim()
+        };
         let cwd = self
             .current()
             .map(|s| s.cwd.clone())
             .filter(|c| !c.is_empty())
             .unwrap_or_else(|| {
-                std::env::current_dir().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default()
+                std::env::current_dir()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default()
             });
         let Some(repo) = git::repo_root(PathBuf::from(&cwd).as_path()) else {
             self.say("not inside a git repository");
@@ -757,9 +805,10 @@ impl App {
         let Some(iso) = self.isolation() else { return };
         let (repo, branch, base) = (iso.repo, iso.branch, iso.base);
         match git::merge(&repo, &branch, &base) {
-            Ok(out) => {
-                self.say(format!("merged {branch} into {base} · {}", out.lines().next().unwrap_or("")))
-            }
+            Ok(out) => self.say(format!(
+                "merged {branch} into {base} · {}",
+                out.lines().next().unwrap_or("")
+            )),
             Err(e) => self.say(e),
         }
     }
@@ -767,7 +816,9 @@ impl App {
     pub fn discard_isolated(&mut self) {
         let Some(iso) = self.isolation() else { return };
         let (repo, branch) = (iso.repo, iso.branch);
-        let Some(cwd) = self.current().map(|s| s.cwd.clone()) else { return };
+        let Some(cwd) = self.current().map(|s| s.cwd.clone()) else {
+            return;
+        };
         match git::remove_worktree(&repo, &cwd) {
             Ok(()) => self.say(format!("removed the {branch} worktree")),
             Err(e) => self.say(e),
@@ -815,7 +866,9 @@ impl App {
 
     /// Jump to the selected search hit.
     pub fn goto_hit(&mut self) {
-        let Some((si, ei)) = self.hits.get(self.hit_sel).copied() else { return };
+        let Some((si, ei)) = self.hits.get(self.hit_sel).copied() else {
+            return;
+        };
         self.sel = si;
         self.view = View::Feed;
         self.filter = Filter::All;
@@ -931,7 +984,9 @@ impl App {
 
     /// Files the selected session touched, most recent first.
     pub fn file_keys(&self) -> Vec<String> {
-        let Some(s) = self.current() else { return Vec::new() };
+        let Some(s) = self.current() else {
+            return Vec::new();
+        };
         let mut keys: Vec<(&String, &crate::session::FileTouch)> = s.files.iter().collect();
         keys.sort_by(|a, b| b.1.last.cmp(&a.1.last));
         keys.into_iter().map(|(k, _)| k.clone()).collect()
@@ -953,11 +1008,19 @@ impl App {
         let touch = s.files.get(&key)?;
         let mut out = String::new();
         for abs in touch.changes.iter().rev() {
-            let Some(slot) = s.slot_of(*abs) else { continue };
-            let Some(ev) = s.events.get(slot) else { continue };
+            let Some(slot) = s.slot_of(*abs) else {
+                continue;
+            };
+            let Some(ev) = s.events.get(slot) else {
+                continue;
+            };
             let when = ev
                 .ts
-                .map(|t| t.with_timezone(&chrono::Local).format("%H:%M:%S").to_string())
+                .map(|t| {
+                    t.with_timezone(&chrono::Local)
+                        .format("%H:%M:%S")
+                        .to_string()
+                })
                 .unwrap_or_default();
             out.push_str(&format!("── {when} ──\n{}\n\n", ev.body));
         }
@@ -987,13 +1050,47 @@ impl App {
         if len == 0 {
             return;
         }
-        let cur = if self.follow { len as isize - 1 } else { self.feed_sel as isize };
+        let cur = if self.follow {
+            len as isize - 1
+        } else {
+            self.feed_sel as isize
+        };
         let next = (cur + delta).clamp(0, len as isize - 1);
         self.feed_sel = next as usize;
         self.follow = next as usize == len - 1;
     }
 
     /// (output tokens, estimated dollars, sessions currently working)
+    /// A warning to show once when this Claude Code install looks newer or
+    /// stranger than what scope was built against.
+    pub fn compatibility(&self) -> Option<String> {
+        for s in &self.sessions {
+            if s.unreadable() {
+                return Some(format!(
+                    "transcript format not recognised ({}) — figures may be incomplete",
+                    if s.version.is_empty() {
+                        "unknown version"
+                    } else {
+                        &s.version
+                    }
+                ));
+            }
+        }
+        for s in &self.sessions {
+            if let Some(v) = s.client_version() {
+                if v != crate::session::TESTED {
+                    return Some(format!(
+                        "Claude Code {} is newer than this build was tested against ({}.{}.x)",
+                        s.version,
+                        crate::session::TESTED.0,
+                        crate::session::TESTED.1
+                    ));
+                }
+            }
+        }
+        None
+    }
+
     pub fn totals(&self) -> (u64, f64, usize) {
         let mut tokens = 0;
         let mut cost = 0.0;

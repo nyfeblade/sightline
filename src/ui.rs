@@ -230,8 +230,14 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     let unpriced = app.sessions.iter().any(|s| s.totals.unpriced > 0);
     let left = vec![
         Span::styled("▌", Style::new().fg(pal().gold)),
-        Span::styled(" nyfe scope ", Style::new().fg(pal().gold).add_modifier(Modifier::BOLD)),
-        Span::styled(format!("· {} sessions · {working} working", app.sessions.len()), muted()),
+        Span::styled(
+            " nyfe scope ",
+            Style::new().fg(pal().gold).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("· {} sessions · {working} working", app.sessions.len()),
+            muted(),
+        ),
     ];
     let mut right = Vec::new();
     let waiting = app.approvals.len();
@@ -241,7 +247,10 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
             Style::new().fg(pal().gold).add_modifier(Modifier::BOLD),
         ));
     }
-    right.push(Span::styled(format!("{} out ", fmt_tokens(tokens)), Style::new().fg(pal().dim)));
+    right.push(Span::styled(
+        format!("{} out ", fmt_tokens(tokens)),
+        Style::new().fg(pal().dim),
+    ));
     if app.show_cost {
         right.push(Span::styled(
             format!("~${cost:.2} if API{} ", if unpriced { "*" } else { "" }),
@@ -257,7 +266,10 @@ fn draw_sessions(f: &mut Frame, app: &mut App, area: Rect) {
     let focused = app.focus == Focus::Sessions;
     let block = Block::bordered()
         .border_style(Style::new().fg(if focused { pal().gold } else { pal().panel }))
-        .title(Span::styled(" sessions ", Style::new().fg(if focused { pal().gold } else { pal().dim })));
+        .title(Span::styled(
+            " sessions ",
+            Style::new().fg(if focused { pal().gold } else { pal().dim }),
+        ));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -272,15 +284,28 @@ fn draw_sessions(f: &mut Frame, app: &mut App, area: Rect) {
     }
 
     let w = inner.width as usize;
-    let steerable: Vec<bool> =
-        app.sessions.iter().map(|s| app.steer.contains_key(&s.id)).collect();
+    let steerable: Vec<bool> = app
+        .sessions
+        .iter()
+        .map(|s| app.steer.contains_key(&s.id))
+        .collect();
     let mut lines: Vec<Line> = Vec::new();
-    for (i, s) in app.sessions.iter().enumerate().skip(app.list_top).take(rows) {
+    for (i, s) in app
+        .sessions
+        .iter()
+        .enumerate()
+        .skip(app.list_top)
+        .take(rows)
+    {
         let selected = i == app.sel;
         let (mark, color) = status_mark(s);
         let dot = mark.chars().next().unwrap_or('·').to_string();
         let word: String = mark.chars().skip(2).collect();
-        let age = if s.placeholder { "new".to_string() } else { fmt_age(s.age_secs()) };
+        let age = if s.placeholder {
+            "new".to_string()
+        } else {
+            fmt_age(s.age_secs())
+        };
         let label_style = if selected {
             Style::new().fg(pal().text).add_modifier(Modifier::BOLD)
         } else {
@@ -296,7 +321,10 @@ fn draw_sessions(f: &mut Frame, app: &mut App, area: Rect) {
         let label_w = w.saturating_sub(age.chars().count() + steer.chars().count() + 5);
         lines.push(row(
             vec![
-                Span::styled(if selected { "▌" } else { " " }, Style::new().fg(pal().gold)),
+                Span::styled(
+                    if selected { "▌" } else { " " },
+                    Style::new().fg(pal().gold),
+                ),
                 Span::styled(format!("{dot} "), Style::new().fg(color)),
                 Span::styled(clip_to(&s.label(), label_w), label_style),
             ],
@@ -323,7 +351,13 @@ fn draw_sessions(f: &mut Frame, app: &mut App, area: Rect) {
             vec![
                 Span::raw("   "),
                 Span::styled(word.clone(), Style::new().fg(color)),
-                Span::styled(clip_to(&format!(" · {path}"), avail.saturating_sub(word.chars().count())), muted()),
+                Span::styled(
+                    clip_to(
+                        &format!(" · {path}"),
+                        avail.saturating_sub(word.chars().count()),
+                    ),
+                    muted(),
+                ),
             ],
             vec![Span::styled(right, muted())],
             w,
@@ -345,7 +379,11 @@ fn draw_card(f: &mut Frame, app: &App, area: Rect) {
 
     let mut tools: Vec<(&String, &usize)> = s.tools.iter().collect();
     tools.sort_by(|a, b| b.1.cmp(a.1));
-    let top: Vec<String> = tools.iter().take(3).map(|(n, c)| format!("{n} {c}")).collect();
+    let top: Vec<String> = tools
+        .iter()
+        .take(3)
+        .map(|(n, c)| format!("{n} {c}"))
+        .collect();
     let t = &s.totals;
     let (added, removed) = s.lines_changed();
     let started = s
@@ -362,12 +400,32 @@ fn draw_card(f: &mut Frame, app: &App, area: Rect) {
         format!("{} requests", t.requests)
     };
     let lines = vec![
-        field("model", if s.model.is_empty() { "—".into() } else { s.model.clone() }),
+        field(
+            "model",
+            if s.model.is_empty() {
+                "—".into()
+            } else {
+                s.model.clone()
+            },
+        ),
         field("client", client),
         field("started", format!("{started} · {} turns", s.turns)),
-        field("tools", if top.is_empty() { "—".into() } else { top.join(" · ") }),
-        field("files", format!("{} touched · +{added}/-{removed}", s.files.len())),
-        field("tokens", format!("out {} · ctx {}", fmt_tokens(t.output), fmt_tokens(t.ctx))),
+        field(
+            "tools",
+            if top.is_empty() {
+                "—".into()
+            } else {
+                top.join(" · ")
+            },
+        ),
+        field(
+            "files",
+            format!("{} touched · +{added}/-{removed}", s.files.len()),
+        ),
+        field(
+            "tokens",
+            format!("out {} · ctx {}", fmt_tokens(t.output), fmt_tokens(t.ctx)),
+        ),
         field("usage", money),
     ];
     f.render_widget(Paragraph::new(lines), inner);
@@ -389,12 +447,19 @@ fn pane_legend(name: &str) -> String {
 fn pane(app: &App, name: &str) -> (Block<'static>, bool) {
     let focused = app.focus == Focus::Feed;
     let title = match app.current() {
-        Some(s) => format!(" {} · {} ", s.label(), if s.model.is_empty() { "—" } else { &s.model }),
+        Some(s) => format!(
+            " {} · {} ",
+            s.label(),
+            if s.model.is_empty() { "—" } else { &s.model }
+        ),
         None => format!(" {name} "),
     };
     let block = Block::bordered()
         .border_style(Style::new().fg(if focused { pal().gold } else { pal().panel }))
-        .title(Span::styled(title, Style::new().fg(if focused { pal().gold } else { pal().dim })))
+        .title(Span::styled(
+            title,
+            Style::new().fg(if focused { pal().gold } else { pal().dim }),
+        ))
         .title_bottom(Span::styled(pane_legend(name), Style::new().fg(pal().gold)));
     (block, focused)
 }
@@ -404,7 +469,10 @@ fn kind_tag(ev: &Ev) -> (String, Color) {
         Kind::Prompt => ("▸ you".into(), pal().gold),
         Kind::Text => ("◆ claude".into(), pal().text),
         Kind::Thinking => ("· think".into(), pal().muted),
-        Kind::Tool => (format!("→ {}", ev.tool.clone().unwrap_or_default()), pal().gold),
+        Kind::Tool => (
+            format!("→ {}", ev.tool.clone().unwrap_or_default()),
+            pal().gold,
+        ),
         Kind::Result => (
             format!("← {}", ev.tool.clone().unwrap_or_default()),
             if ev.ok { pal().ok } else { pal().bad },
@@ -440,11 +508,17 @@ fn draw_feed(f: &mut Frame, app: &mut App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
     let Some(sess) = app.current() else { return };
     for (i, &idx) in filtered.iter().enumerate().skip(top).take(h) {
-        let Some(ev) = sess.events.get(idx) else { continue };
+        let Some(ev) = sess.events.get(idx) else {
+            continue;
+        };
         let selected = focused && i == sel;
         let time = ev
             .ts
-            .map(|t| t.with_timezone(&chrono::Local).format("%H:%M:%S").to_string())
+            .map(|t| {
+                t.with_timezone(&chrono::Local)
+                    .format("%H:%M:%S")
+                    .to_string()
+            })
             .unwrap_or_else(|| "--:--:--".into());
         let (tag, color) = kind_tag(ev);
         let tag = clip_to(&tag, 14);
@@ -453,17 +527,27 @@ fn draw_feed(f: &mut Frame, app: &mut App, area: Rect) {
         let body_style = if selected {
             Style::new().fg(pal().text).bg(pal().panel)
         } else {
-            Style::new().fg(if ev.kind == Kind::Thinking { pal().muted } else { pal().body })
+            Style::new().fg(if ev.kind == Kind::Thinking {
+                pal().muted
+            } else {
+                pal().body
+            })
         };
         lines.push(Line::from(vec![
-            Span::styled(if selected { "▌" } else { " " }, Style::new().fg(pal().gold)),
+            Span::styled(
+                if selected { "▌" } else { " " },
+                Style::new().fg(pal().gold),
+            ),
             Span::styled(format!("{time} "), Style::new().fg(pal().muted)),
             Span::styled(format!("{tag}{pad} "), Style::new().fg(color)),
             Span::styled(text, body_style),
         ]));
     }
     if filtered.is_empty() {
-        lines.push(Line::from(Span::styled(" nothing matches this filter", muted())));
+        lines.push(Line::from(Span::styled(
+            " nothing matches this filter",
+            muted(),
+        )));
     }
     f.render_widget(Paragraph::new(lines), inner);
 }
@@ -492,7 +576,9 @@ fn draw_files(f: &mut Frame, app: &mut App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
     let Some(sess) = app.current() else { return };
     for (i, key) in keys.iter().enumerate().skip(top).take(h) {
-        let Some(t) = sess.files.get(key) else { continue };
+        let Some(t) = sess.files.get(key) else {
+            continue;
+        };
         let selected = focused && i == sel;
         let mut ops = String::new();
         if t.edits > 0 {
@@ -509,7 +595,10 @@ fn draw_files(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             String::new()
         };
-        let age = t.last.map(|l| fmt_age((chrono::Utc::now() - l).num_seconds())).unwrap_or_default();
+        let age = t
+            .last
+            .map(|l| fmt_age((chrono::Utc::now() - l).num_seconds()))
+            .unwrap_or_default();
         let right = format!("{ops} {churn}  {age} ");
         let path = clip_left(
             &crate::event::short_path(key),
@@ -517,7 +606,10 @@ fn draw_files(f: &mut Frame, app: &mut App, area: Rect) {
         );
         lines.push(row(
             vec![
-                Span::styled(if selected { "▌" } else { " " }, Style::new().fg(pal().gold)),
+                Span::styled(
+                    if selected { "▌" } else { " " },
+                    Style::new().fg(pal().gold),
+                ),
                 Span::styled(
                     path,
                     if selected {
@@ -531,7 +623,11 @@ fn draw_files(f: &mut Frame, app: &mut App, area: Rect) {
                 Span::styled(format!("{ops}"), muted()),
                 Span::styled(
                     format!("{churn}  "),
-                    Style::new().fg(if t.added + t.removed > 0 { pal().ok } else { pal().muted }),
+                    Style::new().fg(if t.added + t.removed > 0 {
+                        pal().ok
+                    } else {
+                        pal().muted
+                    }),
                 ),
                 Span::styled(format!("{age} "), muted()),
             ],
@@ -577,7 +673,10 @@ fn draw_list(
 }
 
 fn cursor(selected: bool) -> Span<'static> {
-    Span::styled(if selected { "▌" } else { " " }, Style::new().fg(pal().gold))
+    Span::styled(
+        if selected { "▌" } else { " " },
+        Style::new().fg(pal().gold),
+    )
 }
 
 fn draw_plan(f: &mut Frame, app: &mut App, area: Rect) {
@@ -594,7 +693,9 @@ fn draw_plan(f: &mut Frame, app: &mut App, area: Rect) {
             _ => ("○", pal().muted),
         };
         let style = if t.status == "completed" {
-            Style::new().fg(pal().muted).add_modifier(Modifier::CROSSED_OUT)
+            Style::new()
+                .fg(pal().muted)
+                .add_modifier(Modifier::CROSSED_OUT)
         } else if t.status == "in_progress" {
             Style::new().fg(pal().text)
         } else {
@@ -606,7 +707,10 @@ fn draw_plan(f: &mut Frame, app: &mut App, area: Rect) {
         ]));
     }
     if lines.is_empty() {
-        lines.push(Line::from(Span::styled("  no plan recorded for this session", muted())));
+        lines.push(Line::from(Span::styled(
+            "  no plan recorded for this session",
+            muted(),
+        )));
     }
     if !s.queued.is_empty() {
         lines.push(Line::from(""));
@@ -652,7 +756,9 @@ fn draw_agents(f: &mut Frame, app: &mut App, area: Rect) {
             .map(|(i, a)| {
                 let took = match (a.started, a.finished) {
                     (Some(x), Some(y)) => fmt_ms((y - x).num_milliseconds()),
-                    (Some(x), None) => format!("{} so far", fmt_age((chrono::Utc::now() - x).num_seconds())),
+                    (Some(x), None) => {
+                        format!("{} so far", fmt_age((chrono::Utc::now() - x).num_seconds()))
+                    }
                     _ => "—".into(),
                 };
                 let right = format!("{} · {took} ", a.status);
@@ -667,7 +773,11 @@ fn draw_agents(f: &mut Frame, app: &mut App, area: Rect) {
                     ],
                     vec![Span::styled(
                         right,
-                        Style::new().fg(if a.finished.is_some() { pal().muted } else { pal().gold }),
+                        Style::new().fg(if a.finished.is_some() {
+                            pal().muted
+                        } else {
+                            pal().gold
+                        }),
                     )],
                     w,
                 )
@@ -764,7 +874,14 @@ fn draw_tree(f: &mut Frame, app: &mut App, area: Rect) {
     };
     let mut sel = sel;
     let mut top = top;
-    draw_list(f, inner, lines, &mut sel, &mut top, "not a git repository, or nothing changed");
+    draw_list(
+        f,
+        inner,
+        lines,
+        &mut sel,
+        &mut top,
+        "not a git repository, or nothing changed",
+    );
     app.list_sel = sel;
     app.list_top_right = top;
 }
@@ -772,7 +889,11 @@ fn draw_tree(f: &mut Frame, app: &mut App, area: Rect) {
 fn event_line(ev: &Ev, w: usize, selected: bool, tag_extra: Option<&str>) -> Line<'static> {
     let time = ev
         .ts
-        .map(|t| t.with_timezone(&chrono::Local).format("%H:%M:%S").to_string())
+        .map(|t| {
+            t.with_timezone(&chrono::Local)
+                .format("%H:%M:%S")
+                .to_string()
+        })
         .unwrap_or_else(|| "--:--:--".into());
     let (tag, color) = kind_tag(ev);
     let tag = clip_to(&tag, 14);
@@ -808,7 +929,14 @@ fn draw_errors(f: &mut Frame, app: &mut App, area: Rect) {
     };
     let mut sel = sel;
     let mut top = top;
-    draw_list(f, inner, lines, &mut sel, &mut top, "no errors — nothing failed in this session");
+    draw_list(
+        f,
+        inner,
+        lines,
+        &mut sel,
+        &mut top,
+        "no errors — nothing failed in this session",
+    );
     app.list_sel = sel;
     app.list_top_right = top;
 }
@@ -830,7 +958,11 @@ fn draw_fleet(f: &mut Frame, app: &mut App, area: Rect) {
             Some(event_line(ev, w, i == sel, Some(&format!("{tag:<10}"))))
         })
         .collect();
-    let mut sel = if app.list_sel == 0 && !lines.is_empty() { lines.len() - 1 } else { sel };
+    let mut sel = if app.list_sel == 0 && !lines.is_empty() {
+        lines.len() - 1
+    } else {
+        sel
+    };
     let mut top = top;
     draw_list(f, inner, lines, &mut sel, &mut top, "nothing yet");
     app.list_sel = sel;
@@ -863,7 +995,10 @@ fn draw_stats(f: &mut Frame, app: &mut App, area: Rect) {
 
     head(&mut lines, "usage");
     let models: Vec<String> = s.models.iter().map(|(m, c)| format!("{m} {c}")).collect();
-    lines.push(field("requests", format!("{} · {}", t.requests, models.join(" · "))));
+    lines.push(field(
+        "requests",
+        format!("{} · {}", t.requests, models.join(" · ")),
+    ));
     lines.push(field(
         "client",
         match &s.live {
@@ -877,7 +1012,11 @@ fn draw_stats(f: &mut Frame, app: &mut App, area: Rect) {
     ));
     lines.push(field(
         "cache",
-        format!("read {} · write {}", fmt_tokens(t.cache_read), fmt_tokens(t.cache_write)),
+        format!(
+            "read {} · write {}",
+            fmt_tokens(t.cache_read),
+            fmt_tokens(t.cache_write)
+        ),
     ));
     let window = s.window();
     let pct = (t.ctx as f64 / window as f64 * 100.0).min(100.0);
@@ -888,7 +1027,10 @@ fn draw_stats(f: &mut Frame, app: &mut App, area: Rect) {
             format!("{} of {} ", fmt_tokens(t.ctx), fmt_tokens(window)),
             Style::new().fg(pal().body),
         ),
-        Span::styled("█".repeat(filled), Style::new().fg(if pct > 80.0 { pal().bad } else { pal().gold })),
+        Span::styled(
+            "█".repeat(filled),
+            Style::new().fg(if pct > 80.0 { pal().bad } else { pal().gold }),
+        ),
         Span::styled("░".repeat(24 - filled), Style::new().fg(pal().panel)),
         Span::styled(format!(" {pct:.0}%"), muted()),
     ]));
@@ -898,7 +1040,10 @@ fn draw_stats(f: &mut Frame, app: &mut App, area: Rect) {
             format!("~${:.2} if this ran on the API", t.cost),
         ));
     } else {
-        lines.push(field("plan", "subscription · press $ for API-equivalent cost".into()));
+        lines.push(field(
+            "plan",
+            "subscription · press $ for API-equivalent cost".into(),
+        ));
     }
 
     lines.push(Line::from(""));
@@ -911,13 +1056,22 @@ fn draw_stats(f: &mut Frame, app: &mut App, area: Rect) {
     let max_turn = s.turn_ms.iter().copied().max().unwrap_or(0) as i64;
     lines.push(field(
         "turns",
-        format!("{} · avg {} · longest {}", s.turns, fmt_ms(avg_turn), fmt_ms(max_turn)),
+        format!(
+            "{} · avg {} · longest {}",
+            s.turns,
+            fmt_ms(avg_turn),
+            fmt_ms(max_turn)
+        ),
     ));
     let (avg_lat, max_lat) = s.latency();
     let calls: usize = s.tools.values().sum();
     lines.push(field(
         "tools",
-        format!("{calls} calls · avg {} · worst {}", fmt_ms(avg_lat), fmt_ms(max_lat)),
+        format!(
+            "{calls} calls · avg {} · worst {}",
+            fmt_ms(avg_lat),
+            fmt_ms(max_lat)
+        ),
     ));
     let (added, removed) = s.lines_changed();
     lines.push(field(
@@ -940,7 +1094,10 @@ fn draw_stats(f: &mut Frame, app: &mut App, area: Rect) {
     let bar_w = w.saturating_sub(26).min(40);
     for (name, count) in tools.iter().take(8) {
         lines.push(Line::from(vec![
-            Span::styled(format!("  {:<12}", clip_to(name, 12)), Style::new().fg(pal().body)),
+            Span::styled(
+                format!("  {:<12}", clip_to(name, 12)),
+                Style::new().fg(pal().body),
+            ),
             Span::styled(format!("{:>5} ", count), muted()),
             Span::styled(bar(**count, max, bar_w), Style::new().fg(pal().gold)),
         ]));
@@ -955,7 +1112,10 @@ fn draw_stats(f: &mut Frame, app: &mut App, area: Rect) {
     ]));
     lines.push(row(
         vec![Span::styled("  -60m", muted())],
-        vec![Span::styled(format!("now{}", " ".repeat(w.saturating_sub(65).min(8))), muted())],
+        vec![Span::styled(
+            format!("now{}", " ".repeat(w.saturating_sub(65).min(8))),
+            muted(),
+        )],
         62.min(w),
     ));
     lines.push(Line::from(vec![
@@ -1046,6 +1206,18 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         );
         return;
     }
+    if let Some(warning) = app.compatibility() {
+        if !app.note_visible() {
+            f.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled("▌ ", Style::new().fg(pal().bad)),
+                    Span::styled(warning, Style::new().fg(pal().bad)),
+                ])),
+                area,
+            );
+            return;
+        }
+    }
     let keys = if app.tmux_ok {
         "  j/k session · 1…9 panes · s send · y/d answer · i interrupt · a attach · / search · ? help"
     } else {
@@ -1060,7 +1232,10 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(
         Paragraph::new(row(
             vec![Span::styled(keys.to_string(), muted())],
-            vec![Span::styled(state, Style::new().fg(if app.follow { pal().gold } else { pal().dim }))],
+            vec![Span::styled(
+                state,
+                Style::new().fg(if app.follow { pal().gold } else { pal().dim }),
+            )],
             area.width as usize,
         )),
         area,
@@ -1122,7 +1297,9 @@ fn draw_popup(f: &mut Frame, app: &App, area: Rect) {
         },
         View::Agents => {
             let Some(s) = app.current() else { return };
-            let Some(a) = s.agents.get(app.list_sel) else { return };
+            let Some(a) = s.agents.get(app.list_sel) else {
+                return;
+            };
             let body = a
                 .output_file
                 .as_deref()
@@ -1137,8 +1314,12 @@ fn draw_popup(f: &mut Frame, app: &App, area: Rect) {
         }
         View::Tree => {
             let Some(s) = app.current() else { return };
-            let Some(t) = app.trees.get(&s.id) else { return };
-            let Some(e) = t.entries.get(app.list_sel) else { return };
+            let Some(t) = app.trees.get(&s.id) else {
+                return;
+            };
+            let Some(e) = t.entries.get(app.list_sel) else {
+                return;
+            };
             let body = crate::git::diff(std::path::Path::new(&s.cwd), &e.path)
                 .unwrap_or_else(|| "no diff available".into());
             (e.path.clone(), pal().gold, body)
@@ -1151,13 +1332,19 @@ fn draw_popup(f: &mut Frame, app: &App, area: Rect) {
         View::Errors => {
             let Some(s) = app.current() else { return };
             let idxs = app.errors();
-            let Some(ev) = idxs.get(app.list_sel).and_then(|i| s.events.get(*i)) else { return };
+            let Some(ev) = idxs.get(app.list_sel).and_then(|i| s.events.get(*i)) else {
+                return;
+            };
             event_popup(ev)
         }
         View::Fleet => {
             let merged = app.fleet();
-            let Some((si, ei)) = merged.get(app.list_sel).copied() else { return };
-            let Some(ev) = app.sessions.get(si).and_then(|s| s.events.get(ei)) else { return };
+            let Some((si, ei)) = merged.get(app.list_sel).copied() else {
+                return;
+            };
+            let Some(ev) = app.sessions.get(si).and_then(|s| s.events.get(ei)) else {
+                return;
+            };
             event_popup(ev)
         }
         View::Plan => return,
@@ -1197,7 +1384,10 @@ fn draw_help(f: &mut Frame, area: Rect) {
         ("J / K", "move in the right pane from anywhere"),
         ("g / G", "top / bottom (G resumes following)"),
         ("enter, v", "open the full text — command, output, diff"),
-        ("1 … 9", "feed files stats plan agents mirror tree errors fleet"),
+        (
+            "1 … 9",
+            "feed files stats plan agents mirror tree errors fleet",
+        ),
         ("w", "cycle the right pane"),
         ("f", "filter feed: all, tools, bash, files, talk"),
         ("$", "subscription view or API-equivalent cost"),
@@ -1221,7 +1411,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
         ("l", "only sessions with a running process"),
         ("tab", "switch pane focus"),
         ("r", "rescan for new sessions"),
-        ("q, esc", "quit"),
+        ("q", "quit — esc only dismisses"),
         ("", ""),
         ("⌁", "session runs in tmux, so it can be steered"),
         ("", ""),
