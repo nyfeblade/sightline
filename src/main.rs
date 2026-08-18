@@ -549,12 +549,20 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
         }
 
         if let Some(session) = app.attach_to.take() {
-            ratatui::restore();
-            let outcome = control::attach(&session);
-            *term = ratatui::init();
-            term.clear()?;
-            if let Err(e) = outcome {
-                app.say(e);
+            if control::inside_tmux() {
+                // scope stays where it is; only the tmux client moves.
+                match control::attach(&session) {
+                    Ok(_) => app.say(format!("switched to {session} — ctrl+b L comes back")),
+                    Err(e) => app.say(e),
+                }
+            } else {
+                ratatui::restore();
+                let outcome = control::attach(&session);
+                *term = ratatui::init();
+                term.clear()?;
+                if let Err(e) = outcome {
+                    app.say(e);
+                }
             }
             app.discover();
             app.refresh();

@@ -1481,7 +1481,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
         .title(Span::styled(" keys ", Style::new().fg(pal().gold)));
     let inner = block.inner(rect);
     f.render_widget(block, rect);
-    let rows: [(&str, &str); 27] = [
+    let rows: [(&str, &str); 29] = [
         ("  look", ""),
         ("j / k, ↓ ↑", "select a session"),
         (
@@ -1507,6 +1507,8 @@ fn draw_help(f: &mut Frame, area: Rect) {
         ),
         ("i / m", "interrupt · type into it directly, ctrl+] to stop"),
         ("a / A", "attach full-screen · adopt into tmux"),
+        ("", "  ctrl+b then d comes back (ctrl+b L if scope"),
+        ("", "  is itself running inside tmux)"),
         ("n / W", "new session · new isolated session on a branch"),
         ("M / X", "merge that branch back · remove the checkout"),
         ("b / L", "broadcast a message · launch the fleet file"),

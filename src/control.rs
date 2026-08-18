@@ -157,14 +157,35 @@ pub fn new_session(cwd: &Path, prompt: Option<&str>) -> Result<String, String> {
     Ok(name)
 }
 
-/// Hand the terminal over to tmux until the user detaches.
-pub fn attach(session: &str) -> Result<(), String> {
+/// True when scope is itself running inside tmux. Attaching from there is
+/// refused by tmux — the client has to be switched instead.
+pub fn inside_tmux() -> bool {
+    std::env::var_os("TMUX").is_some()
+}
+
+/// Put the way back on screen. A session drawn full-screen gives no clue how
+/// to leave it, so the hint lives in the target's own status line.
+fn show_way_back(session: &str, hint: &str) {
+    tmux(&["set-option", "-t", session, "status", "on"]);
+    tmux(&["set-option", "-t", session, "status-right", hint]);
+}
+
+/// Show a session full-screen. Returns true when scope's own terminal was
+/// handed over and must be taken back afterwards; false when the tmux client
+/// was switched instead, which leaves scope running where it is.
+pub fn attach(session: &str) -> Result<bool, String> {
+    if inside_tmux() {
+        show_way_back(session, " ctrl+b L → back to scope ");
+        tmux(&["switch-client", "-t", session]).ok_or("tmux switch-client failed")?;
+        return Ok(false);
+    }
+    show_way_back(session, " ctrl+b d → back to scope ");
     let status = Command::new("tmux")
         .args(["attach", "-t", session])
         .status()
         .map_err(|e| e.to_string())?;
     if status.success() {
-        Ok(())
+        Ok(true)
     } else {
         Err("tmux attach failed".into())
     }
