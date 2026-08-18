@@ -280,10 +280,13 @@ impl App {
         };
         app.discover();
         app.refresh();
-        // refresh() preserves the selected session across re-sorts; on the very
-        // first pass there is nothing to preserve, so start at the top — the
-        // most active session.
-        app.sel = 0;
+        // Start on something that is actually running: opening on a session
+        // that finished hours ago is a poor first impression.
+        app.sel = app
+            .sessions
+            .iter()
+            .position(|s| !matches!(s.status(), Status::Ended))
+            .unwrap_or(0);
         app.list_top = 0;
         app
     }
@@ -659,11 +662,21 @@ impl App {
         // blocked on a person jumps the queue; everything else stays in the
         // order it started, like tabs.
         self.sessions.sort_by(|a, b| {
-            let blocked_a = !blocked.contains(&a.id) as u8;
-            let blocked_b = !blocked.contains(&b.id) as u8;
+            // Three groups, each ordered by when it started: whatever is
+            // blocked on a person, then everything still running, then what has
+            // finished. Within a group nothing moves, so the cursor stays put.
+            let group = |s: &Session| -> u8 {
+                if blocked.contains(&s.id) {
+                    0
+                } else if matches!(s.status(), Status::Ended) {
+                    2
+                } else {
+                    1
+                }
+            };
             let now = chrono::Utc::now();
-            blocked_a
-                .cmp(&blocked_b)
+            group(a)
+                .cmp(&group(b))
                 .then(a.started.unwrap_or(now).cmp(&b.started.unwrap_or(now)))
                 .then(a.id.cmp(&b.id))
         });
