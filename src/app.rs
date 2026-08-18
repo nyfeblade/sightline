@@ -1,10 +1,26 @@
 //! Discovery, refresh, and view state.
 
 use crate::event::{Ev, Filter};
+use crate::control::{self, Pane};
 use crate::registry;
 use crate::session::{Session, Status};
-use std::path::{Path, PathBuf};
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
+
+/// What a typed line will do when it is submitted.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Prompt {
+    Send,
+    Broadcast,
+    NewSession,
+}
+
+pub struct Input {
+    pub kind: Prompt,
+    pub label: String,
+    pub buf: String,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
@@ -60,7 +76,15 @@ pub struct App {
     pub only_live: bool,
     pub since: Duration,
     pub last_discover: Instant,
+    /// transient message shown in the footer
     pub note: String,
+    pub note_at: Instant,
+    /// tmux panes, and the pane each live session is running inside
+    pub tmux_ok: bool,
+    pub steer: HashMap<String, Pane>,
+    pub input: Option<Input>,
+    /// set when the user asks to hand the terminal over to tmux
+    pub attach_to: Option<String>,
 }
 
 impl App {
@@ -87,6 +111,11 @@ impl App {
             since,
             last_discover: Instant::now(),
             note: String::new(),
+            note_at: Instant::now(),
+            tmux_ok: control::available(),
+            steer: HashMap::new(),
+            input: None,
+            attach_to: None,
         };
         app.discover();
         app.refresh();
@@ -145,18 +174,136 @@ impl App {
                 continue;
             }
             let mut sess = Session::open(path);
-            sess.pump();
+            sess.backfill();
             self.sessions.push(sess);
         }
+        self.rescan_panes();
         self.last_discover = Instant::now();
+    }
+
+    /// Map live sessions to the tmux pane they run in, if any.
+    pub fn rescan_panes(&mut self) {
+        self.steer.clear();
+        if !self.tmux_ok {
+            return;
+        }
+        let panes = control::panes();
+        if panes.is_empty() {
+            return;
+        }
+        for s in &self.sessions {
+            if let Some(live) = &s.live {
+                if let Some(p) = control::pane_for(live.pid, &panes) {
+                    self.steer.insert(s.id.clone(), p);
+                }
+            }
+        }
+    }
+
+    pub fn pane_of(&self, id: &str) -> Option<&Pane> {
+        self.steer.get(id)
+    }
+
+    pub fn say(&mut self, msg: impl Into<String>) {
+        self.note = msg.into();
+        self.note_at = Instant::now();
+    }
+
+    /// The note fades so the key hints come back.
+    pub fn note_visible(&self) -> bool {
+        !self.note.is_empty() && self.note_at.elapsed() < Duration::from_secs(6)
+    }
+
+    pub fn open_input(&mut self, kind: Prompt) {
+        let label = match kind {
+            Prompt::Send => match self.current() {
+                Some(s) => format!("send to {}", s.label()),
+                None => return,
+            },
+            Prompt::Broadcast => format!("send to all {} steerable", self.steer.len()),
+            Prompt::NewSession => "new session in".into(),
+        };
+        let buf = if kind == Prompt::NewSession {
+            self.current()
+                .map(|s| s.cwd.clone())
+                .filter(|c| !c.is_empty())
+                .unwrap_or_else(|| {
+                    std::env::current_dir()
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                })
+        } else {
+            String::new()
+        };
+        self.input = Some(Input { kind, label, buf });
+    }
+
+    /// Run whatever the input bar was collecting.
+    pub fn submit_input(&mut self) {
+        let Some(input) = self.input.take() else { return };
+        let text = input.buf.trim().to_string();
+        match input.kind {
+            Prompt::Send => {
+                let Some(id) = self.current().map(|s| s.id.clone()) else { return };
+                match self.pane_of(&id).cloned() {
+                    Some(p) => match control::send_text(&p.id, &text) {
+                        Ok(()) => self.say(format!("sent to {}", p.session)),
+                        Err(e) => self.say(e),
+                    },
+                    None => self.say("that session is not running in tmux"),
+                }
+            }
+            Prompt::Broadcast => {
+                let panes: Vec<Pane> = self.steer.values().cloned().collect();
+                let mut ok = 0;
+                for p in &panes {
+                    if control::send_text(&p.id, &text).is_ok() {
+                        ok += 1;
+                    }
+                }
+                self.say(format!("sent to {ok} sessions"));
+            }
+            Prompt::NewSession => {
+                let path = PathBuf::from(if text.is_empty() { ".".into() } else { text });
+                match control::new_session(&path, None) {
+                    Ok(name) => {
+                        self.say(format!("started {name} — it will appear here shortly"));
+                        self.discover();
+                    }
+                    Err(e) => self.say(e),
+                }
+            }
+        }
+    }
+
+    /// Escape interrupts the current turn, exactly as pressing it would.
+    pub fn interrupt(&mut self) {
+        let Some(id) = self.current().map(|s| s.id.clone()) else { return };
+        match self.pane_of(&id).cloned() {
+            Some(p) => match control::send_key(&p.id, "Escape") {
+                Ok(()) => self.say("interrupt sent"),
+                Err(e) => self.say(e),
+            },
+            None => self.say("that session is not running in tmux"),
+        }
+    }
+
+    pub fn attach(&mut self) {
+        let Some(id) = self.current().map(|s| s.id.clone()) else { return };
+        match self.pane_of(&id) {
+            Some(p) => self.attach_to = Some(p.session.clone()),
+            None => self.say("that session is not running in tmux"),
+        }
     }
 
     /// Read new transcript lines, re-attach liveness, re-sort.
     pub fn refresh(&mut self) {
         let live = registry::scan(&self.sessions_dir);
+        let seen = registry::available(&self.sessions_dir);
         for s in &mut self.sessions {
             s.pump();
             s.live = live.get(&s.id).cloned();
+            s.registry_seen = seen;
         }
         let selected_id = self.sessions.get(self.sel).map(|s| s.id.clone());
         self.sessions.sort_by(|a, b| {
@@ -290,18 +437,31 @@ impl App {
     }
 }
 
-pub fn default_root() -> PathBuf {
-    if let Ok(dir) = std::env::var("CLAUDE_CONFIG_DIR") {
-        return Path::new(&dir).join("projects");
+/// Home directory across platforms; falls back to the working directory so a
+/// missing HOME degrades to a clear "no transcripts" message, not a panic.
+pub fn home() -> PathBuf {
+    for key in ["HOME", "USERPROFILE"] {
+        if let Ok(dir) = std::env::var(key) {
+            if !dir.is_empty() {
+                return PathBuf::from(dir);
+            }
+        }
     }
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
-    Path::new(&home).join(".claude").join("projects")
+    PathBuf::from(".")
+}
+
+/// Claude Code's config directory, honouring CLAUDE_CONFIG_DIR.
+pub fn config_dir() -> PathBuf {
+    match std::env::var("CLAUDE_CONFIG_DIR") {
+        Ok(dir) if !dir.is_empty() => PathBuf::from(dir),
+        _ => home().join(".claude"),
+    }
+}
+
+pub fn default_root() -> PathBuf {
+    config_dir().join("projects")
 }
 
 pub fn default_sessions_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("CLAUDE_CONFIG_DIR") {
-        return Path::new(&dir).join("sessions");
-    }
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
-    Path::new(&home).join(".claude").join("sessions")
+    config_dir().join("sessions")
 }

@@ -9,18 +9,74 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
-pub const MIDNIGHT: Color = Color::Rgb(0x0B, 0x12, 0x20);
-pub const GOLD: Color = Color::Rgb(0xC0, 0x85, 0x42);
-const TEXT: Color = Color::Rgb(0xD6, 0xDC, 0xE8);
-const BODY: Color = Color::Rgb(0xC2, 0xCA, 0xD9);
-const MUTED: Color = Color::Rgb(0x64, 0x70, 0x84);
-const DIM: Color = Color::Rgb(0x8A, 0x94, 0xA6);
-const OK: Color = Color::Rgb(0x74, 0xA8, 0x7C);
-const BAD: Color = Color::Rgb(0xC4, 0x5D, 0x4E);
-const PANEL: Color = Color::Rgb(0x1A, 0x24, 0x36);
+use std::sync::OnceLock;
+
+/// Colours resolve once at startup. A terminal that asks for no colour (the
+/// NO_COLOR convention, or --plain) gets the same layout with nothing but the
+/// terminal's own foreground, so the tool is readable anywhere.
+pub struct Palette {
+    pub midnight: Color,
+    pub gold: Color,
+    pub text: Color,
+    pub body: Color,
+    pub muted: Color,
+    pub dim: Color,
+    pub ok: Color,
+    pub bad: Color,
+    pub panel: Color,
+}
+
+static PALETTE: OnceLock<Palette> = OnceLock::new();
+
+pub fn init_palette(plain: bool) {
+    let p = if plain {
+        Palette {
+            midnight: Color::Reset,
+            gold: Color::Reset,
+            text: Color::Reset,
+            body: Color::Reset,
+            muted: Color::DarkGray,
+            dim: Color::Gray,
+            ok: Color::Reset,
+            bad: Color::Reset,
+            panel: Color::DarkGray,
+        }
+    } else {
+        Palette {
+            midnight: Color::Rgb(0x0B, 0x12, 0x20),
+            gold: Color::Rgb(0xC0, 0x85, 0x42),
+            text: Color::Rgb(0xD6, 0xDC, 0xE8),
+            body: Color::Rgb(0xC2, 0xCA, 0xD9),
+            muted: Color::Rgb(0x64, 0x70, 0x84),
+            dim: Color::Rgb(0x8A, 0x94, 0xA6),
+            ok: Color::Rgb(0x74, 0xA8, 0x7C),
+            bad: Color::Rgb(0xC4, 0x5D, 0x4E),
+            panel: Color::Rgb(0x1A, 0x24, 0x36),
+        }
+    };
+    let _ = PALETTE.set(p);
+}
+
+fn pal() -> &'static Palette {
+    PALETTE.get_or_init(|| {
+        init_palette(false);
+        // set() above filled it; this arm only runs if init was never called.
+        Palette {
+            midnight: Color::Rgb(0x0B, 0x12, 0x20),
+            gold: Color::Rgb(0xC0, 0x85, 0x42),
+            text: Color::Rgb(0xD6, 0xDC, 0xE8),
+            body: Color::Rgb(0xC2, 0xCA, 0xD9),
+            muted: Color::Rgb(0x64, 0x70, 0x84),
+            dim: Color::Rgb(0x8A, 0x94, 0xA6),
+            ok: Color::Rgb(0x74, 0xA8, 0x7C),
+            bad: Color::Rgb(0xC4, 0x5D, 0x4E),
+            panel: Color::Rgb(0x1A, 0x24, 0x36),
+        }
+    })
+}
 
 fn muted() -> Style {
-    Style::new().fg(MUTED)
+    Style::new().fg(pal().muted)
 }
 
 pub fn fmt_tokens(n: u64) -> String {
@@ -100,7 +156,7 @@ fn row(left: Vec<Span<'static>>, right: Vec<Span<'static>>, width: usize) -> Lin
 fn field(key: &str, value: String) -> Line<'static> {
     Line::from(vec![
         Span::styled(format!("  {key:<9}"), muted()),
-        Span::styled(value, Style::new().fg(BODY)),
+        Span::styled(value, Style::new().fg(pal().body)),
     ])
 }
 
@@ -120,16 +176,16 @@ fn spark(vals: &[u64]) -> String {
 
 fn status_mark(s: &Session) -> (String, Color) {
     match s.status() {
-        Status::Running(tool) => (format!("● {tool}"), GOLD),
-        Status::Working => ("● working".into(), GOLD),
-        Status::Waiting => ("○ waiting".into(), DIM),
-        Status::Ended => ("· ended".into(), MUTED),
+        Status::Running(tool) => (format!("● {tool}"), pal().gold),
+        Status::Working => ("● working".into(), pal().gold),
+        Status::Waiting => ("○ waiting".into(), pal().dim),
+        Status::Ended => ("· ended".into(), pal().muted),
     }
 }
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     let area = f.area();
-    f.render_widget(Block::new().style(Style::new().bg(MIDNIGHT)), area);
+    f.render_widget(Block::new().style(Style::new().bg(pal().midnight)), area);
     let [header, body, footer] =
         Layout::vertical([Constraint::Length(1), Constraint::Min(0), Constraint::Length(1)])
             .areas(area);
@@ -159,18 +215,18 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     let (tokens, cost, working) = app.totals();
     let unpriced = app.sessions.iter().any(|s| s.totals.unpriced > 0);
     let left = vec![
-        Span::styled("▌", Style::new().fg(GOLD)),
-        Span::styled(" nyfe scope ", Style::new().fg(GOLD).add_modifier(Modifier::BOLD)),
+        Span::styled("▌", Style::new().fg(pal().gold)),
+        Span::styled(" nyfe scope ", Style::new().fg(pal().gold).add_modifier(Modifier::BOLD)),
         Span::styled(format!("· {} sessions · {working} working", app.sessions.len()), muted()),
     ];
-    let mut right = vec![Span::styled(format!("{} out ", fmt_tokens(tokens)), Style::new().fg(DIM))];
+    let mut right = vec![Span::styled(format!("{} out ", fmt_tokens(tokens)), Style::new().fg(pal().dim))];
     if app.show_cost {
         right.push(Span::styled(
             format!("~${cost:.2} if API{} ", if unpriced { "*" } else { "" }),
-            Style::new().fg(GOLD),
+            Style::new().fg(pal().gold),
         ));
     } else {
-        right.push(Span::styled("subscription ", Style::new().fg(GOLD)));
+        right.push(Span::styled("subscription ", Style::new().fg(pal().gold)));
     }
     f.render_widget(Paragraph::new(row(left, right, area.width as usize)), area);
 }
@@ -178,8 +234,8 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
 fn draw_sessions(f: &mut Frame, app: &mut App, area: Rect) {
     let focused = app.focus == Focus::Sessions;
     let block = Block::bordered()
-        .border_style(Style::new().fg(if focused { GOLD } else { PANEL }))
-        .title(Span::styled(" sessions ", Style::new().fg(if focused { GOLD } else { DIM })));
+        .border_style(Style::new().fg(if focused { pal().gold } else { pal().panel }))
+        .title(Span::styled(" sessions ", Style::new().fg(if focused { pal().gold } else { pal().dim })));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -194,6 +250,8 @@ fn draw_sessions(f: &mut Frame, app: &mut App, area: Rect) {
     }
 
     let w = inner.width as usize;
+    let steerable: Vec<bool> =
+        app.sessions.iter().map(|s| app.steer.contains_key(&s.id)).collect();
     let mut lines: Vec<Line> = Vec::new();
     for (i, s) in app.sessions.iter().enumerate().skip(app.list_top).take(rows) {
         let selected = i == app.sel;
@@ -202,18 +260,22 @@ fn draw_sessions(f: &mut Frame, app: &mut App, area: Rect) {
         let word: String = mark.chars().skip(2).collect();
         let age = fmt_age(s.age_secs());
         let label_style = if selected {
-            Style::new().fg(TEXT).add_modifier(Modifier::BOLD)
+            Style::new().fg(pal().text).add_modifier(Modifier::BOLD)
         } else {
-            Style::new().fg(TEXT)
+            Style::new().fg(pal().text)
         };
-        let label_w = w.saturating_sub(age.chars().count() + 5);
+        let steer = if *steerable.get(i).unwrap_or(&false) { "⌁ " } else { "" };
+        let label_w = w.saturating_sub(age.chars().count() + steer.chars().count() + 5);
         lines.push(row(
             vec![
-                Span::styled(if selected { "▌" } else { " " }, Style::new().fg(GOLD)),
+                Span::styled(if selected { "▌" } else { " " }, Style::new().fg(pal().gold)),
                 Span::styled(format!("{dot} "), Style::new().fg(color)),
                 Span::styled(clip_to(&s.label(), label_w), label_style),
             ],
-            vec![Span::styled(format!("{age} "), muted())],
+            vec![
+                Span::styled(steer.to_string(), Style::new().fg(pal().gold)),
+                Span::styled(format!("{age} "), muted()),
+            ],
             w,
         ));
         let right = format!("ctx {} ", fmt_tokens(s.totals.ctx));
@@ -236,8 +298,8 @@ fn draw_sessions(f: &mut Frame, app: &mut App, area: Rect) {
 
 fn draw_card(f: &mut Frame, app: &App, area: Rect) {
     let block = Block::bordered()
-        .border_style(Style::new().fg(PANEL))
-        .title(Span::styled(" session ", Style::new().fg(DIM)));
+        .border_style(Style::new().fg(pal().panel))
+        .title(Span::styled(" session ", Style::new().fg(pal().dim)));
     let inner = block.inner(area);
     f.render_widget(block, area);
     let Some(s) = app.current() else { return };
@@ -287,23 +349,23 @@ fn pane(app: &App, name: &str) -> (Block<'static>, bool) {
         None => format!(" {name} "),
     };
     let block = Block::bordered()
-        .border_style(Style::new().fg(if focused { GOLD } else { PANEL }))
-        .title(Span::styled(title, Style::new().fg(if focused { GOLD } else { DIM })))
-        .title_bottom(Span::styled(pane_legend(name), Style::new().fg(GOLD)));
+        .border_style(Style::new().fg(if focused { pal().gold } else { pal().panel }))
+        .title(Span::styled(title, Style::new().fg(if focused { pal().gold } else { pal().dim })))
+        .title_bottom(Span::styled(pane_legend(name), Style::new().fg(pal().gold)));
     (block, focused)
 }
 
 fn kind_tag(ev: &Ev) -> (String, Color) {
     match ev.kind {
-        Kind::Prompt => ("▸ you".into(), GOLD),
-        Kind::Text => ("◆ claude".into(), TEXT),
-        Kind::Thinking => ("· think".into(), MUTED),
-        Kind::Tool => (format!("→ {}", ev.tool.clone().unwrap_or_default()), GOLD),
+        Kind::Prompt => ("▸ you".into(), pal().gold),
+        Kind::Text => ("◆ claude".into(), pal().text),
+        Kind::Thinking => ("· think".into(), pal().muted),
+        Kind::Tool => (format!("→ {}", ev.tool.clone().unwrap_or_default()), pal().gold),
         Kind::Result => (
             format!("← {}", ev.tool.clone().unwrap_or_default()),
-            if ev.ok { OK } else { BAD },
+            if ev.ok { pal().ok } else { pal().bad },
         ),
-        Kind::System => ("⚙ sys".into(), if ev.ok { DIM } else { BAD }),
+        Kind::System => ("⚙ sys".into(), if ev.ok { pal().dim } else { pal().bad }),
     }
 }
 
@@ -345,13 +407,13 @@ fn draw_feed(f: &mut Frame, app: &mut App, area: Rect) {
         let pad = " ".repeat(14usize.saturating_sub(tag.chars().count()));
         let text = clip_to(&ev.head, w.saturating_sub(25));
         let body_style = if selected {
-            Style::new().fg(TEXT).bg(PANEL)
+            Style::new().fg(pal().text).bg(pal().panel)
         } else {
-            Style::new().fg(if ev.kind == Kind::Thinking { MUTED } else { BODY })
+            Style::new().fg(if ev.kind == Kind::Thinking { pal().muted } else { pal().body })
         };
         lines.push(Line::from(vec![
-            Span::styled(if selected { "▌" } else { " " }, Style::new().fg(GOLD)),
-            Span::styled(format!("{time} "), Style::new().fg(MUTED)),
+            Span::styled(if selected { "▌" } else { " " }, Style::new().fg(pal().gold)),
+            Span::styled(format!("{time} "), Style::new().fg(pal().muted)),
             Span::styled(format!("{tag}{pad} "), Style::new().fg(color)),
             Span::styled(text, body_style),
         ]));
@@ -411,13 +473,13 @@ fn draw_files(f: &mut Frame, app: &mut App, area: Rect) {
         );
         lines.push(row(
             vec![
-                Span::styled(if selected { "▌" } else { " " }, Style::new().fg(GOLD)),
+                Span::styled(if selected { "▌" } else { " " }, Style::new().fg(pal().gold)),
                 Span::styled(
                     path,
                     if selected {
-                        Style::new().fg(TEXT).bg(PANEL)
+                        Style::new().fg(pal().text).bg(pal().panel)
                     } else {
-                        Style::new().fg(BODY)
+                        Style::new().fg(pal().body)
                     },
                 ),
             ],
@@ -425,7 +487,7 @@ fn draw_files(f: &mut Frame, app: &mut App, area: Rect) {
                 Span::styled(format!("{ops}"), muted()),
                 Span::styled(
                     format!("{churn}  "),
-                    Style::new().fg(if t.added + t.removed > 0 { OK } else { MUTED }),
+                    Style::new().fg(if t.added + t.removed > 0 { pal().ok } else { pal().muted }),
                 ),
                 Span::styled(format!("{age} "), muted()),
             ],
@@ -458,7 +520,7 @@ fn draw_stats(f: &mut Frame, app: &mut App, area: Rect) {
     let head = |lines: &mut Vec<Line>, title: &str| {
         lines.push(Line::from(Span::styled(
             format!(" {title}"),
-            Style::new().fg(GOLD).add_modifier(Modifier::BOLD),
+            Style::new().fg(pal().gold).add_modifier(Modifier::BOLD),
         )));
     };
 
@@ -487,10 +549,10 @@ fn draw_stats(f: &mut Frame, app: &mut App, area: Rect) {
         Span::styled(format!("  {:<9}", "context"), muted()),
         Span::styled(
             format!("{} of {} ", fmt_tokens(t.ctx), fmt_tokens(window)),
-            Style::new().fg(BODY),
+            Style::new().fg(pal().body),
         ),
-        Span::styled("█".repeat(filled), Style::new().fg(if pct > 80.0 { BAD } else { GOLD })),
-        Span::styled("░".repeat(24 - filled), Style::new().fg(PANEL)),
+        Span::styled("█".repeat(filled), Style::new().fg(if pct > 80.0 { pal().bad } else { pal().gold })),
+        Span::styled("░".repeat(24 - filled), Style::new().fg(pal().panel)),
         Span::styled(format!(" {pct:.0}%"), muted()),
     ]));
     if app.show_cost {
@@ -529,7 +591,7 @@ fn draw_stats(f: &mut Frame, app: &mut App, area: Rect) {
         Span::styled(format!("  {:<9}", "errors"), muted()),
         Span::styled(
             s.errors.to_string(),
-            Style::new().fg(if s.errors > 0 { BAD } else { BODY }),
+            Style::new().fg(if s.errors > 0 { pal().bad } else { pal().body }),
         ),
     ]));
 
@@ -541,9 +603,9 @@ fn draw_stats(f: &mut Frame, app: &mut App, area: Rect) {
     let bar_w = w.saturating_sub(26).min(40);
     for (name, count) in tools.iter().take(8) {
         lines.push(Line::from(vec![
-            Span::styled(format!("  {:<12}", clip_to(name, 12)), Style::new().fg(BODY)),
+            Span::styled(format!("  {:<12}", clip_to(name, 12)), Style::new().fg(pal().body)),
             Span::styled(format!("{:>5} ", count), muted()),
-            Span::styled(bar(**count, max, bar_w), Style::new().fg(GOLD)),
+            Span::styled(bar(**count, max, bar_w), Style::new().fg(pal().gold)),
         ]));
     }
 
@@ -552,7 +614,7 @@ fn draw_stats(f: &mut Frame, app: &mut App, area: Rect) {
     let acts = s.activity(60);
     lines.push(Line::from(vec![
         Span::raw("  "),
-        Span::styled(spark(&acts), Style::new().fg(GOLD)),
+        Span::styled(spark(&acts), Style::new().fg(pal().gold)),
     ]));
     lines.push(row(
         vec![Span::styled("  -60m", muted())],
@@ -575,7 +637,35 @@ fn draw_stats(f: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
-    let keys = "  j/k session · J/K move · enter open · 1 feed 2 files 3 stats · f filter · $ cost · ? help";
+    if let Some(input) = &app.input {
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("▌", Style::new().fg(pal().gold)),
+                Span::styled(format!(" {} ", input.label), Style::new().fg(pal().gold)),
+                Span::styled("› ", muted()),
+                Span::styled(input.buf.clone(), Style::new().fg(pal().text)),
+                Span::styled("▏", Style::new().fg(pal().gold)),
+                Span::styled("   enter send · esc cancel", muted()),
+            ])),
+            area,
+        );
+        return;
+    }
+    if app.note_visible() {
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("▌ ", Style::new().fg(pal().gold)),
+                Span::styled(app.note.clone(), Style::new().fg(pal().gold)),
+            ])),
+            area,
+        );
+        return;
+    }
+    let keys = if app.tmux_ok {
+        "  j/k session · enter open · 1 2 3 panes · s send · i interrupt · a attach · n new · ? help"
+    } else {
+        "  j/k session · J/K move · enter open · 1 feed 2 files 3 stats · f filter · $ cost · ? help"
+    };
     let state = format!(
         "{} · {} · {} ",
         app.view.label(),
@@ -585,7 +675,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(
         Paragraph::new(row(
             vec![Span::styled(keys.to_string(), muted())],
-            vec![Span::styled(state, Style::new().fg(if app.follow { GOLD } else { DIM }))],
+            vec![Span::styled(state, Style::new().fg(if app.follow { pal().gold } else { pal().dim }))],
             area.width as usize,
         )),
         area,
@@ -613,11 +703,11 @@ fn body_lines(text: &str) -> Vec<Line<'static>> {
     text.lines()
         .map(|l| {
             let style = match l.chars().next() {
-                Some('+') => Style::new().fg(OK),
-                Some('-') => Style::new().fg(BAD),
-                Some('@') if l.starts_with("@@") => Style::new().fg(GOLD),
-                Some('─') => Style::new().fg(GOLD),
-                _ => Style::new().fg(BODY),
+                Some('+') => Style::new().fg(pal().ok),
+                Some('-') => Style::new().fg(pal().bad),
+                Some('@') if l.starts_with("@@") => Style::new().fg(pal().gold),
+                Some('─') => Style::new().fg(pal().gold),
+                _ => Style::new().fg(pal().body),
             };
             Line::from(Span::styled(l.to_string(), style))
         })
@@ -627,7 +717,7 @@ fn body_lines(text: &str) -> Vec<Line<'static>> {
 fn draw_popup(f: &mut Frame, app: &App, area: Rect) {
     let (title, color, body) = match app.view {
         View::Files => match app.file_history() {
-            Some((path, text)) => (crate::event::short_path(&path), GOLD, text),
+            Some((path, text)) => (crate::event::short_path(&path), pal().gold, text),
             None => return,
         },
         _ => match app.event_at(app.feed_sel) {
@@ -641,8 +731,8 @@ fn draw_popup(f: &mut Frame, app: &App, area: Rect) {
     let rect = centered(area, 84, 74);
     f.render_widget(Clear, rect);
     let block = Block::bordered()
-        .border_style(Style::new().fg(GOLD))
-        .style(Style::new().bg(MIDNIGHT))
+        .border_style(Style::new().fg(pal().gold))
+        .style(Style::new().bg(pal().midnight))
         .title(Span::styled(format!(" {title} "), Style::new().fg(color)))
         .title_bottom(Span::styled(" j/k scroll · esc close ", muted()));
     let inner = block.inner(rect);
@@ -659,9 +749,9 @@ fn draw_help(f: &mut Frame, area: Rect) {
     let rect = centered(area, 64, 70);
     f.render_widget(Clear, rect);
     let block = Block::bordered()
-        .border_style(Style::new().fg(GOLD))
-        .style(Style::new().bg(MIDNIGHT))
-        .title(Span::styled(" keys ", Style::new().fg(GOLD)));
+        .border_style(Style::new().fg(pal().gold))
+        .style(Style::new().bg(pal().midnight))
+        .title(Span::styled(" keys ", Style::new().fg(pal().gold)));
     let inner = block.inner(rect);
     f.render_widget(block, rect);
     let rows = [
@@ -673,10 +763,17 @@ fn draw_help(f: &mut Frame, area: Rect) {
         ("w", "cycle the right pane"),
         ("f", "filter feed: all, tools, bash, files, talk"),
         ("$", "subscription view or API-equivalent cost"),
+        ("s", "type a message into the selected session"),
+        ("b", "send one message to every steerable session"),
+        ("i", "interrupt the selected session (sends Escape)"),
+        ("a", "attach to it full-screen; detach to come back"),
+        ("n", "start a new session in a tmux session"),
         ("l", "only sessions with a running process"),
         ("tab", "switch pane focus"),
         ("r", "rescan for new sessions"),
         ("q, esc", "quit"),
+        ("", ""),
+        ("⌁", "session runs in tmux, so it can be steered"),
         ("", ""),
         ("cost", "an estimate of what these tokens would cost"),
         ("", "at API rates — a subscription is not billed"),
@@ -686,8 +783,8 @@ fn draw_help(f: &mut Frame, area: Rect) {
         .iter()
         .map(|(k, d)| {
             Line::from(vec![
-                Span::styled(format!(" {k:<12}"), Style::new().fg(GOLD)),
-                Span::styled((*d).to_string(), Style::new().fg(TEXT)),
+                Span::styled(format!(" {k:<12}"), Style::new().fg(pal().gold)),
+                Span::styled((*d).to_string(), Style::new().fg(pal().text)),
             ])
         })
         .collect();

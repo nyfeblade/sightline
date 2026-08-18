@@ -23,6 +23,13 @@ impl Tail {
         self.offset
     }
 
+    /// Start reading from `offset` instead of the top. Used to cap how much
+    /// history a very large transcript replays at startup.
+    pub fn skip_to(&mut self, offset: u64) {
+        self.offset = offset;
+        self.partial.clear();
+    }
+
     /// Complete lines appended since the previous poll.
     pub fn poll(&mut self) -> std::io::Result<Vec<String>> {
         let len = std::fs::metadata(&self.path)?.len();

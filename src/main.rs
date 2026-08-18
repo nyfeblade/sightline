@@ -1,6 +1,7 @@
 //! nyfe scope — watch every Claude Code session on this machine, live.
 
 mod app;
+mod control;
 mod event;
 mod pricing;
 mod registry;
@@ -9,7 +10,7 @@ mod tail;
 mod ui;
 
 use anyhow::Result;
-use app::{App, Focus, View};
+use app::{App, Focus, Prompt, View};
 use crossterm::event::{self as cevent, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::DefaultTerminal;
 use session::Status;
@@ -20,6 +21,8 @@ const USAGE: &str = "\
 nyfe scope — live view of what Claude Code is doing
 
 usage: scope [options]
+       scope new [path]        start a Claude Code session in tmux and exit
+       scope send <who> <text> type a line into a running session and submit it
 
 options:
   --since <dur>   include sessions touched within this window (default 24h)
@@ -27,6 +30,7 @@ options:
   --live          only sessions with a running claude process
   --cost          show API-equivalent cost (default: subscription view)
   --view <name>   start on feed, files, or stats
+  --plain         no colour (also honours NO_COLOR)
   --once          print a one-shot table instead of the live view
   --root <path>   transcript root (default ~/.claude/projects)
   -h, --help      this text
@@ -51,9 +55,62 @@ fn main() -> Result<()> {
     let mut once = false;
     let mut show_cost = false;
     let mut view = View::Feed;
+    let mut plain = std::env::var_os("NO_COLOR").is_some();
     let mut root = app::default_root();
 
     let args: Vec<String> = std::env::args().skip(1).collect();
+
+    if args.first().map(String::as_str) == Some("send") {
+        let who = args.get(1).ok_or_else(|| anyhow::anyhow!("usage: scope send <who> <text>"))?;
+        let text = args[2..].join(" ");
+        if text.is_empty() {
+            anyhow::bail!("usage: scope send <who> <text>");
+        }
+        // A tmux session or pane name works even before the session has written
+        // a transcript — which is the case while it is still asking whether the
+        // folder is trusted.
+        let panes = control::panes();
+        if let Some(p) = panes.iter().find(|p| p.session == *who || p.id == *who) {
+            control::send_text(&p.id, &text).map_err(|e| anyhow::anyhow!(e))?;
+            println!("sent to {} ({})", p.session, p.id);
+            return Ok(());
+        }
+
+        let mut app = App::new(
+            app::default_root(),
+            app::default_sessions_dir(),
+            Duration::from_secs(7 * 86_400),
+            true,
+        );
+        app.rescan_panes();
+        let hit = app
+            .sessions
+            .iter()
+            .find(|s| {
+                let name = app.steer.get(&s.id).map(|p| p.session.clone()).unwrap_or_default();
+                s.id.starts_with(who.as_str())
+                    || s.label().eq_ignore_ascii_case(who)
+                    || name == *who
+            })
+            .map(|s| s.id.clone())
+            .ok_or_else(|| anyhow::anyhow!("no live session matching {who}"))?;
+        let pane = app
+            .pane_of(&hit)
+            .ok_or_else(|| anyhow::anyhow!("{who} is not running in tmux, so it cannot be typed into"))?
+            .clone();
+        control::send_text(&pane.id, &text).map_err(|e| anyhow::anyhow!(e))?;
+        println!("sent to {} ({})", pane.session, pane.id);
+        return Ok(());
+    }
+
+    if args.first().map(String::as_str) == Some("new") {
+        let path = args.get(1).cloned().unwrap_or_else(|| ".".into());
+        let name = control::new_session(std::path::Path::new(&path), None)
+            .map_err(|e| anyhow::anyhow!(e))?;
+        println!("started tmux session {name} — attach with: tmux attach -t {name}");
+        return Ok(());
+    }
+
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -67,6 +124,7 @@ fn main() -> Result<()> {
             }
             "--live" => only_live = true,
             "--cost" => show_cost = true,
+            "--plain" => plain = true,
             "--view" => {
                 i += 1;
                 view = match args.get(i).map(String::as_str) {
@@ -95,8 +153,13 @@ fn main() -> Result<()> {
         i += 1;
     }
 
+    ui::init_palette(plain);
+
     if !root.exists() {
-        anyhow::bail!("no transcripts at {} — is Claude Code installed here?", root.display());
+        anyhow::bail!(
+            "no transcripts at {}\nset CLAUDE_CONFIG_DIR, or point at them with --root <path>",
+            root.display()
+        );
     }
 
     let mut app = App::new(root, app::default_sessions_dir(), since, only_live);
@@ -196,6 +259,18 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     }
                     continue;
                 }
+                if let Some(input) = app.input.as_mut() {
+                    match key.code {
+                        KeyCode::Esc => app.input = None,
+                        KeyCode::Enter => app.submit_input(),
+                        KeyCode::Backspace => {
+                            input.buf.pop();
+                        }
+                        KeyCode::Char(c) => input.buf.push(c),
+                        _ => {}
+                    }
+                    continue;
+                }
                 if app.help {
                     app.help = false;
                     continue;
@@ -266,10 +341,34 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                         app.discover();
                         app.refresh();
                     }
+                    KeyCode::Char('s') => app.open_input(Prompt::Send),
+                    KeyCode::Char('b') => {
+                        if app.steer.is_empty() {
+                            app.say("no sessions are running in tmux");
+                        } else {
+                            app.open_input(Prompt::Broadcast);
+                        }
+                    }
+                    KeyCode::Char('n') => app.open_input(Prompt::NewSession),
+                    KeyCode::Char('i') => app.interrupt(),
+                    KeyCode::Char('a') => app.attach(),
                     KeyCode::Char('?') => app.help = true,
                     _ => {}
                 }
             }
+        }
+
+        if let Some(session) = app.attach_to.take() {
+            ratatui::restore();
+            let outcome = control::attach(&session);
+            *term = ratatui::init();
+            term.clear()?;
+            if let Err(e) = outcome {
+                app.say(e);
+            }
+            app.discover();
+            app.refresh();
+            continue;
         }
 
         if last_tick.elapsed() >= tick {

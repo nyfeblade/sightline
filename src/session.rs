@@ -13,6 +13,11 @@ use std::path::PathBuf;
 /// only the tail is kept for display.
 pub const MAX_EVENTS: usize = 4000;
 
+/// How much of a transcript to replay at startup. Long-running sessions reach
+/// hundreds of megabytes; reading the tail keeps start-up instant on any
+/// machine, at the cost of totals that only cover the part that was read.
+pub const MAX_BACKFILL: u64 = 32 * 1024 * 1024;
+
 #[derive(Default, Clone)]
 pub struct Totals {
     pub input: u64,
@@ -88,6 +93,11 @@ pub struct Session {
     /// (tool, milliseconds) for every call that returned
     pub latencies: Vec<(String, i64)>,
     pub turn_ms: Vec<u64>,
+    /// true when startup skipped the head of an oversized transcript
+    pub partial: bool,
+    /// whether this Claude Code install keeps a live-session registry
+    pub registry_seen: bool,
+    skip_first: bool,
     /// requests per model id
     pub models: BTreeMap<String, usize>,
     /// tool_use id -> (tool name, when it was issued)
@@ -126,14 +136,34 @@ impl Session {
             errors: 0,
             latencies: Vec::new(),
             turn_ms: Vec::new(),
+            partial: false,
+            registry_seen: true,
+            skip_first: false,
             models: BTreeMap::new(),
             pending: HashMap::new(),
         }
     }
 
+    /// First read: replay history, but only the last MAX_BACKFILL bytes of it.
+    pub fn backfill(&mut self) {
+        if let Ok(md) = std::fs::metadata(&self.path) {
+            if md.len() > MAX_BACKFILL {
+                self.tail.skip_to(md.len() - MAX_BACKFILL);
+                self.skip_first = true;
+                self.partial = true;
+            }
+        }
+        self.pump();
+    }
+
     /// Read whatever has been appended since the last call.
     pub fn pump(&mut self) -> usize {
-        let lines = self.tail.poll().unwrap_or_default();
+        let mut lines = self.tail.poll().unwrap_or_default();
+        if self.skip_first && !lines.is_empty() {
+            // Started mid-file, so the first line is a fragment.
+            lines.remove(0);
+            self.skip_first = false;
+        }
         let mut n = 0;
         for line in lines {
             if let Ok(v) = serde_json::from_str::<Value>(&line) {
@@ -470,7 +500,14 @@ impl Session {
                 }
             }
             Some(_) => Status::Waiting,
-            None => Status::Ended,
+            // No registry entry. With a registry present that means the process
+            // is gone; without one (older Claude Code) fall back to recency.
+            None if self.registry_seen => Status::Ended,
+            None => match self.age_secs() {
+                a if a < 120 => Status::Working,
+                a if a < 900 => Status::Waiting,
+                _ => Status::Ended,
+            },
         }
     }
 

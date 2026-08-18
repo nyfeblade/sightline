@@ -2,6 +2,19 @@
 name = "nyfe-scope"
 version = "0.1.0"
 edition = "2024"
+description = "Live view of every Claude Code session on your machine, with tmux-based control"
+license = "MIT"
+repository = "https://github.com/nyfeblade/nyfe-scope"
+readme = "README.md"
+keywords = ["claude", "claude-code", "tui", "monitoring", "agents"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "scope"
+path = "src/main.rs"
+
+[profile.release]
+strip = true
 
 [dependencies]
 anyhow = "1.0.104"
