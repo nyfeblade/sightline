@@ -685,6 +685,19 @@ impl Session {
         }
     }
 
+    /// A session that exists only as a tmux pane: started moments ago, with no
+    /// transcript and no registry entry yet. It can still be watched and typed
+    /// into, which is what matters right after starting one.
+    pub fn from_pane(pane: &crate::control::Pane) -> Self {
+        let mut s = Session::open(PathBuf::from(format!("/nonexistent/{}.jsonl", pane.id)));
+        s.id = format!("pane:{}", pane.id);
+        s.cwd = pane.cwd.clone();
+        s.title = pane.session.clone();
+        s.placeholder = true;
+        s.in_pane = true;
+        s
+    }
+
     /// A session known only from the registry, with no transcript yet.
     pub fn pending(id: String, live: Live) -> Self {
         let mut s = Session::open(PathBuf::from(format!("/nonexistent/{id}.jsonl")));

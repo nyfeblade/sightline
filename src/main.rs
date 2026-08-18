@@ -12,7 +12,7 @@ mod tail;
 mod ui;
 
 use anyhow::Result;
-use app::{App, Focus, Prompt, View};
+use app::{App, Prompt, View};
 use crossterm::event::{self as cevent, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::DefaultTerminal;
 use session::Status;
@@ -388,13 +388,21 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     }
                 }
                 if let Some(input) = app.input.as_mut() {
+                    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
                     match key.code {
                         KeyCode::Esc => app.input = None,
                         KeyCode::Enter => app.submit_input(),
-                        KeyCode::Backspace => {
-                            input.buf.pop();
-                        }
-                        KeyCode::Char(c) => input.buf.push(c),
+                        KeyCode::Backspace => input.backspace(),
+                        KeyCode::Delete => input.delete(),
+                        KeyCode::Left => input.left(),
+                        KeyCode::Right => input.right(),
+                        KeyCode::Home => input.home(),
+                        KeyCode::End => input.end(),
+                        KeyCode::Char('u') if ctrl => input.clear(),
+                        KeyCode::Char('w') if ctrl => input.delete_word(),
+                        KeyCode::Char('a') if ctrl => input.home(),
+                        KeyCode::Char('e') if ctrl => input.end(),
+                        KeyCode::Char(c) => input.insert(c),
                         _ => {}
                     }
                     continue;
@@ -444,28 +452,12 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                             app.say("search cleared");
                         }
                     }
-                    KeyCode::Tab => {
-                        app.focus = match app.focus {
-                            Focus::Sessions => Focus::Feed,
-                            Focus::Feed => Focus::Sessions,
-                        }
-                    }
-                    KeyCode::Char('j') | KeyCode::Down => match app.focus {
-                        Focus::Sessions => app.select_session(1),
-                        Focus::Feed => move_right(app, 1),
-                    },
-                    KeyCode::Char('k') | KeyCode::Up => match app.focus {
-                        Focus::Sessions => app.select_session(-1),
-                        Focus::Feed => move_right(app, -1),
-                    },
-                    KeyCode::Char('J') => {
-                        app.focus = Focus::Feed;
-                        move_right(app, 1);
-                    }
-                    KeyCode::Char('K') => {
-                        app.focus = Focus::Feed;
-                        move_right(app, -1);
-                    }
+                    KeyCode::Char('j') | KeyCode::Down => app.select_session(1),
+                    KeyCode::Char('k') | KeyCode::Up => app.select_session(-1),
+                    KeyCode::Tab => app.select_session(1),
+                    KeyCode::BackTab => app.select_session(-1),
+                    KeyCode::Char('J') => move_right(app, 1),
+                    KeyCode::Char('K') => move_right(app, -1),
                     KeyCode::PageDown => move_right(app, 20),
                     KeyCode::PageUp => move_right(app, -20),
                     KeyCode::Char(c @ '1'..='9') => {
@@ -483,21 +475,16 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     }
                     KeyCode::Char('$') => app.show_cost = !app.show_cost,
                     KeyCode::Char('g') | KeyCode::Home => {
-                        app.focus = Focus::Feed;
                         app.follow = false;
                         app.feed_sel = 0;
                         app.feed_top = 0;
                     }
                     KeyCode::Char('G') | KeyCode::End => app.follow = true,
-                    KeyCode::Enter if app.focus == Focus::Sessions => {
+                    KeyCode::Enter | KeyCode::Char('.') => {
                         app.menu = true;
                         app.menu_sel = 0;
                     }
-                    KeyCode::Char('.') => {
-                        app.menu = true;
-                        app.menu_sel = 0;
-                    }
-                    KeyCode::Enter | KeyCode::Char('v') => {
+                    KeyCode::Char('v') | KeyCode::Char('o') => {
                         let has = match app.view {
                             View::Files => !app.file_keys().is_empty(),
                             _ => app.feed_len() > 0,

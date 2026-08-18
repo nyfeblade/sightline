@@ -48,13 +48,80 @@ pub struct Action {
 pub struct Input {
     pub kind: Prompt,
     pub label: String,
+    /// the session this line was opened for; the selection may move under it
+    pub target: Option<String>,
     pub buf: String,
+    /// caret position, counted in characters
+    pub pos: usize,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Focus {
-    Sessions,
-    Feed,
+impl Input {
+    fn byte_at(&self, chars: usize) -> usize {
+        self.buf
+            .char_indices()
+            .nth(chars)
+            .map(|(i, _)| i)
+            .unwrap_or(self.buf.len())
+    }
+
+    pub fn insert(&mut self, c: char) {
+        let at = self.byte_at(self.pos);
+        self.buf.insert(at, c);
+        self.pos += 1;
+    }
+
+    pub fn backspace(&mut self) {
+        if self.pos == 0 {
+            return;
+        }
+        let at = self.byte_at(self.pos - 1);
+        self.buf.remove(at);
+        self.pos -= 1;
+    }
+
+    pub fn delete(&mut self) {
+        if self.pos < self.buf.chars().count() {
+            let at = self.byte_at(self.pos);
+            self.buf.remove(at);
+        }
+    }
+
+    pub fn left(&mut self) {
+        self.pos = self.pos.saturating_sub(1);
+    }
+
+    pub fn right(&mut self) {
+        self.pos = (self.pos + 1).min(self.buf.chars().count());
+    }
+
+    pub fn home(&mut self) {
+        self.pos = 0;
+    }
+
+    pub fn end(&mut self) {
+        self.pos = self.buf.chars().count();
+    }
+
+    pub fn clear(&mut self) {
+        self.buf.clear();
+        self.pos = 0;
+    }
+
+    /// Delete the word before the caret, as ctrl+w does in a shell.
+    pub fn delete_word(&mut self) {
+        let chars: Vec<char> = self.buf.chars().collect();
+        let mut i = self.pos;
+        while i > 0 && chars[i - 1].is_whitespace() {
+            i -= 1;
+        }
+        while i > 0 && !chars[i - 1].is_whitespace() {
+            i -= 1;
+        }
+        let mut chars = chars;
+        chars.drain(i..self.pos);
+        self.buf = chars.into_iter().collect();
+        self.pos = i;
+    }
 }
 
 /// What the right-hand pane shows.
@@ -110,7 +177,6 @@ pub struct App {
     pub sessions: Vec<Session>,
     pub sel: usize,
     pub filter: Filter,
-    pub focus: Focus,
     pub view: View,
     /// false = subscription (no dollar figures), true = show API-equivalent cost
     pub show_cost: bool,
@@ -173,7 +239,6 @@ impl App {
             sessions: Vec::new(),
             sel: 0,
             filter: Filter::All,
-            focus: Focus::Sessions,
             view: View::Feed,
             show_cost: false,
             file_sel: 0,
@@ -304,9 +369,12 @@ impl App {
         self.last_discover = Instant::now();
     }
 
-    /// Map live sessions to the tmux pane they run in, if any.
+    /// Map live sessions to the tmux pane they run in, and represent panes that
+    /// no session has claimed — a session started seconds ago has no transcript
+    /// and no registry entry, but it is real and it can be typed into.
     pub fn rescan_panes(&mut self) {
         self.steer.clear();
+        self.sessions.retain(|s| !s.id.starts_with("pane:"));
         if !self.tmux_ok {
             return;
         }
@@ -327,6 +395,15 @@ impl App {
             if let Some(p) = pane {
                 self.steer.insert(s.id.clone(), p);
             }
+        }
+        let claimed: Vec<String> = self.steer.values().map(|p| p.id.clone()).collect();
+        for p in panes {
+            if !p.cmd.starts_with("claude") || claimed.contains(&p.id) {
+                continue;
+            }
+            let session = Session::from_pane(&p);
+            self.steer.insert(session.id.clone(), p);
+            self.sessions.push(session);
         }
     }
 
@@ -421,7 +498,15 @@ impl App {
         } else {
             String::new()
         };
-        self.input = Some(Input { kind, label, buf });
+        let pos = buf.chars().count();
+        let target = self.current().map(|s| s.id.clone());
+        self.input = Some(Input {
+            kind,
+            label,
+            target,
+            buf,
+            pos,
+        });
     }
 
     /// Run whatever the input bar was collecting.
@@ -430,9 +515,11 @@ impl App {
             return;
         };
         let text = input.buf.trim().to_string();
+        // Sending is rarely a single message, so the line reopens afterwards.
+        let kind = input.kind;
         match input.kind {
             Prompt::Send => {
-                let Some(id) = self.current().map(|s| s.id.clone()) else {
+                let Some(id) = input.target.clone() else {
                     return;
                 };
                 match self.pane_of(&id).cloned() {
@@ -454,7 +541,7 @@ impl App {
                 self.say(format!("sent to {ok} sessions"));
             }
             Prompt::Queue => {
-                let Some(id) = self.current().map(|s| s.id.clone()) else {
+                let Some(id) = input.target.clone() else {
                     return;
                 };
                 if !self.steer.contains_key(&id) {
@@ -516,6 +603,14 @@ impl App {
                 }
             }
         }
+        self.keep_typing(kind);
+    }
+
+    /// Reopen the message line after sending, so a follow-up needs no keys.
+    fn keep_typing(&mut self, kind: Prompt) {
+        if matches!(kind, Prompt::Send | Prompt::Queue | Prompt::Broadcast) {
+            self.open_input(kind);
+        }
     }
 
     /// Escape interrupts the current turn, exactly as pressing it would.
@@ -559,20 +654,18 @@ impl App {
         }
         let selected_id = self.sessions.get(self.sel).map(|s| s.id.clone());
         let blocked: Vec<String> = self.approvals.keys().cloned().collect();
+        // Order has to hold still: a list that re-sorts on every tick moves rows
+        // out from under the cursor mid-keystroke. Only a session that is
+        // blocked on a person jumps the queue; everything else stays in the
+        // order it started, like tabs.
         self.sessions.sort_by(|a, b| {
-            let rank = |s: &Session| -> u8 {
-                // A session waiting on a person outranks everything: it is the
-                // only state that cannot make progress on its own.
-                if blocked.contains(&s.id) {
-                    return 0;
-                }
-                match s.status() {
-                    Status::Running(_) | Status::Working => 1,
-                    Status::Waiting => 2,
-                    Status::Ended => 3,
-                }
-            };
-            rank(a).cmp(&rank(b)).then(b.last.cmp(&a.last))
+            let blocked_a = !blocked.contains(&a.id) as u8;
+            let blocked_b = !blocked.contains(&b.id) as u8;
+            let now = chrono::Utc::now();
+            blocked_a
+                .cmp(&blocked_b)
+                .then(a.started.unwrap_or(now).cmp(&b.started.unwrap_or(now)))
+                .then(a.id.cmp(&b.id))
         });
         if let Some(id) = selected_id {
             if let Some(i) = self.sessions.iter().position(|s| s.id == id) {

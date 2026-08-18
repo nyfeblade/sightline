@@ -19,6 +19,7 @@ pub struct Pane {
     pub session: String,
     /// the command the pane was started with, e.g. "claude --resume <id>"
     pub cmd: String,
+    pub cwd: String,
 }
 
 /// The next free scope-N. Counting up from the highest existing name rather
@@ -67,7 +68,7 @@ pub fn panes() -> Vec<Pane> {
         "list-panes",
         "-a",
         "-F",
-        "#{pane_id}\t#{pane_pid}\t#{session_name}\t#{pane_start_command}",
+        "#{pane_id}\t#{pane_pid}\t#{session_name}\t#{pane_start_command}\t#{pane_current_path}",
     ]) else {
         return Vec::new();
     };
@@ -78,11 +79,13 @@ pub fn panes() -> Vec<Pane> {
             let pid = f.next()?.parse().ok()?;
             let session = f.next()?.to_string();
             let cmd = f.next().unwrap_or("").to_string();
+            let cwd = f.next().unwrap_or("").to_string();
             Some(Pane {
                 id,
                 pid,
                 session,
                 cmd,
+                cwd,
             })
         })
         .collect()
@@ -452,12 +455,14 @@ mod tests {
                 pid: 1,
                 session: "scope-1".into(),
                 cmd: "claude --resume abc-123".into(),
+                cwd: "/tmp".into(),
             },
             Pane {
                 id: "%2".into(),
                 pid: 2,
                 session: "work".into(),
                 cmd: "bash".into(),
+                cwd: "/tmp".into(),
             },
         ];
         assert_eq!(

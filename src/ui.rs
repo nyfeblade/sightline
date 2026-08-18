@@ -1,6 +1,6 @@
 //! Rendering. Nyfe palette: midnight ground, gold accent, everything else muted.
 
-use crate::app::{App, Focus, View};
+use crate::app::{App, View};
 use crate::event::{Ev, Kind};
 use crate::session::{Session, Status};
 use ratatui::Frame;
@@ -196,7 +196,11 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     .areas(area);
     let [left, right] =
         Layout::horizontal([Constraint::Length(42), Constraint::Min(20)]).areas(body);
-    let [list, card] = Layout::vertical([Constraint::Min(6), Constraint::Length(10)]).areas(left);
+    // On a short window the detail card gives up rows so the session list keeps
+    // enough of them to be useful.
+    let card_rows = if body.height >= 26 { 10 } else { 6 };
+    let [list, card] =
+        Layout::vertical([Constraint::Min(4), Constraint::Length(card_rows)]).areas(left);
 
     draw_header(f, app, header);
     draw_sessions(f, app, list);
@@ -266,11 +270,19 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_sessions(f: &mut Frame, app: &mut App, area: Rect) {
-    let focused = app.focus == Focus::Sessions;
+    let focused = true;
     let block = Block::bordered()
         .border_style(Style::new().fg(if focused { pal().gold } else { pal().panel }))
         .title(Span::styled(
-            " sessions ",
+            {
+                let rows = (area.height.saturating_sub(2) as usize) / 2;
+                let shown = rows.min(app.sessions.len());
+                if shown < app.sessions.len() {
+                    format!(" sessions · {shown} of {} ", app.sessions.len())
+                } else {
+                    " sessions ".to_string()
+                }
+            },
             Style::new().fg(if focused { pal().gold } else { pal().dim }),
         ));
     let inner = block.inner(area);
@@ -317,7 +329,7 @@ fn draw_sessions(f: &mut Frame, app: &mut App, area: Rect) {
         let steer = if app.approvals.contains_key(&s.id) {
             "! "
         } else if *steerable.get(i).unwrap_or(&false) {
-            "⌁ "
+            "» "
         } else {
             ""
         };
@@ -412,6 +424,8 @@ fn draw_card(f: &mut Frame, app: &App, area: Rect) {
     } else {
         format!("{} requests", t.requests)
     };
+    // Ordered so that the lines that answer "can I act on this?" survive when
+    // the card is short.
     let lines = vec![
         field(
             "model",
@@ -421,7 +435,7 @@ fn draw_card(f: &mut Frame, app: &App, area: Rect) {
                 s.model.clone()
             },
         ),
-        field("client", client),
+        field("control", control.clone()),
         field("started", format!("{started} · {} turns", s.turns)),
         field(
             "tools",
@@ -440,7 +454,7 @@ fn draw_card(f: &mut Frame, app: &App, area: Rect) {
             format!("out {} · ctx {}", fmt_tokens(t.output), fmt_tokens(t.ctx)),
         ),
         field("usage", money),
-        field("control", control),
+        field("client", client),
     ];
     f.render_widget(Paragraph::new(lines), inner);
 }
@@ -458,8 +472,9 @@ fn pane_legend(name: &str) -> String {
     }
 }
 
+/// The right-hand pane. Its cursor is always drawn — there is no focus to
+/// lose, since j/k always move sessions and J/K always move this pane.
 fn pane(app: &App, name: &str) -> (Block<'static>, bool) {
-    let focused = app.focus == Focus::Feed;
     let title = match app.current() {
         Some(s) => format!(
             " {} · {} ",
@@ -469,13 +484,10 @@ fn pane(app: &App, name: &str) -> (Block<'static>, bool) {
         None => format!(" {name} "),
     };
     let block = Block::bordered()
-        .border_style(Style::new().fg(if focused { pal().gold } else { pal().panel }))
-        .title(Span::styled(
-            title,
-            Style::new().fg(if focused { pal().gold } else { pal().dim }),
-        ))
+        .border_style(Style::new().fg(pal().panel))
+        .title(Span::styled(title, Style::new().fg(pal().dim)))
         .title_bottom(Span::styled(pane_legend(name), Style::new().fg(pal().gold)));
-    (block, focused)
+    (block, true)
 }
 
 fn kind_tag(ev: &Ev) -> (String, Color) {
@@ -558,8 +570,14 @@ fn draw_feed(f: &mut Frame, app: &mut App, area: Rect) {
         ]));
     }
     if filtered.is_empty() {
+        // Distinguish "the filter hides everything" from "nothing has happened".
+        let empty = app.current().map(|s| s.events.is_empty()).unwrap_or(true);
         lines.push(Line::from(Span::styled(
-            " nothing matches this filter",
+            if empty {
+                " no activity yet — press s to send it something"
+            } else {
+                " nothing matches this filter — press f to change it"
+            },
             muted(),
         )));
     }
@@ -1185,9 +1203,16 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
                 Span::styled("▌", Style::new().fg(pal().gold)),
                 Span::styled(format!(" {} ", input.label), Style::new().fg(pal().gold)),
                 Span::styled("› ", muted()),
-                Span::styled(input.buf.clone(), Style::new().fg(pal().text)),
+                Span::styled(
+                    input.buf.chars().take(input.pos).collect::<String>(),
+                    Style::new().fg(pal().text),
+                ),
                 Span::styled("▏", Style::new().fg(pal().gold)),
-                Span::styled("   enter send · esc cancel", muted()),
+                Span::styled(
+                    input.buf.chars().skip(input.pos).collect::<String>(),
+                    Style::new().fg(pal().text),
+                ),
+                Span::styled("   enter send · esc close", muted()),
             ])),
             area,
         );
@@ -1234,7 +1259,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     }
     // Deliberately short: everything else is one keypress away behind the
     // actions menu and the help sheet.
-    let keys = "  j/k session · enter actions · 1…9 panes · / search · ? help";
+    let keys = "  j/k session · s send · enter actions · 1…9 panes · / search · ? help";
     let state = format!(
         "{} · {} · {} ",
         app.view.label(),
