@@ -27,10 +27,14 @@ or build it:
 cargo install --git https://github.com/nyfeblade/nyfe-scope
 ```
 
-Then run `scope`. Linux and macOS. tmux is optional, and only needed to steer
-sessions rather than watch them. There is no native Windows build — steering is
-built on tmux — but it runs under WSL exactly as it does on Linux, provided the
-sessions you want to watch are running inside WSL too.
+On Windows:
+
+```powershell
+irm https://raw.githubusercontent.com/nyfeblade/nyfe-scope/main/install.ps1 | iex
+```
+
+Then run `scope`. Linux, macOS and Windows. On Linux and macOS tmux is optional,
+and only needed to steer sessions rather than watch them.
 
 ## The session waiting on you
 
@@ -110,6 +114,28 @@ no Claude Code process left anywhere in them — a pane sitting at a shell promp
 while a command runs below it is still working, and closing it would throw away a
 turn nobody asked to end. When scope cannot tell, it leaves the session alone and
 says so.
+
+### On Windows
+
+Windows has no tmux, and no way to reach into a console another program owns, so
+scope is the terminal there: `n` starts Claude Code on a pseudo-console scope
+owns, and everything else — send, queue, interrupt, passthrough, approvals, the
+mirror — works the same way it does on Unix, against the screen scope keeps of
+what the session drew.
+
+Two differences follow from that, and both are visible in the UI rather than
+hidden:
+
+- scope can only steer sessions it started. One started in another window is
+  still watched in full; `A` reopens that conversation inside scope, which is
+  the way to take control of it.
+- A hosted session ends when scope does, because scope is holding it. `q` says
+  how many would stop and waits for a second `q`, and `A` brings any of them
+  back afterwards. On Unix tmux holds the session instead, so it outlives scope.
+
+`a` shows a session full-screen: on Unix by attaching to tmux, on Windows by
+drawing the mirror with every key going to the session — `ctrl+]` or `F12`
+leaves.
 
 ### Isolated sessions
 
@@ -199,6 +225,11 @@ Two files Claude Code already writes.
   activity from transcript recency.
 
 `CLAUDE_CONFIG_DIR` is honoured; `--root` points at transcripts anywhere.
+
+Steering needs the terminal the session is in, and that is the one part with two
+implementations: tmux on Unix, a pseudo-console scope owns on Windows. Both
+answer the same two questions — what is on this session's screen, and take this
+key — so everything above them is written once.
 
 Both formats are Claude Code's own and undocumented, so they can change. scope
 parses defensively and says so in the footer when it meets a version it was not

@@ -121,10 +121,12 @@ pub fn clip(s: &str, n: usize) -> String {
 }
 
 pub fn short_path(p: &str) -> String {
-    match std::env::var("HOME") {
-        Ok(home) if !home.is_empty() && p.starts_with(&home) => format!("~{}", &p[home.len()..]),
-        _ => p.to_string(),
+    // USERPROFILE as well as HOME: Windows sets only the former.
+    let home = crate::app::home().to_string_lossy().to_string();
+    if home.len() > 1 && p.starts_with(&home) {
+        return format!("~{}", &p[home.len()..]);
     }
+    p.to_string()
 }
 
 fn bytes(n: usize) -> String {

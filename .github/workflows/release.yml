@@ -18,6 +18,8 @@ jobs:
             target: aarch64-apple-darwin
           - os: macos-13
             target: x86_64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -26,12 +28,23 @@ jobs:
           targets: ${{ matrix.target }}
       - run: cargo build --release --target ${{ matrix.target }}
       - name: package
+        if: runner.os != 'Windows'
         run: |
           name="scope-${GITHUB_REF_NAME}-${{ matrix.target }}"
           mkdir -p "$name"
           cp target/${{ matrix.target }}/release/scope README.md LICENSE "$name/"
           tar -czf "$name.tar.gz" "$name"
+      - name: package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $name = "scope-$env:GITHUB_REF_NAME-${{ matrix.target }}"
+          New-Item -ItemType Directory -Path $name | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/scope.exe", README.md, LICENSE $name
+          Compress-Archive -Path $name -DestinationPath "$name.zip"
       - uses: softprops/action-gh-release@v2
         with:
-          files: scope-*.tar.gz
+          files: |
+            scope-*.tar.gz
+            scope-*.zip
           generate_release_notes: true

@@ -415,7 +415,7 @@ fn draw_card(f: &mut Frame, app: &App, area: Rect) {
     };
     let control = if app.steer.contains_key(&s.id) {
         match app.steer.get(&s.id) {
-            Some(p) => format!("steerable · tmux {}", p.session),
+            Some(p) => crate::control::where_hint(&p.session),
             None => "steerable".into(),
         }
     } else if s.live.is_some() {
@@ -916,7 +916,7 @@ fn draw_mirror(f: &mut Frame, app: &mut App, area: Rect) {
             let hint = if app.steer.contains_key(&s.id) {
                 "reading the pane…"
             } else {
-                "this session is not in tmux — press A to resume it in tmux"
+                "this session is not somewhere scope can steer — press A to reopen it"
             };
             f.render_widget(
                 Paragraph::new(Line::from(Span::styled(format!(" {hint}"), muted()))),

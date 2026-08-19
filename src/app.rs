@@ -257,6 +257,8 @@ pub struct App {
     pub passthrough: bool,
     /// the view passthrough took over, to be put back when it stops
     view_before: Option<View>,
+    /// when quitting was last asked about, where quitting ends sessions
+    quit_asked: Option<Instant>,
     /// the actions menu for the selected session
     pub menu: bool,
     pub menu_sel: usize,
@@ -313,6 +315,7 @@ impl App {
             queues: HashMap::new(),
             passthrough: false,
             view_before: None,
+            quit_asked: None,
             menu: false,
             menu_sel: 0,
             notify_on: notify::available(),
@@ -440,7 +443,7 @@ impl App {
             let by_pid = s
                 .live
                 .as_ref()
-                .and_then(|live| control::pane_for(live.pid, &panes));
+                .and_then(|live| control::pane_for(live.pid, &s.cwd, &panes));
             // Just after adopting there is no registry entry yet — the new
             // process only registers once it is used — but the pane was started
             // as `claude --resume <id>`, which identifies it just as well.
@@ -486,11 +489,35 @@ impl App {
                 }
             }
             Some(s) if !self.tmux_ok => {
-                format!("{} is not in tmux, and tmux is not installed", s.label())
+                format!(
+                    "{} cannot be steered — {}",
+                    s.label(),
+                    control::unavailable_hint()
+                )
             }
-            Some(s) => format!("{} is not in tmux — press A to adopt it", s.label()),
+            Some(s) => control::steer_hint(&s.label()),
             None => "no session selected".into(),
         }
+    }
+
+    /// Whether quitting can go ahead. Sessions scope hosts itself end with it,
+    /// so the first `q` says what would be lost and the second one means it.
+    /// Where the backend outlives scope there is nothing to lose, and `q` quits.
+    pub fn may_quit(&mut self) -> bool {
+        let n = control::hosted_count();
+        let asked = self
+            .quit_asked
+            .map(|t| t.elapsed() < Duration::from_secs(5))
+            .unwrap_or(false);
+        if n == 0 || asked {
+            return true;
+        }
+        self.quit_asked = Some(Instant::now());
+        self.say(format!(
+            "q again to quit — {n} session{} scope is hosting would stop (each reopens with A)",
+            if n == 1 { "" } else { "s" }
+        ));
+        false
     }
 
     pub fn say(&mut self, msg: impl Into<String>) {
@@ -526,11 +553,12 @@ impl App {
             },
             Prompt::Adopt => match self.current() {
                 Some(s) if s.live.is_none() && !s.in_pane => {
-                    format!("reopen {} in tmux? type yes", s.label())
+                    format!("reopen {} in {}? type yes", s.label(), control::WHERE)
                 }
                 Some(s) => format!(
-                    "move {} into tmux and close the original window? type yes",
-                    s.label()
+                    "move {} into {} and close the original window? type yes",
+                    s.label(),
+                    control::WHERE
                 ),
                 None => return,
             },
@@ -715,15 +743,26 @@ impl App {
                 Ok(()) => self.say("interrupt sent"),
                 Err(e) => self.say(e),
             },
-            None => self.say("that session is not running in tmux"),
+            None => {
+                let msg = self.not_steerable();
+                self.say(msg)
+            }
         }
     }
 
+    /// Show a session full-screen. Where scope hosts the session itself there
+    /// is no terminal to hand over, so full-screen is scope's own mirror with
+    /// every key going to the session — the same thing, drawn by scope.
     pub fn attach(&mut self) {
         let Some(id) = self.current().map(|s| s.id.clone()) else {
             return;
         };
         match self.pane_of(&id) {
+            Some(_) if control::hosted_count() > 0 => {
+                if !self.passthrough {
+                    self.toggle_passthrough();
+                }
+            }
             Some(p) => self.attach_to = Some(p.session.clone()),
             None => {
                 let msg = self.not_steerable();
@@ -984,7 +1023,7 @@ impl App {
                 // The window that just closed was probably the one being
                 // watched, so put an equivalent one straight back.
                 let reopened = control::open_window(&name).is_ok();
-                let attach = format!("attach with: tmux attach -t {name}");
+                let attach = control::attach_hint(&name);
                 self.say(
                     match (was_running, closed, reopened) {
                         (false, _, true) => format!("reopened as {name} in a new window"),
@@ -1028,7 +1067,7 @@ impl App {
         } else if !live {
             "this session has ended".to_string()
         } else {
-            format!("{name} is not running in tmux — adopt it first")
+            control::steer_hint(&name)
         };
         let why_steer_open = why_not_steerable.clone();
         let why_steer = why_not_steerable;
@@ -1065,7 +1104,11 @@ impl App {
             },
             Action {
                 key: 'a',
-                label: "Attach full-screen",
+                label: if control::hosted_count() > 0 {
+                    "Watch it full-screen and type into it"
+                } else {
+                    "Attach full-screen"
+                },
                 enabled: steerable,
                 why: why_steer,
             },
@@ -1102,7 +1145,7 @@ impl App {
             key: 'K',
             label: "Stop this session",
             enabled: steerable,
-            why: "only sessions scope can reach in tmux can be stopped".into(),
+            why: "only sessions scope can reach can be stopped".into(),
         });
         v.push(Action {
             key: 'O',
@@ -1120,13 +1163,13 @@ impl App {
             key: 'P',
             label: "Tidy up finished scope sessions",
             enabled: self.tmux_ok,
-            why: "tmux is not installed".into(),
+            why: control::unavailable_hint().into(),
         });
         v.push(Action {
             key: 'n',
             label: "Start a new session",
             enabled: self.tmux_ok,
-            why: "tmux is not installed".into(),
+            why: control::unavailable_hint().into(),
         });
         v.push(Action {
             key: 'W',
@@ -1135,7 +1178,7 @@ impl App {
             why: if self.tmux_ok {
                 "this session is not inside a git repository".into()
             } else {
-                "tmux is not installed".into()
+                control::unavailable_hint().into()
             },
         });
         v
@@ -1255,9 +1298,7 @@ impl App {
         let Some(pane) = self.steer.get(&id).cloned() else {
             return;
         };
-        if let Some(key) = control::tmux_key(code, ctrl) {
-            let _ = control::forward(&pane.id, &key);
-        }
+        let _ = control::forward_key(&pane.id, code, ctrl);
         // Show the result immediately rather than waiting for the next probe.
         if let Some(text) = control::capture(&pane.id) {
             self.mirror.insert(id, text);

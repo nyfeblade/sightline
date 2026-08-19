@@ -4,11 +4,17 @@ mod app;
 mod control;
 mod event;
 mod git;
+// Selected only on Windows, but built and tested everywhere, so on Unix its
+// surface is unused by design.
+#[cfg_attr(not(windows), allow(dead_code))]
+mod host;
 mod notify;
 mod pricing;
 mod registry;
 mod session;
 mod tail;
+#[cfg(not(windows))]
+mod tmux;
 mod ui;
 
 use anyhow::Result;
@@ -28,7 +34,7 @@ nyfe scope — live view of what Claude Code is doing
 usage: scope [options]
        scope new [path] [--model M] [--effort E] [--permission-mode P]
                  [--prompt T] [--worktree BRANCH]
-                               start a Claude Code session in tmux and exit
+                               start a Claude Code session and exit
        scope send <who> <text> type a line into a running session and submit it
        scope adopt <who>        (re)open a conversation in tmux so it can be steered
        scope prune              close scope sessions whose process has exited
@@ -76,6 +82,20 @@ fn main() -> Result<()> {
     let mut root = app::default_root();
 
     let args: Vec<String> = std::env::args().skip(1).collect();
+
+    // Where scope holds sessions itself, a subcommand would start or steer
+    // something and then exit, taking it with it. Say so rather than doing it.
+    const ONE_SHOT: [&str; 7] = [
+        "new", "send", "adopt", "approve", "waiting", "stop", "prune",
+    ];
+    if let Some(cmd) = args.first() {
+        if !control::OUTLIVES_SCOPE && ONE_SHOT.contains(&cmd.as_str()) {
+            anyhow::bail!(
+                "scope holds sessions itself on this platform, so they end when it exits.\n\
+                 `scope {cmd}` would do that immediately — run scope and use it from there."
+            );
+        }
+    }
 
     if args.first().map(String::as_str) == Some("stop") {
         let who = args.get(1).map(String::as_str).unwrap_or("--all");
@@ -211,7 +231,7 @@ fn main() -> Result<()> {
         let pane = app
             .pane_of(&hit)
             .ok_or_else(|| {
-                anyhow::anyhow!("{who} is not running in tmux, so it cannot be typed into")
+                anyhow::anyhow!("{who} cannot be typed into — scope has no terminal for it")
             })?
             .clone();
         control::send_text(&pane.id, &text).map_err(|e| anyhow::anyhow!(e))?;
@@ -250,7 +270,7 @@ fn main() -> Result<()> {
             opt("--prompt").as_deref(),
         )
         .map_err(|e| anyhow::anyhow!(e))?;
-        println!("started tmux session {name} — attach with: tmux attach -t {name}");
+        println!("started {name} — {}", control::attach_hint(&name));
         return Ok(());
     }
 
@@ -558,7 +578,11 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                 match key.code {
                     // Esc dismisses; it does not quit. An accidental Esc should
                     // never take the monitor down with it.
-                    KeyCode::Char('q') => return Ok(()),
+                    KeyCode::Char('q') => {
+                        if app.may_quit() {
+                            return Ok(());
+                        }
+                    }
                     KeyCode::Esc => {
                         if app.passthrough {
                             app.toggle_passthrough();
@@ -632,7 +656,7 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     KeyCode::Char('s') => app.run_action('s'),
                     KeyCode::Char('b') => {
                         if app.steer.is_empty() {
-                            app.say("no sessions are running in tmux");
+                            app.say("nothing scope can steer is running");
                         } else {
                             app.open_input(Prompt::Broadcast);
                         }
