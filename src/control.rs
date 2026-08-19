@@ -333,8 +333,11 @@ fn parse_proc(line: &str) -> Option<Proc> {
 /// Every process on the machine, or None when it cannot be read. None means
 /// "no idea", and nothing is treated as finished on no idea.
 fn process_table() -> Option<Vec<Proc>> {
+    // -ww: macOS ps cuts the command line to the terminal width, which can
+    // drop the part that identifies Claude Code and make a working session
+    // look finished.
     let out = Command::new("ps")
-        .args(["-eo", "pid=,ppid=,args="])
+        .args(["-ww", "-eo", "pid=,ppid=,args="])
         .stderr(Stdio::null())
         .output()
         .ok()?;
@@ -351,7 +354,7 @@ fn process_table() -> Option<Vec<Proc>> {
 /// Whether a command line belongs to Claude Code. A native install runs as
 /// `claude`, an npm one as `node .../claude-code/cli.js`, so the whole line is
 /// searched rather than the executable name alone.
-fn is_claude(args: &str) -> bool {
+pub fn is_claude(args: &str) -> bool {
     args.contains("claude")
 }
 
@@ -644,6 +647,17 @@ mod tests {
             (300, 1, "-bash".into()),
             (301, 300, "vim notes.md".into()),
         ]
+    }
+
+    #[test]
+    fn recognises_both_ways_claude_code_is_installed() {
+        assert!(is_claude("claude"));
+        assert!(is_claude("/Users/x/.local/bin/claude --resume abc"));
+        assert!(is_claude(
+            "node /Users/x/.npm-global/lib/node_modules/@anthropic-ai/claude-code/cli.js"
+        ));
+        assert!(!is_claude("node server.js"));
+        assert!(!is_claude("-bash"));
     }
 
     #[test]

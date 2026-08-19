@@ -34,20 +34,14 @@ impl Prober {
         if Path::new("/proc/self/stat").exists() {
             return Prober::Procfs;
         }
-        let mut pids = HashSet::new();
-        if let Ok(out) = Command::new("ps").args(["-eo", "pid=,comm="]).output() {
-            for line in String::from_utf8_lossy(&out.stdout).lines() {
-                let mut parts = line.split_whitespace();
-                if let (Some(pid), Some(comm)) = (parts.next(), parts.next()) {
-                    if comm.contains("claude") {
-                        if let Ok(p) = pid.parse::<i64>() {
-                            pids.insert(p);
-                        }
-                    }
-                }
-            }
-        }
-        Prober::Snapshot(pids)
+        // -ww stops macOS ps cutting the command line short of the part that
+        // identifies Claude Code.
+        let out = Command::new("ps")
+            .args(["-ww", "-eo", "pid=,args="])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .unwrap_or_default();
+        Prober::Snapshot(claude_pids_in(&out))
     }
 
     /// Field 22 of /proc/<pid>/stat is the process start time. Comparing it to
@@ -71,6 +65,21 @@ impl Prober {
             Prober::Snapshot(pids) => pids.contains(&pid),
         }
     }
+}
+
+/// Pids of Claude Code processes in `ps -eo pid=,args=` output.
+///
+/// The whole command line decides, not the executable name: an npm install
+/// runs as `node`, and matching `comm` alone reported every session on such a
+/// machine as ended.
+fn claude_pids_in(out: &str) -> HashSet<i64> {
+    out.lines()
+        .filter_map(|line| {
+            let mut parts = line.trim().splitn(2, char::is_whitespace);
+            let pid = parts.next()?.parse::<i64>().ok()?;
+            crate::control::is_claude(parts.next()?).then_some(pid)
+        })
+        .collect()
 }
 
 /// Live sessions keyed by session id. Empty when the registry is absent.
@@ -126,4 +135,25 @@ pub fn available(dir: &Path) -> bool {
             })
         })
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // What `ps -ww -eo pid=,args=` looks like on a machine with no procfs.
+    const PS: &str = "\
+ 4821 node /Users/x/.npm-global/lib/node_modules/@anthropic-ai/claude-code/cli.js
+ 4822 -zsh
+ 4823 /Users/x/.local/bin/claude --resume 8f2c
+ 4824 /Applications/Firefox.app/Contents/MacOS/firefox
+";
+
+    #[test]
+    fn finds_claude_however_it_was_installed() {
+        let pids = claude_pids_in(PS);
+        assert!(pids.contains(&4821), "npm install runs as node");
+        assert!(pids.contains(&4823), "native install");
+        assert_eq!(pids.len(), 2, "nothing else should be counted");
+    }
 }

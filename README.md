@@ -28,7 +28,9 @@ cargo install --git https://github.com/nyfeblade/nyfe-scope
 ```
 
 Then run `scope`. Linux and macOS. tmux is optional, and only needed to steer
-sessions rather than watch them.
+sessions rather than watch them. There is no native Windows build — steering is
+built on tmux — but it runs under WSL exactly as it does on Linux, provided the
+sessions you want to watch are running inside WSL too.
 
 ## The session waiting on you
 
@@ -202,6 +204,14 @@ Both formats are Claude Code's own and undocumented, so they can change. scope
 parses defensively and says so in the footer when it meets a version it was not
 built against or a transcript it cannot read, rather than quietly showing
 figures that are wrong. It was built against Claude Code 2.1.x.
+
+Read that as the maintenance promise it is: a Claude Code release can move a
+field, rename a status or redraw a prompt, and when that happens scope loses a
+detail — a status that reads wrong, a prompt it no longer recognises — rather
+than inventing one. If you meet that, open an issue with your Claude Code
+version; the fix is usually a few lines. The same is true of the pane reading
+behind approvals and passthrough, which works by looking at what a session has
+drawn on screen.
 
 ## Development
 
