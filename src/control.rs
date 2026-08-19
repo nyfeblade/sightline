@@ -320,34 +320,123 @@ pub fn forward(pane: &str, key: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Close scope-created tmux sessions that no longer have a live process in
-/// them. Returns how many were removed.
-pub fn prune() -> usize {
-    let Some(out) = tmux(&[
-        "list-panes",
-        "-a",
-        "-F",
-        "#{session_name}\t#{pane_dead}\t#{pane_current_command}",
-    ]) else {
-        return 0;
-    };
-    let mut removed = 0;
-    for line in out.lines() {
+/// One row of the process table: pid, parent pid, and the command line.
+type Proc = (i64, i64, String);
+
+fn parse_proc(line: &str) -> Option<Proc> {
+    let mut f = line.split_whitespace();
+    let pid = f.next()?.parse().ok()?;
+    let ppid = f.next()?.parse().ok()?;
+    Some((pid, ppid, f.collect::<Vec<_>>().join(" ")))
+}
+
+/// Every process on the machine, or None when it cannot be read. None means
+/// "no idea", and nothing is treated as finished on no idea.
+fn process_table() -> Option<Vec<Proc>> {
+    let out = Command::new("ps")
+        .args(["-eo", "pid=,ppid=,args="])
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let table: Vec<Proc> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(parse_proc)
+        .collect();
+    (!table.is_empty()).then_some(table)
+}
+
+/// Whether a command line belongs to Claude Code. A native install runs as
+/// `claude`, an npm one as `node .../claude-code/cli.js`, so the whole line is
+/// searched rather than the executable name alone.
+fn is_claude(args: &str) -> bool {
+    args.contains("claude")
+}
+
+/// True when `pid` or anything below it is a Claude Code process.
+///
+/// This is what decides whether a session is finished. The name tmux shows for
+/// a pane says what is in the foreground at this instant, not whether the
+/// session is alive, so it must never be the test on its own.
+fn claude_in_tree(pid: i64, table: &[Proc]) -> bool {
+    let mut frontier = vec![pid];
+    let mut seen = std::collections::HashSet::new();
+    while let Some(cur) = frontier.pop() {
+        if !seen.insert(cur) {
+            continue;
+        }
+        for (id, ppid, args) in table {
+            if *id == cur && is_claude(args) {
+                return true;
+            }
+            if *ppid == cur {
+                frontier.push(*id);
+            }
+        }
+    }
+    false
+}
+
+/// Scope sessions with nothing running in them any more, given tmux's pane
+/// list and a process table.
+///
+/// A pane counts as finished only on evidence: tmux marks it dead, or no Claude
+/// Code process is left anywhere below it. A session with several panes is
+/// finished only when every one of them is. An earlier version asked what the
+/// pane was *showing* and called a shell finished, which reported live sessions
+/// as over and then closed them — work nobody had asked to stop.
+fn finished_in(rows: &str, table: Option<&[Proc]>) -> Vec<String> {
+    let mut order: Vec<String> = Vec::new();
+    let mut alive: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for line in rows.lines() {
         let mut f = line.split('\t');
-        let (Some(session), Some(dead), cmd) = (f.next(), f.next(), f.next().unwrap_or("")) else {
+        let (Some(session), Some(dead), pid) = (f.next(), f.next(), f.next()) else {
             continue;
         };
         if !session.starts_with("scope-") {
             continue;
         }
-        let idle_shell = matches!(cmd, "bash" | "zsh" | "sh" | "fish");
-        if dead == "1" || idle_shell {
-            if kill_session(session).is_ok() {
-                removed += 1;
+        if !order.iter().any(|s| s == session) {
+            order.push(session.to_string());
+        }
+        let done = if dead == "1" {
+            true
+        } else {
+            match (table, pid.and_then(|p| p.parse::<i64>().ok())) {
+                (Some(t), Some(pid)) => !claude_in_tree(pid, t),
+                // Cannot tell: assume it is working.
+                _ => false,
             }
+        };
+        if !done {
+            alive.insert(session.to_string());
         }
     }
-    removed
+    order.into_iter().filter(|s| !alive.contains(s)).collect()
+}
+
+/// Scope sessions whose process has exited, in tmux's order.
+fn finished() -> Vec<String> {
+    let Some(rows) = tmux(&[
+        "list-panes",
+        "-a",
+        "-F",
+        "#{session_name}\t#{pane_dead}\t#{pane_pid}",
+    ]) else {
+        return Vec::new();
+    };
+    finished_in(&rows, process_table().as_deref())
+}
+
+/// Close scope-created tmux sessions that no longer have a live process in
+/// them. Returns the names that were closed.
+pub fn prune() -> Vec<String> {
+    finished()
+        .into_iter()
+        .filter(|s| kill_session(s).is_ok())
+        .collect()
 }
 
 pub fn kill_session(session: &str) -> Result<(), String> {
@@ -538,6 +627,75 @@ mod tests {
     fn ignores_an_ordinary_prompt_line() {
         assert!(pending_approval("❯ Try \"fix typecheck errors\"").is_none());
     }
+
+    // pane pid 100 runs claude; pane pid 200 is a shell that has a claude
+    // several levels down; pane pid 300 is a shell with nothing in it.
+    fn table() -> Vec<Proc> {
+        vec![
+            (100, 1, "claude".into()),
+            (101, 100, "bash -c cargo test".into()),
+            (200, 1, "-bash".into()),
+            (
+                201,
+                200,
+                "sh -c exec node /home/x/.npm/claude-code/cli.js".into(),
+            ),
+            (202, 201, "node /home/x/.npm/claude-code/cli.js".into()),
+            (300, 1, "-bash".into()),
+            (301, 300, "vim notes.md".into()),
+        ]
+    }
+
+    #[test]
+    fn finds_claude_below_a_shell() {
+        let t = table();
+        assert!(claude_in_tree(100, &t), "the pane process itself");
+        assert!(claude_in_tree(200, &t), "two levels down, under npm");
+        assert!(!claude_in_tree(300, &t), "nothing of ours in this one");
+        assert!(!claude_in_tree(999, &t), "a pid that is not there");
+    }
+
+    #[test]
+    fn a_pane_showing_a_shell_is_not_finished() {
+        // The bug this replaced: pane 200 shows a shell while claude runs a
+        // command below it, and tidying up closed the session mid-turn.
+        let rows = "scope-1\t0\t200\nscope-2\t0\t300\n";
+        assert_eq!(
+            finished_in(rows, Some(&table())),
+            vec!["scope-2".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_dead_pane_is_finished_whatever_the_process_table_says() {
+        let rows = "scope-1\t1\t100\n";
+        assert_eq!(
+            finished_in(rows, Some(&table())),
+            vec!["scope-1".to_string()]
+        );
+    }
+
+    #[test]
+    fn nothing_is_finished_when_the_process_table_is_unreadable() {
+        let rows = "scope-1\t0\t300\nscope-2\t0\t999\n";
+        assert!(
+            finished_in(rows, None).is_empty(),
+            "no idea means leave it alone"
+        );
+    }
+
+    #[test]
+    fn a_session_lives_while_any_of_its_panes_does() {
+        // Split window: one pane finished, the other still working.
+        let rows = "scope-1\t0\t300\nscope-1\t0\t100\n";
+        assert!(finished_in(rows, Some(&table())).is_empty());
+    }
+
+    #[test]
+    fn leaves_sessions_scope_did_not_start_alone() {
+        let rows = "work\t1\t300\nnotes\t0\t999\n";
+        assert!(finished_in(rows, Some(&table())).is_empty());
+    }
 }
 
 /// End the Claude Code process behind a session. It runs its terminal in raw
@@ -619,4 +777,19 @@ pub fn open_window(session: &str) -> Result<String, String> {
     Err(format!(
         "no terminal to open — run: tmux attach -t {session}"
     ))
+}
+
+/// Close every session scope started or adopted, leaving any tmux session the
+/// user made themselves alone. Returns the names that were closed.
+pub fn stop_all() -> Vec<String> {
+    let Some(out) = tmux(&["list-sessions", "-F", "#{session_name}"]) else {
+        return Vec::new();
+    };
+    let mut closed = Vec::new();
+    for name in out.lines().filter(|n| n.starts_with("scope-")) {
+        if kill_session(name).is_ok() {
+            closed.push(name.to_string());
+        }
+    }
+    closed
 }

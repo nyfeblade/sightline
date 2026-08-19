@@ -24,6 +24,7 @@ pub enum Prompt {
     Merge,
     Discard,
     Stop,
+    StopAll,
     Adopt,
 }
 
@@ -254,6 +255,8 @@ pub struct App {
     pub queues: HashMap<String, Vec<String>>,
     /// every key goes to the selected session while this is on
     pub passthrough: bool,
+    /// the view passthrough took over, to be put back when it stops
+    view_before: Option<View>,
     /// the actions menu for the selected session
     pub menu: bool,
     pub menu_sel: usize,
@@ -309,6 +312,7 @@ impl App {
             trees: HashMap::new(),
             queues: HashMap::new(),
             passthrough: false,
+            view_before: None,
             menu: false,
             menu_sel: 0,
             notify_on: notify::available(),
@@ -474,7 +478,13 @@ impl App {
     /// Why a session cannot be typed into, and what to do about it.
     fn not_steerable(&self) -> String {
         match self.current() {
-            Some(s) if s.live.is_none() && !s.in_pane => "that session has ended".into(),
+            Some(s) if s.live.is_none() && !s.in_pane => {
+                if s.placeholder {
+                    "that session has ended".into()
+                } else {
+                    "that session has ended — press A to reopen the conversation".into()
+                }
+            }
             Some(s) if !self.tmux_ok => {
                 format!("{} is not in tmux, and tmux is not installed", s.label())
             }
@@ -515,12 +525,19 @@ impl App {
                 }
             },
             Prompt::Adopt => match self.current() {
+                Some(s) if s.live.is_none() && !s.in_pane => {
+                    format!("reopen {} in tmux? type yes", s.label())
+                }
                 Some(s) => format!(
                     "move {} into tmux and close the original window? type yes",
                     s.label()
                 ),
                 None => return,
             },
+            Prompt::StopAll => {
+                let n = self.steer.len();
+                format!("stop all {n} sessions scope started? type yes")
+            }
             Prompt::Stop => match self.current() {
                 Some(s) => format!("stop {}? type yes", s.label()),
                 None => return,
@@ -629,6 +646,19 @@ impl App {
                     self.adopt();
                 } else {
                     self.say("left where it was");
+                }
+            }
+            Prompt::StopAll => {
+                if text.eq_ignore_ascii_case("yes") || text.eq_ignore_ascii_case("y") {
+                    let closed = control::stop_all();
+                    self.say(format!(
+                        "stopped {} session{} — each one can be reopened with A",
+                        closed.len(),
+                        if closed.len() == 1 { "" } else { "s" }
+                    ));
+                    self.discover();
+                } else {
+                    self.say("left running");
                 }
             }
             Prompt::Stop => {
@@ -901,7 +931,11 @@ impl App {
         }
     }
 
-    /// Continue a non-tmux session inside tmux so it becomes steerable.
+    /// Continue a conversation inside tmux so it becomes steerable.
+    ///
+    /// This is also the way back into a session that has stopped: `claude
+    /// --resume` picks up a finished conversation exactly as it picks up a
+    /// running one, so nothing that has a transcript is ever a dead end.
     pub fn adopt(&mut self) {
         let Some((id, cwd)) = self.current().map(|s| {
             let cwd = if s.cwd.is_empty() {
@@ -926,21 +960,44 @@ impl App {
             return;
         }
         let original = self.current().and_then(|s| s.live.as_ref().map(|l| l.pid));
-        match control::adopt(PathBuf::from(cwd).as_path(), &id) {
+        let was_running = original.is_some();
+        // An isolated session's checkout may have been removed since. Older
+        // tmux refuses to start in a folder that is gone and newer tmux quietly
+        // opens somewhere else; a conversation is worth more than the directory
+        // it began in, so pick home deliberately and say so.
+        let (dir, moved) = match PathBuf::from(&cwd) {
+            p if p.is_dir() => (p, String::new()),
+            _ => (
+                dirs_home(),
+                format!(
+                    " · {cwd} is gone, so it opened in {}",
+                    dirs_home().display()
+                ),
+            ),
+        };
+        match control::adopt(dir.as_path(), &id) {
             Ok(name) => {
                 // Two clients on one conversation would both append to the same
                 // transcript, so the original goes as soon as the copy is up.
+                // A session that had already stopped has nothing to close.
                 let closed = original.map(control::end_process).unwrap_or(false);
                 // The window that just closed was probably the one being
                 // watched, so put an equivalent one straight back.
                 let reopened = control::open_window(&name).is_ok();
-                self.say(match (closed, reopened) {
-                    (true, true) => format!("{name} moved into tmux — reopened in a new window"),
-                    (true, false) => {
-                        format!("{name} moved into tmux — attach with: tmux attach -t {name}")
-                    }
-                    (false, _) => format!("resumed as {name} — close the old window yourself"),
-                });
+                let attach = format!("attach with: tmux attach -t {name}");
+                self.say(
+                    match (was_running, closed, reopened) {
+                        (false, _, true) => format!("reopened as {name} in a new window"),
+                        (false, _, false) => format!("reopened as {name} — {attach}"),
+                        (true, true, true) => {
+                            format!("{name} moved into tmux — reopened in a new window")
+                        }
+                        (true, true, false) => format!("{name} moved into tmux — {attach}"),
+                        (true, false, _) => {
+                            format!("resumed as {name} — close the old window yourself")
+                        }
+                    } + &moved,
+                );
                 self.discover();
             }
             Err(e) => self.say(e),
@@ -955,6 +1012,10 @@ impl App {
         };
         let (id, cwd) = (s.id.clone(), s.cwd.clone());
         let live = s.live.is_some() || s.in_pane;
+        // A conversation with a transcript on disk can always be reopened,
+        // running or not: `claude --resume` continues it either way. Only a
+        // session that never wrote anything has nothing to go back to.
+        let has_transcript = !s.placeholder;
         let name = s.label();
         let steerable = self.steer.contains_key(&id);
         let blocked = self.approvals.contains_key(&id);
@@ -962,16 +1023,15 @@ impl App {
         let in_repo =
             !cwd.is_empty() && crate::git::repo_root(std::path::Path::new(&cwd)).is_some();
 
-        let why_steer_open = if !live {
+        let why_not_steerable = if !live && has_transcript {
+            "this session has ended — reopen it first".to_string()
+        } else if !live {
             "this session has ended".to_string()
         } else {
             format!("{name} is not running in tmux — adopt it first")
         };
-        let why_steer = if !live {
-            "this session has ended".to_string()
-        } else {
-            format!("{name} is not running in tmux — adopt it first")
-        };
+        let why_steer_open = why_not_steerable.clone();
+        let why_steer = why_not_steerable;
         let mut v = vec![
             Action {
                 key: 'y',
@@ -1011,12 +1071,16 @@ impl App {
             },
             Action {
                 key: 'A',
-                label: "Adopt into tmux so it can be steered",
-                enabled: live && !steerable,
+                label: if live {
+                    "Adopt into tmux so it can be steered"
+                } else {
+                    "Reopen this conversation in tmux"
+                },
+                enabled: !steerable && (live || has_transcript),
                 why: if steerable {
                     "already steerable".into()
                 } else {
-                    "this session has ended".into()
+                    "this session never wrote anything to reopen".into()
                 },
             },
         ];
@@ -1045,6 +1109,12 @@ impl App {
             label: "Open it in its own window",
             enabled: steerable,
             why: why_steer_open,
+        });
+        v.push(Action {
+            key: 'Z',
+            label: "Stop everything scope started",
+            enabled: !self.steer.is_empty(),
+            why: "nothing of scope's is running".into(),
         });
         v.push(Action {
             key: 'P',
@@ -1094,6 +1164,7 @@ impl App {
             'M' => self.open_input(Prompt::Merge),
             'X' => self.open_input(Prompt::Discard),
             'K' => self.open_input(Prompt::Stop),
+            'Z' => self.open_input(Prompt::StopAll),
             'O' => {
                 let Some(id) = self.current().map(|s| s.id.clone()) else {
                     return;
@@ -1110,11 +1181,11 @@ impl App {
                 }
             }
             'P' => {
-                let n = control::prune();
-                self.say(format!(
-                    "closed {n} finished session{}",
-                    if n == 1 { "" } else { "s" }
-                ));
+                let closed = control::prune();
+                self.say(match closed.len() {
+                    0 => "nothing to tidy up — everything scope started is still running".into(),
+                    _ => format!("closed {}", closed.join(", ")),
+                });
                 self.discover();
             }
             'n' => self.open_input(Prompt::NewSession),
@@ -1161,11 +1232,17 @@ impl App {
                 self.say(msg);
                 return;
             }
+            // Typing into a session means watching it, so passthrough takes
+            // over the view; stopping gives back the one that was there.
+            self.view_before = Some(self.view);
             self.view = View::Mirror;
             self.passthrough = true;
-            self.say("passthrough on — ctrl+] to stop");
+            self.say("passthrough on — ctrl+] or F12 to stop");
         } else {
             self.passthrough = false;
+            if let Some(v) = self.view_before.take() {
+                self.view = v;
+            }
             self.say("passthrough off");
         }
     }
@@ -1294,7 +1371,7 @@ impl App {
         };
         match control::kill_session(&pane.session) {
             Ok(()) => {
-                self.say(format!("stopped {}", pane.session));
+                self.say(format!("stopped {} — press A to reopen it", pane.session));
                 self.discover();
             }
             Err(e) => self.say(e),
@@ -1662,6 +1739,13 @@ pub fn fleet_path() -> PathBuf {
         }
     }
     home().join(".config").join("nyfe-scope").join("fleet.json")
+}
+
+/// Home, or the current directory when there is no home to speak of.
+fn dirs_home() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 pub fn default_root() -> PathBuf {

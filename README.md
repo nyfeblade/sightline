@@ -53,7 +53,7 @@ From a script, without opening the UI:
 ```sh
 scope waiting              # what is blocked, and what it is asking
 scope approve api-7c       # answer it (option 1 by default)
-scope adopt nyfe-32        # resume a session in tmux so it can be steered
+scope adopt nyfe-32        # (re)open a conversation in tmux so it can be steered
 scope prune                # close scope sessions whose process has exited
 ```
 
@@ -76,12 +76,13 @@ same actions have direct keys once you know them:
 | `Q` | queue a message; it is delivered when that session next goes idle |
 | | sending to a busy session says so, rather than looking delivered |
 | `i` | interrupt (sends Escape) |
-| `m` | passthrough — every key goes to the session until `ctrl+]` |
+| `m` | passthrough — every key goes to the session until `ctrl+]` or `F12` |
 | `a` `O` | show it full-screen · open it in its own window |
-| `n` `A` | start a new session · adopt a running one into tmux |
+| `n` `A` | start a new session · adopt a running one, or reopen a stopped one |
 | `W` | start one on its own branch in its own checkout |
 | `M` `X` | merge that branch back · remove the checkout |
 | `K` `P` | stop the session · tidy up finished scope sessions |
+| `Z` | stop everything scope started (each one reopens with `A`) |
 | `L` | launch a whole fleet from a config file |
 
 When you attach, the session's status line shows the way back, so a
@@ -94,6 +95,19 @@ same conversation inside tmux and closes the original window, so the
 conversation continues in one place rather than two. It asks first, and it
 immediately reopens the session in a fresh window, so nothing you were watching
 disappears — `O` does the same for any session on demand.
+
+### Stopping is not losing
+
+`A` is also the way back into a session that has stopped, whether you stopped it,
+it crashed, or its terminal closed: the transcript is on disk, so it reopens in
+tmux with its history and picks up where it left off. Anything scope can see it
+can get back to.
+
+Because of that, nothing is closed on a guess. `P` tidies up only sessions with
+no Claude Code process left anywhere in them — a pane sitting at a shell prompt
+while a command runs below it is still working, and closing it would throw away a
+turn nobody asked to end. When scope cannot tell, it leaves the session alone and
+says so.
 
 ### Isolated sessions
 

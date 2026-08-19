@@ -30,8 +30,9 @@ usage: scope [options]
                  [--prompt T] [--worktree BRANCH]
                                start a Claude Code session in tmux and exit
        scope send <who> <text> type a line into a running session and submit it
-       scope adopt <who>        resume a session in tmux so it can be steered
+       scope adopt <who>        (re)open a conversation in tmux so it can be steered
        scope prune              close scope sessions whose process has exited
+       scope stop [who|--all]   stop one session, or everything scope started
        scope waiting            list sessions blocked on a prompt
        scope approve <who> [n]  answer a blocked session (default option 1)
 
@@ -76,12 +77,35 @@ fn main() -> Result<()> {
 
     let args: Vec<String> = std::env::args().skip(1).collect();
 
+    if args.first().map(String::as_str) == Some("stop") {
+        let who = args.get(1).map(String::as_str).unwrap_or("--all");
+        if who == "--all" {
+            let closed = control::stop_all();
+            if closed.is_empty() {
+                println!("nothing of scope's was running");
+            } else {
+                println!("stopped {}", closed.join(", "));
+            }
+            return Ok(());
+        }
+        let panes = control::panes();
+        let target = panes
+            .iter()
+            .find(|p| p.session == who)
+            .map(|p| p.session.clone())
+            .ok_or_else(|| anyhow::anyhow!("no session called {who} — try scope stop --all"))?;
+        control::kill_session(&target).map_err(|e| anyhow::anyhow!(e))?;
+        println!("stopped {target}");
+        return Ok(());
+    }
+
     if args.first().map(String::as_str) == Some("prune") {
-        let n = control::prune();
-        println!(
-            "closed {n} finished session{}",
-            if n == 1 { "" } else { "s" }
-        );
+        let closed = control::prune();
+        if closed.is_empty() {
+            println!("nothing to tidy up — everything scope started is still running");
+        } else {
+            println!("closed {}", closed.join(", "));
+        }
         return Ok(());
     }
 
@@ -89,11 +113,14 @@ fn main() -> Result<()> {
         args.first().map(String::as_str),
         Some("waiting") | Some("approve") | Some("adopt")
     ) {
+        // Reopening a conversation works whether or not it is still running, so
+        // adopt looks at everything; the other two only care about live ones.
+        let only_live = args[0] != "adopt";
         let mut app = App::new(
             app::default_root(),
             app::default_sessions_dir(),
             Duration::from_secs(7 * 86_400),
-            true,
+            only_live,
         );
         app.rescan_panes();
         app.probe();
@@ -120,7 +147,7 @@ fn main() -> Result<()> {
                 .sessions
                 .iter()
                 .position(|s| s.id.starts_with(who.as_str()) || s.label().eq_ignore_ascii_case(who))
-                .ok_or_else(|| anyhow::anyhow!("no live session matching {who}"))?;
+                .ok_or_else(|| anyhow::anyhow!("no session matching {who}"))?;
             app.sel = idx;
             app.adopt();
             println!("{}", app.note);
@@ -350,6 +377,49 @@ fn truncate(s: &str, n: usize) -> String {
     }
 }
 
+/// The way out of passthrough, in every shape a terminal reports it.
+///
+/// ctrl+] is the classic escape, but a terminal without the kitty keyboard
+/// protocol sends the raw control byte 0x1D, which crossterm reports as
+/// ctrl+5 — so scope watched for a key press that could never arrive and
+/// passthrough became a one-way door. F12 is there as a way out that no
+/// keyboard layout can withhold.
+fn leaves_passthrough(code: KeyCode, ctrl: bool) -> bool {
+    match code {
+        KeyCode::F(12) => true,
+        // The 0x1D byte itself, if a terminal ever passes it through unnamed.
+        KeyCode::Char('\u{1d}') => true,
+        // ']' under the kitty protocol, ctrl+5 from the 0x1D byte elsewhere.
+        KeyCode::Char(']') | KeyCode::Char('5') => ctrl,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_way_a_terminal_reports_ctrl_bracket_gets_out() {
+        // What a terminal without the kitty keyboard protocol actually sends:
+        // the 0x1D byte, which crossterm calls ctrl+5. Watching only for ']'
+        // left passthrough with no exit at all.
+        assert!(leaves_passthrough(KeyCode::Char('5'), true));
+        assert!(leaves_passthrough(KeyCode::Char(']'), true));
+        assert!(leaves_passthrough(KeyCode::Char('\u{1d}'), false));
+        assert!(leaves_passthrough(KeyCode::F(12), false));
+    }
+
+    #[test]
+    fn ordinary_keys_still_reach_the_session() {
+        assert!(!leaves_passthrough(KeyCode::Char('5'), false));
+        assert!(!leaves_passthrough(KeyCode::Char(']'), false));
+        assert!(!leaves_passthrough(KeyCode::Esc, false));
+        assert!(!leaves_passthrough(KeyCode::Char('q'), false));
+        assert!(!leaves_passthrough(KeyCode::Char('c'), true));
+    }
+}
+
 fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
     let tick = Duration::from_millis(250);
     let mut last_tick = Instant::now();
@@ -429,7 +499,7 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                 }
                 if app.passthrough {
                     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-                    if ctrl && key.code == KeyCode::Char(']') {
+                    if leaves_passthrough(key.code, ctrl) {
                         app.toggle_passthrough();
                         continue;
                     }

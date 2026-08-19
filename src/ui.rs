@@ -420,8 +420,10 @@ fn draw_card(f: &mut Frame, app: &App, area: Rect) {
         }
     } else if s.live.is_some() {
         "watch only · A adopts it".into()
-    } else {
+    } else if s.placeholder {
         "ended".into()
+    } else {
+        "ended · A reopens it".into()
     };
     let money = if app.show_cost {
         format!("~${:.2} if API", t.cost)
@@ -1312,7 +1314,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
                     Style::new().fg(pal().gold).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
-                    "every key goes to the selected session · ctrl+] to stop",
+                    "every key goes to the selected session · ctrl+] or F12 to stop",
                     muted(),
                 ),
             ])),
@@ -1568,7 +1570,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
         .title(Span::styled(" keys ", Style::new().fg(pal().gold)));
     let inner = block.inner(rect);
     f.render_widget(block, rect);
-    let rows: [(&str, &str); 31] = [
+    let rows: [(&str, &str); 32] = [
         ("  look", ""),
         ("j / k, ↓ ↑", "select a session"),
         (
@@ -1597,13 +1599,20 @@ fn draw_help(f: &mut Frame, area: Rect) {
             "s / Q",
             "send a message · queue it for the next idle moment",
         ),
-        ("i / m", "interrupt · type into it directly, ctrl+] to stop"),
-        ("a / A", "attach full-screen · adopt into tmux"),
+        (
+            "i / m",
+            "interrupt · type into it directly, ctrl+] or F12 to stop",
+        ),
+        (
+            "a / A",
+            "attach full-screen · adopt, or reopen an ended one",
+        ),
         ("", "  ctrl+b then d comes back (ctrl+b L if scope"),
         ("", "  is itself running inside tmux)"),
         ("n / W", "new session · new isolated session on a branch"),
         ("M / X", "merge that branch back · remove the checkout"),
         ("b / L", "broadcast a message · launch the fleet file"),
+        ("K / Z", "stop this session · stop everything scope started"),
         ("", ""),
         ("  other", ""),
         ("$", "subscription view or API-equivalent cost"),
