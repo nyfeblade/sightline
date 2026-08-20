@@ -4,6 +4,7 @@ mod app;
 mod control;
 mod event;
 mod git;
+mod history;
 // Selected only on Windows, but built and tested everywhere, so on Unix its
 // surface is unused by design.
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -501,6 +502,28 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                 {
                     return Ok(());
                 }
+                // The conversation browser takes the keyboard while it is
+                // open: typing filters it, so nothing else can claim letters.
+                if app.past_open {
+                    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+                    match key.code {
+                        KeyCode::Esc => app.past_open = false,
+                        KeyCode::Enter => app.resume_past(),
+                        KeyCode::Down => app.move_past(1),
+                        KeyCode::Up => app.move_past(-1),
+                        KeyCode::Char('n') if ctrl => app.move_past(1),
+                        KeyCode::Char('p') if ctrl => app.move_past(-1),
+                        KeyCode::PageDown => app.move_past(10),
+                        KeyCode::PageUp => app.move_past(-10),
+                        KeyCode::Char('u') if ctrl => app.filter_past(String::clear),
+                        KeyCode::Backspace => app.filter_past(|f| {
+                            f.pop();
+                        }),
+                        KeyCode::Char(c) if !ctrl => app.filter_past(|f| f.push(c)),
+                        _ => {}
+                    }
+                    continue;
+                }
                 if app.popup {
                     match key.code {
                         KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') | KeyCode::Char('v') => {
@@ -665,6 +688,7 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     KeyCode::Char('i') => app.run_action('i'),
                     KeyCode::Char('a') => app.run_action('a'),
                     KeyCode::Char('A') => app.run_action('A'),
+                    KeyCode::Char('R') => app.run_action('R'),
                     KeyCode::Char('y') => app.answer(1),
                     KeyCode::Char('d') => app.answer(0),
 

@@ -232,6 +232,101 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.help {
         draw_help(f, area);
     }
+    if app.past_open {
+        draw_past(f, app, area);
+    }
+}
+
+/// Every conversation on the machine, to pick one and bring it back. This is
+/// the other half of the session list: that one answers "what is running", this
+/// one answers "what have I ever talked to Claude Code about".
+fn draw_past(f: &mut Frame, app: &mut App, area: Rect) {
+    let hits = app.past_hits();
+    // Sized to what there is to show, up to most of the window: a short history
+    // in a full-height box reads as something failing to load.
+    let width = (area.width * 86 / 100).max(40).min(area.width);
+    let wanted = hits.len() as u16 + 5;
+    let height = wanted.clamp(8, area.height.saturating_sub(2).max(8));
+    let rect = Rect {
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    };
+    f.render_widget(Clear, rect);
+    let block = Block::bordered()
+        .border_style(Style::new().fg(pal().gold))
+        .style(Style::new().bg(pal().midnight))
+        .title(Span::styled(
+            format!(
+                " resume a conversation · {} of {} ",
+                hits.len(),
+                app.past.len()
+            ),
+            Style::new().fg(pal().gold).add_modifier(Modifier::BOLD),
+        ))
+        .title_bottom(Span::styled(
+            " type to filter · ↑ ↓ move · enter resumes · esc closes ",
+            muted(),
+        ));
+    let inner = block.inner(rect);
+
+    // Keep the cursor on screen as it moves through a long history.
+    let rows = inner.height.saturating_sub(2) as usize;
+    let top = app.past_top.min(app.past_sel);
+    let top = if app.past_sel >= top + rows {
+        app.past_sel + 1 - rows
+    } else {
+        top
+    };
+    let width = inner.width as usize;
+
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, p) in hits.iter().enumerate().skip(top).take(rows) {
+        let selected = i == app.past_sel;
+        let open = app
+            .sessions
+            .iter()
+            .any(|s| s.id == p.id && s.live.is_some());
+        let age = format!("{:>4}", fmt_age(p.age_secs()));
+        let where_ = crate::event::short_path(&p.cwd);
+        // Size stands in for how much was said: a two-line question and a
+        // fortnight of work look very different in the list.
+        let size = format!("{:>6}", fmt_tokens(p.bytes / 4));
+        // The title earns whatever the age and folder do not need.
+        let room = width.saturating_sub(age.len() + where_.chars().count() + size.len() + 7);
+        let title = crate::event::clip(&p.label(), room.max(12));
+        lines.push(Line::from(vec![
+            Span::styled(
+                if selected { "▌" } else { " " },
+                Style::new().fg(pal().gold),
+            ),
+            Span::styled(format!("{age} "), muted()),
+            Span::styled(if open { "● " } else { "  " }, Style::new().fg(pal().ok)),
+            Span::styled(
+                format!("{title:<room$}", room = room.max(12)),
+                if selected {
+                    Style::new().fg(pal().text).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::new().fg(pal().body)
+                },
+            ),
+            Span::styled(format!(" {where_}"), muted()),
+            Span::styled(format!(" {size}"), Style::new().fg(pal().dim)),
+        ]));
+    }
+    if hits.is_empty() {
+        lines.push(Line::from(Span::styled("  nothing matches that", muted())));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("  filter ", Style::new().fg(pal().gold)),
+        Span::styled(app.past_filter.clone(), Style::new().fg(pal().text)),
+        Span::styled("▏", Style::new().fg(pal().gold)),
+    ]));
+    app.past_top = top;
+    f.render_widget(block, rect);
+    f.render_widget(Paragraph::new(lines), inner);
 }
 
 fn draw_header(f: &mut Frame, app: &App, area: Rect) {
@@ -1570,7 +1665,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
         .title(Span::styled(" keys ", Style::new().fg(pal().gold)));
     let inner = block.inner(rect);
     f.render_widget(block, rect);
-    let rows: [(&str, &str); 32] = [
+    let rows: [(&str, &str); 33] = [
         ("  look", ""),
         ("j / k, ↓ ↑", "select a session"),
         (
@@ -1609,6 +1704,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
         ),
         ("", "  ctrl+b then d comes back (ctrl+b L if scope"),
         ("", "  is itself running inside tmux)"),
+        ("R", "resume any conversation on this machine, however old"),
         ("n / W", "new session · new isolated session on a branch"),
         ("M / X", "merge that branch back · remove the checkout"),
         ("b / L", "broadcast a message · launch the fleet file"),

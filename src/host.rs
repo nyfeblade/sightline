@@ -390,11 +390,6 @@ fn read_into(mut reader: Box<dyn Read + Send>, screen: Arc<Mutex<vt100::Parser>>
     });
 }
 
-/// Start a fresh Claude Code session.
-pub fn new_session(cwd: &Path, prompt: Option<&str>) -> Result<String, String> {
-    new_session_with(cwd, None, None, None, prompt)
-}
-
 /// Start a session with explicit Claude Code options.
 pub fn new_session_with(
     cwd: &Path,

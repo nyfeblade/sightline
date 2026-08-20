@@ -119,24 +119,6 @@ pub fn send_key(pane: &str, key: &str) -> Result<(), String> {
         .map(|_| ())
 }
 
-/// Start a fresh Claude Code session in its own tmux session.
-pub fn new_session(cwd: &Path, prompt: Option<&str>) -> Result<String, String> {
-    if !available() {
-        return Err("tmux is not installed".into());
-    }
-    let name = next_name();
-    let cwd = cwd.to_string_lossy().to_string();
-    tmux(&["new-session", "-d", "-s", &name, "-c", &cwd, "--", "claude"])
-        .ok_or("tmux could not start the session (is claude on PATH?)")?;
-    if let Some(p) = prompt {
-        // Give Claude Code a moment to draw its prompt before typing into it.
-        std::thread::sleep(std::time::Duration::from_millis(1200));
-        let pane = format!("{name}:0.0");
-        send_text(&pane, p)?;
-    }
-    Ok(name)
-}
-
 /// True when scope is itself running inside tmux. Attaching from there is
 /// refused by tmux — the client has to be switched instead.
 pub fn inside_tmux() -> bool {

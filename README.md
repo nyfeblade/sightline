@@ -85,6 +85,7 @@ same actions have direct keys once you know them:
 | `m` | passthrough — every key goes to the session until `ctrl+]` or `F12` |
 | `a` `O` | show it full-screen · open it in its own window |
 | `n` `A` | start a new session · adopt a running one, or reopen a stopped one |
+| `R` | resume any conversation on this machine, however old |
 | `W` | start one on its own branch in its own checkout |
 | `M` `X` | merge that branch back · remove the checkout |
 | `K` `P` | stop the session · tidy up finished scope sessions |
@@ -101,6 +102,28 @@ same conversation inside tmux and closes the original window, so the
 conversation continues in one place rather than two. It asks first, and it
 immediately reopens the session in a fresh window, so nothing you were watching
 disappears — `O` does the same for any session on demand.
+
+### Resuming anything, ever
+
+The session list is a window on now — what is running, and what ran recently
+enough to still matter. `R` answers the other question: every conversation on
+this machine, whenever it happened. Type to filter across titles and folders,
+`enter` brings one back inside scope, and the ones already open are marked so
+you do not start a second client on the same conversation.
+
+![resume](docs/resume.png)
+
+It reads only the head of each transcript — the title Claude Code gave it, where
+it was held, how it opened — so browsing hundreds of conversations costs a
+moment, not a minute.
+
+### Starting one
+
+`n` takes a folder and, after it, anything you would have put on the command
+line: `~/api --model opus --effort high fix the failing tests`. Whatever is left
+after the flags is the first thing the session is asked, unquoted, because
+typing a message is the common case. `W` does the same on a fresh branch in its
+own worktree.
 
 ### Stopping is not losing
 

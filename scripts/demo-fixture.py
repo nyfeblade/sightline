@@ -7,7 +7,7 @@ something to show without exposing anyone's actual work.
 
 usage: demo-fixture.py <dir> [repo-path]
 """
-import json, os, sys, uuid
+import json, os, sys, time, uuid
 from datetime import datetime, timedelta, timezone
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "/tmp/scope-fixture"
@@ -152,6 +152,31 @@ write("-tmp-scope-demo-docs", docs, [
     prompt(docs, dcwd, ts(48000), "Rewrite the install guide for the new packaging."),
     say(docs, dcwd, ts(47900), "Rewritten, with the package manager sections split out."),
 ])
+
+# ── history, so the conversation browser has something to browse ────────────
+# Titles and ages only: the browser reads the head of each transcript, so this
+# is all it ever looks at.
+HISTORY = [
+    ("Fix flaky checkout test", "-tmp-scope-demo-repo", "/tmp/scope-demo-repo", 5 * 3600),
+    ("Port the CLI to clap 4", "-tmp-scope-demo-repo", "/tmp/scope-demo-repo", 26 * 3600),
+    ("Explain the retry budget", "-tmp-scope-demo-web", "/tmp/scope-demo-web", 3 * 86400),
+    ("Draft the release notes", "-tmp-scope-demo-docs", "/tmp/scope-demo-docs", 4 * 86400),
+    ("Trim the docker image", "-tmp-scope-demo-repo", "/tmp/scope-demo-repo", 6 * 86400),
+    ("Audit the auth middleware", "-tmp-scope-demo-repo", "/tmp/scope-demo-repo", 9 * 86400),
+    ("Why is startup 400ms slower", "-tmp-scope-demo-repo", "/tmp/scope-demo-repo", 12 * 86400),
+    ("Set up the staging deploy", "-tmp-scope-demo-web", "/tmp/scope-demo-web", 18 * 86400),
+    ("Write the postmortem", "-tmp-scope-demo-docs", "/tmp/scope-demo-docs", 25 * 86400),
+    ("First look at the codebase", "-tmp-scope-demo-repo", "/tmp/scope-demo-repo", 40 * 86400),
+]
+for title, slug, cwd, ago in HISTORY:
+    sid = str(uuid.uuid4())
+    path = write(slug, sid, [
+        {"type": "ai-title", "sessionId": sid, "aiTitle": title},
+        prompt(sid, cwd, ts(ago), title.lower() + " please"),
+        say(sid, cwd, ts(ago - 30), "Done."),
+    ])
+    when = time.time() - ago
+    os.utime(path, (when, when))
 
 os.makedirs(os.path.join(OUT, "sessions"), exist_ok=True)
 print(json.dumps({"dir": OUT, "api_session": api, "web_session": web, "docs_session": docs}))

@@ -3,6 +3,7 @@
 use crate::control::{self, Approval, Pane};
 use crate::event::{Ev, Filter};
 use crate::git;
+use crate::history::{self, Past};
 use crate::notify;
 use crate::registry;
 use crate::session::{Session, Status};
@@ -66,6 +67,77 @@ impl Regions {
     pub fn over_list(&self, col: u16, row: u16) -> bool {
         inside(self.list, col, row)
     }
+}
+
+/// What to start, read off the new-session line.
+///
+/// The line is a path and then anything else you would have typed on the
+/// command line: `~/api --model opus --effort high fix the failing tests`.
+/// Flags are Claude Code's own, and whatever is left over is the first thing
+/// the session is asked — no quoting, because a message is the common case and
+/// having to quote it is a papercut every single time.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct NewSpec {
+    pub path: String,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub mode: Option<String>,
+    pub prompt: Option<String>,
+}
+
+/// `~` means home, as it does everywhere else a path is typed. Nothing here
+/// goes through a shell, so if scope does not expand it nothing will — the
+/// fleet file has always documented `~/api` and it never worked.
+pub fn expand(path: &str) -> String {
+    match path.strip_prefix("~/") {
+        Some(rest) => dirs_home().join(rest).to_string_lossy().into_owned(),
+        None if path == "~" => dirs_home().to_string_lossy().into_owned(),
+        None => path.to_string(),
+    }
+}
+
+pub fn parse_new(text: &str) -> NewSpec {
+    let mut spec = NewSpec::default();
+    let mut words = text.split_whitespace().peekable();
+    if let Some(first) = words.peek() {
+        if !first.starts_with('-') {
+            spec.path = words.next().unwrap_or_default().to_string();
+        }
+    }
+    let mut rest: Vec<&str> = Vec::new();
+    while let Some(word) = words.next() {
+        // Everything after a bare `--` is the message, whatever it looks like.
+        if word == "--" {
+            rest.extend(words.by_ref());
+            break;
+        }
+        let field = match word {
+            "--model" | "-m" => Some(&mut spec.model),
+            "--effort" | "-e" => Some(&mut spec.effort),
+            "--mode" | "--permission-mode" | "-p" => Some(&mut spec.mode),
+            "--prompt" => Some(&mut spec.prompt),
+            _ => None,
+        };
+        match field {
+            Some(slot) => {
+                if let Some(v) = words.next() {
+                    *slot = Some(v.to_string());
+                }
+            }
+            None => {
+                rest.push(word);
+                rest.extend(words.by_ref());
+                break;
+            }
+        }
+    }
+    if !rest.is_empty() {
+        spec.prompt = Some(rest.join(" "));
+    }
+    if spec.path.is_empty() {
+        spec.path = ".".into();
+    }
+    spec
 }
 
 /// A session working in its own checkout.
@@ -259,6 +331,12 @@ pub struct App {
     view_before: Option<View>,
     /// when quitting was last asked about, where quitting ends sessions
     quit_asked: Option<Instant>,
+    /// the conversation browser: everything on the machine, resumable
+    pub past: Vec<Past>,
+    pub past_open: bool,
+    pub past_sel: usize,
+    pub past_top: usize,
+    pub past_filter: String,
     /// the actions menu for the selected session
     pub menu: bool,
     pub menu_sel: usize,
@@ -316,6 +394,11 @@ impl App {
             passthrough: false,
             view_before: None,
             quit_asked: None,
+            past: Vec::new(),
+            past_open: false,
+            past_sel: 0,
+            past_top: 0,
+            past_filter: String::new(),
             menu: false,
             menu_sel: 0,
             notify_on: notify::available(),
@@ -537,7 +620,9 @@ impl App {
                 None => return,
             },
             Prompt::Broadcast => format!("send to all {} steerable", self.steer.len()),
-            Prompt::NewSession => "new session in".into(),
+            Prompt::NewSession => {
+                "new session · path [--model m] [--effort e] [--mode p] [first message]".into()
+            }
             Prompt::Queue => match self.current() {
                 Some(s) => format!("queue for {} (sends when idle)", s.label()),
                 None => return,
@@ -713,8 +798,15 @@ impl App {
                 if !self.may_spawn() {
                     return;
                 }
-                let path = PathBuf::from(if text.is_empty() { ".".into() } else { text });
-                match control::new_session(&path, None) {
+                let spec = parse_new(&text);
+                let path = PathBuf::from(expand(&spec.path));
+                match control::new_session_with(
+                    &path,
+                    spec.model.as_deref(),
+                    spec.effort.as_deref(),
+                    spec.mode.as_deref(),
+                    spec.prompt.as_deref(),
+                ) {
                     Ok(name) => {
                         self.say(format!("started {name} — it will appear here shortly"));
                         self.discover();
@@ -986,24 +1078,33 @@ impl App {
         }) else {
             return;
         };
+        let original = self.current().and_then(|s| s.live.as_ref().map(|l| l.pid));
+        self.reopen(id, cwd, original);
+    }
+
+    /// Bring one conversation up somewhere scope can steer it, whether it is
+    /// still running or finished months ago. `original` is the process holding
+    /// it now, if any: two clients on one conversation would both append to the
+    /// same transcript, so it goes as soon as the new one is up.
+    pub fn reopen(&mut self, id: String, cwd: String, original: Option<i64>) {
         if self.steer.contains_key(&id) {
             self.say("already steerable");
             return;
         }
         if let Some(p) = control::adopted_pane(&id, &control::panes()) {
             let name = p.session;
-            self.say(format!("already adopted as {name} — press a to attach"));
+            self.say(format!("already open as {name} — press a to watch it"));
             return;
         }
         if !self.may_spawn() {
             return;
         }
-        let original = self.current().and_then(|s| s.live.as_ref().map(|l| l.pid));
         let was_running = original.is_some();
-        // An isolated session's checkout may have been removed since. Older
-        // tmux refuses to start in a folder that is gone and newer tmux quietly
-        // opens somewhere else; a conversation is worth more than the directory
-        // it began in, so pick home deliberately and say so.
+        // A session's directory may have been removed since — an isolated
+        // checkout, or a folder that simply moved. Older tmux refuses to start
+        // in a folder that is gone and newer tmux quietly opens somewhere else;
+        // a conversation is worth more than the directory it began in, so pick
+        // home deliberately and say so.
         let (dir, moved) = match PathBuf::from(&cwd) {
             p if p.is_dir() => (p, String::new()),
             _ => (
@@ -1016,9 +1117,6 @@ impl App {
         };
         match control::adopt(dir.as_path(), &id) {
             Ok(name) => {
-                // Two clients on one conversation would both append to the same
-                // transcript, so the original goes as soon as the copy is up.
-                // A session that had already stopped has nothing to close.
                 let closed = original.map(control::end_process).unwrap_or(false);
                 // The window that just closed was probably the one being
                 // watched, so put an equivalent one straight back.
@@ -1029,18 +1127,91 @@ impl App {
                         (false, _, true) => format!("reopened as {name} in a new window"),
                         (false, _, false) => format!("reopened as {name} — {attach}"),
                         (true, true, true) => {
-                            format!("{name} moved into tmux — reopened in a new window")
+                            format!(
+                                "{name} moved into {} — reopened in a new window",
+                                control::WHERE
+                            )
                         }
-                        (true, true, false) => format!("{name} moved into tmux — {attach}"),
+                        (true, true, false) => {
+                            format!("{name} moved into {} — {attach}", control::WHERE)
+                        }
                         (true, false, _) => {
                             format!("resumed as {name} — close the old window yourself")
                         }
                     } + &moved,
                 );
                 self.discover();
+                // Put the cursor on what was just brought back.
+                if let Some(i) = self.sessions.iter().position(|s| s.id == id) {
+                    self.sel = i;
+                }
             }
             Err(e) => self.say(e),
         }
+    }
+
+    /// Open the conversation browser: everything on this machine, whenever it
+    /// happened. Scanning is done here rather than on a timer — it reads every
+    /// transcript directory, and it is only worth doing when it is asked for.
+    pub fn open_past(&mut self) {
+        self.past = history::scan(&self.root);
+        self.past_open = true;
+        self.past_sel = 0;
+        self.past_top = 0;
+        self.past_filter.clear();
+        let n = self.past.len();
+        self.say(format!("{n} conversation{}", if n == 1 { "" } else { "s" }));
+    }
+
+    /// The conversations the filter leaves, newest first.
+    pub fn past_hits(&self) -> Vec<&Past> {
+        history::matching(&self.past, &self.past_filter)
+    }
+
+    pub fn move_past(&mut self, delta: isize) {
+        let n = self.past_hits().len();
+        if n == 0 {
+            self.past_sel = 0;
+            return;
+        }
+        let next = self.past_sel as isize + delta;
+        self.past_sel = next.clamp(0, n as isize - 1) as usize;
+    }
+
+    pub fn filter_past(&mut self, edit: impl FnOnce(&mut String)) {
+        edit(&mut self.past_filter);
+        self.past_sel = 0;
+        self.past_top = 0;
+    }
+
+    /// Bring the highlighted conversation back. One that is already open is
+    /// selected rather than started twice.
+    pub fn resume_past(&mut self) {
+        let picked = self
+            .past_hits()
+            .get(self.past_sel)
+            .map(|p| (p.id.clone(), p.cwd.clone()));
+        let Some((id, cwd)) = picked else {
+            self.say("nothing to resume");
+            return;
+        };
+        self.past_open = false;
+        if let Some(i) = self.sessions.iter().position(|s| s.id == id) {
+            if self.steer.contains_key(&id) {
+                self.sel = i;
+                self.say("that one is already open");
+                return;
+            }
+        }
+        // A conversation still held by a process outside scope has to be taken
+        // from it, exactly as adopting does.
+        let original = self
+            .sessions
+            .iter()
+            .find(|s| s.id == id)
+            .and_then(|s| s.live.as_ref().map(|l| l.pid));
+        let cwd = if cwd.is_empty() { ".".to_string() } else { cwd };
+        self.reopen(id, cwd, original);
     }
 
     /// What can be done to the selected session right now. Disabled entries
@@ -1160,6 +1331,12 @@ impl App {
             why: "nothing of scope's is running".into(),
         });
         v.push(Action {
+            key: 'R',
+            label: "Resume any conversation on this machine",
+            enabled: true,
+            why: String::new(),
+        });
+        v.push(Action {
             key: 'P',
             label: "Tidy up finished scope sessions",
             enabled: self.tmux_ok,
@@ -1208,6 +1385,7 @@ impl App {
             'X' => self.open_input(Prompt::Discard),
             'K' => self.open_input(Prompt::Stop),
             'Z' => self.open_input(Prompt::StopAll),
+            'R' => self.open_past(),
             'O' => {
                 let Some(id) = self.current().map(|s| s.id.clone()) else {
                     return;
@@ -1522,7 +1700,7 @@ impl App {
         let mut started = 0;
         for item in items {
             let g = |k: &str| item.get(k).and_then(|v| v.as_str()).map(str::to_string);
-            let mut cwd = g("cwd").unwrap_or_else(|| ".".into());
+            let mut cwd = expand(&g("cwd").unwrap_or_else(|| ".".into()));
             if let Some(branch) = g("worktree") {
                 match git::repo_root(PathBuf::from(&cwd).as_path())
                     .ok_or_else(|| format!("{cwd} is not a git repository"))
@@ -1795,4 +1973,60 @@ pub fn default_root() -> PathBuf {
 
 pub fn default_sessions_dir() -> PathBuf {
     config_dir().join("sessions")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_a_new_session_line() {
+        // Just a folder.
+        assert_eq!(
+            parse_new("~/api"),
+            NewSpec {
+                path: "~/api".into(),
+                ..Default::default()
+            }
+        );
+        // Folder, options, and a message that needs no quoting.
+        assert_eq!(
+            parse_new("~/api --model opus --effort high fix the failing tests"),
+            NewSpec {
+                path: "~/api".into(),
+                model: Some("opus".into()),
+                effort: Some("high".into()),
+                prompt: Some("fix the failing tests".into()),
+                ..Default::default()
+            }
+        );
+        // No folder given: here, which is what an empty line has always meant.
+        assert_eq!(parse_new("").path, ".");
+        assert_eq!(
+            parse_new("--mode plan"),
+            NewSpec {
+                path: ".".into(),
+                mode: Some("plan".into()),
+                ..Default::default()
+            }
+        );
+        // A message that starts with a dash still survives, after --.
+        assert_eq!(
+            parse_new("~/api -- --model is what I meant to say").prompt,
+            Some("--model is what I meant to say".into())
+        );
+        // A flag with nothing after it is ignored rather than eating the line.
+        assert_eq!(parse_new("~/api --model").model, None);
+    }
+
+    #[test]
+    fn expands_home_in_a_typed_path() {
+        let home = dirs_home().to_string_lossy().into_owned();
+        assert_eq!(expand("~/api"), format!("{home}/api"));
+        assert_eq!(expand("~"), home);
+        assert_eq!(expand("/tmp/x"), "/tmp/x");
+        assert_eq!(expand("relative/path"), "relative/path");
+        // Not a home reference, so it is left alone.
+        assert_eq!(expand("~notauser/x"), "~notauser/x");
+    }
 }
