@@ -701,25 +701,8 @@ impl App {
                 let Some(id) = input.target.clone() else {
                     return;
                 };
-                let busy = self
-                    .sessions
-                    .iter()
-                    .find(|s| s.id == id)
-                    .map(|s| matches!(s.status(), Status::Running(_) | Status::Working))
-                    .unwrap_or(false);
-                match self.pane_of(&id).cloned() {
-                    Some(p) => match control::send_text(&p.id, &text) {
-                        // Claude Code holds typed input until the current turn
-                        // ends, which looks identical to a delivered message
-                        // unless it is said out loud.
-                        Ok(()) if busy => self.say(format!(
-                            "queued for {} — it is mid-turn and will pick this up after",
-                            p.session
-                        )),
-                        Ok(()) => self.say(format!("sent to {}", p.session)),
-                        Err(e) => self.say(e),
-                    },
-                    None => self.say(self.not_steerable()),
+                if let Err(e) = self.send_to(&id, &text) {
+                    self.say(e);
                 }
             }
             Prompt::Broadcast => {
@@ -823,6 +806,32 @@ impl App {
         if matches!(kind, Prompt::Send | Prompt::Queue | Prompt::Broadcast) {
             self.open_input(kind);
         }
+    }
+
+    /// Type a line into one session and submit it. Every front end sends this
+    /// way, so what "sent" means cannot differ between them.
+    pub fn send_to(&mut self, id: &str, text: &str) -> Result<(), String> {
+        let busy = self
+            .sessions
+            .iter()
+            .find(|s| s.id == id)
+            .map(|s| matches!(s.status(), Status::Running(_) | Status::Working))
+            .unwrap_or(false);
+        let Some(p) = self.pane_of(id).cloned() else {
+            return Err(self.not_steerable());
+        };
+        control::send_text(&p.id, text)?;
+        // Claude Code holds typed input until the current turn ends, which
+        // looks identical to a delivered message unless it is said out loud.
+        if busy {
+            self.say(format!(
+                "queued for {} — it is mid-turn and will pick this up after",
+                p.session
+            ));
+        } else {
+            self.say(format!("sent to {}", p.session));
+        }
+        Ok(())
     }
 
     /// Escape interrupts the current turn, exactly as pressing it would.

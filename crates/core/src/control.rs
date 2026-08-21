@@ -140,6 +140,72 @@ pub fn is_claude(args: &str) -> bool {
     args.contains("claude")
 }
 
+/// Terminals to try, in order, when opening a window of our own.
+/// `$TERMINAL` wins if it is set, so anyone with a preference gets it.
+const TERMINALS: [&str; 8] = [
+    "kitty",
+    "wezterm",
+    "alacritty",
+    "ghostty",
+    "gnome-terminal",
+    "konsole",
+    "xfce4-terminal",
+    "xterm",
+];
+
+/// Run a command in a terminal window of its own. Used to watch a session
+/// outside scope, and to hand the whole thing over to the terminal view from
+/// the desktop app.
+pub fn open_terminal_with(command: &str) -> Result<String, String> {
+    use std::process::{Command, Stdio};
+    if cfg!(target_os = "macos") {
+        // Terminal.app takes a script rather than an argv.
+        let script = format!("tell app \"Terminal\" to do script \"{command}\"");
+        return Command::new("osascript")
+            .args(["-e", &script])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map(|_| "Terminal".to_string())
+            .map_err(|e| e.to_string());
+    }
+    if cfg!(windows) {
+        return Command::new("cmd")
+            .args(["/c", "start", "", "cmd", "/k", command])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map(|_| "cmd".to_string())
+            .map_err(|e| e.to_string());
+    }
+    let words: Vec<&str> = command.split_whitespace().collect();
+    let preferred = std::env::var("TERMINAL").ok().filter(|t| !t.is_empty());
+    let candidates: Vec<String> = preferred
+        .into_iter()
+        .chain(TERMINALS.iter().map(|t| t.to_string()))
+        .collect();
+    for term in candidates {
+        // All of these accept `-e <command>`; gnome-terminal wants `--`.
+        let mut cmd = Command::new(&term);
+        if term.contains("gnome-terminal") {
+            cmd.arg("--");
+        } else {
+            cmd.arg("-e");
+        }
+        cmd.args(&words);
+        if cmd
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .is_ok()
+        {
+            return Ok(term);
+        }
+    }
+    Err(format!("no terminal to open — run: {command}"))
+}
+
 /// A pane already running `claude --resume <session_id>`, if there is one.
 pub fn adopted_pane(session_id: &str, panes: &[Pane]) -> Option<Pane> {
     panes.iter().find(|p| p.cmd.contains(session_id)).cloned()

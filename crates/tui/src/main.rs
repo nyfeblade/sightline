@@ -1,21 +1,7 @@
 //! nyfe scope — watch every Claude Code session on this machine, live.
 
-mod app;
-mod control;
-mod event;
-mod git;
-mod history;
-// Selected only on Windows, but built and tested everywhere, so on Unix its
-// surface is unused by design.
-#[cfg_attr(not(windows), allow(dead_code))]
-mod host;
-mod notify;
-mod pricing;
-mod registry;
-mod session;
-mod tail;
-#[cfg(not(windows))]
-mod tmux;
+use scope_core::{app, bootstrap, control, git, session};
+
 mod ui;
 
 use anyhow::Result;
@@ -39,6 +25,7 @@ usage: scope [options]
        scope send <who> <text> type a line into a running session and submit it
        scope adopt <who>        (re)open a conversation in tmux so it can be steered
        scope prune              close scope sessions whose process has exited
+       scope doctor             check everything scope needs is installed
        scope stop [who|--all]   stop one session, or everything scope started
        scope waiting            list sessions blocked on a prompt
        scope approve <who> [n]  answer a blocked session (default option 1)
@@ -118,6 +105,24 @@ fn main() -> Result<()> {
         control::kill_session(&target).map_err(|e| anyhow::anyhow!(e))?;
         println!("stopped {target}");
         return Ok(());
+    }
+
+    // `doctor` answers the question an app launched from a dock cannot ask a
+    // person: is everything it needs actually here.
+    if args.first().map(String::as_str) == Some("doctor") {
+        let checks = bootstrap::assess(&bootstrap::probe(&app::default_root()));
+        for c in &checks {
+            let mark = if c.ok { "ok  " } else { "MISS" };
+            println!("{mark} {:<14} {}", c.name, c.detail);
+            if let Some(fix) = &c.fix {
+                println!("     {:<14} {fix}", "");
+            }
+        }
+        if bootstrap::ready(&checks) {
+            println!("\nready");
+            return Ok(());
+        }
+        anyhow::bail!("something required is missing");
     }
 
     if args.first().map(String::as_str) == Some("prune") {
@@ -349,11 +354,33 @@ fn main() -> Result<()> {
     result
 }
 
+/// The one-shot table.
+///
+/// Writes rather than prints: `scope --once | head` closes the pipe halfway,
+/// and a tool that panics when someone pipes it into `head` is a tool that
+/// looks broken.
 fn print_once(app: &App) {
+    use std::io::Write;
+    let out = std::io::stdout();
+    let mut out = out.lock();
+    macro_rules! line {
+        ($($arg:tt)*) => {
+            if writeln!(out, $($arg)*).is_err() {
+                return;
+            }
+        };
+    }
+
     let money = if app.show_cost { "EST$" } else { "REQS" };
-    println!(
+    line!(
         "{:<12} {:<26} {:<26} {:>7} {:>7} {:>9} {:>6}",
-        "STATUS", "SESSION", "WHERE", "CTX", "OUT", money, "LAST"
+        "STATUS",
+        "SESSION",
+        "WHERE",
+        "CTX",
+        "OUT",
+        money,
+        "LAST"
     );
     for s in &app.sessions {
         let status = match s.status() {
@@ -362,7 +389,7 @@ fn print_once(app: &App) {
             Status::Waiting => "waiting".into(),
             Status::Ended => "ended".into(),
         };
-        println!(
+        line!(
             "{:<12} {:<26} {:<26} {:>7} {:>7} {:>9} {:>6}",
             truncate(&status, 12),
             truncate(&s.label(), 26),
@@ -383,7 +410,7 @@ fn print_once(app: &App) {
     } else {
         String::new()
     };
-    println!(
+    line!(
         "\n{} sessions · {working} working · {} output tokens{tail}",
         app.sessions.len(),
         ui::fmt_tokens(tokens)

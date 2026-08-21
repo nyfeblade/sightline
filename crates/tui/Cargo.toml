@@ -1,0 +1,22 @@
+[package]
+name = "nyfe-scope"
+description = "Live view of every Claude Code session on your machine, with tmux-based control"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+keywords = ["claude", "claude-code", "tui", "monitoring", "agents"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "scope"
+path = "src/main.rs"
+
+[dependencies]
+scope-core = { path = "../core" }
+anyhow.workspace = true
+chrono.workspace = true
+crossterm.workspace = true
+ratatui.workspace = true
+serde_json.workspace = true

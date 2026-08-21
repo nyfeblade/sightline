@@ -1,0 +1,25 @@
+/* Placeholder styling only — the design replaces this. Brand colours so the
+   shell is not jarring while it stands in. */
+:root { --midnight: #0b1220; --gold: #c08542; --text: #e8ecf4; --muted: #8792a8; }
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--midnight); color: var(--text);
+  font: 13px/1.5 ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
+}
+header { display: flex; gap: 12px; align-items: baseline; padding: 12px 16px;
+  border-bottom: 1px solid #1b2436; }
+.mark { color: var(--gold); font-weight: 700; letter-spacing: .12em; }
+.version, #summary { color: var(--muted); }
+main { display: grid; grid-template-columns: 320px 1fr; gap: 16px; padding: 16px; }
+section { border: 1px solid #1b2436; border-radius: 8px; padding: 12px; }
+.row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0;
+  border-bottom: 1px solid #141d2e; }
+.row:last-child { border-bottom: 0; }
+.name { color: var(--text); }
+.meta, .detail { color: var(--muted); }
+.miss { color: #c45d4e; }
+.ok { color: #7fb069; }
+footer { display: flex; gap: 12px; align-items: center; padding: 12px 16px;
+  border-top: 1px solid #1b2436; color: var(--muted); }
+button { background: transparent; color: var(--gold); border: 1px solid var(--gold);
+  border-radius: 6px; padding: 6px 12px; font: inherit; cursor: pointer; }

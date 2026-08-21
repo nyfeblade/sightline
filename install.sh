@@ -28,6 +28,7 @@ mkdir -p "$DEST"
 install -m 755 "$TMP"/*/scope "$DEST/scope"
 
 echo "installed $DEST/scope"
+echo "the desktop app is a separate download: scope-$TAG-x86_64.AppImage"
 case ":$PATH:" in
   *":$DEST:"*) ;;
   *) echo "note: $DEST is not on your PATH" ;;

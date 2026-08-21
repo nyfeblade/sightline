@@ -27,6 +27,19 @@ or build it:
 cargo install --git https://github.com/nyfeblade/nyfe-scope
 ```
 
+As a desktop app on Linux, one file, nothing installed:
+
+```sh
+scripts/appimage.sh            # builds dist/scope-<version>-x86_64.AppImage
+```
+
+Clicking it opens the app. The same file is also the terminal view —
+`./scope-0.3.0-x86_64.AppImage --tui` runs it in the shell you started it from,
+and any other argument goes there too, so `--once` and `doctor` work from it as
+well. `scripts/desktop-entry.sh` puts it in your application menu instead, if you
+would rather run it from a checkout. The app needs webkit2gtk on the host, which
+a normal desktop already has.
+
 On Windows:
 
 ```powershell
@@ -266,6 +279,19 @@ than inventing one. If you meet that, open an issue with your Claude Code
 version; the fix is usually a few lines. The same is true of the pane reading
 behind approvals and passthrough, which works by looking at what a session has
 drawn on screen.
+
+## The app
+
+The desktop app and the terminal view are two front ends over one engine. Opening
+the app starts whatever holds sessions — the tmux server on Unix — before the
+window is drawn, so the first thing you click does not wait for it, and it says
+plainly what is missing rather than failing quietly: `scope doctor` prints the
+same checks in a terminal.
+
+Neither front end is allowed to grow logic the other needs. `crates/core` holds
+everything that is not a way of looking at it, `crates/tui` is the terminal view,
+`crates/gui` the app; sending a message, answering a prompt or reopening a
+conversation is one implementation with two callers.
 
 ## Development
 

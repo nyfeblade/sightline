@@ -397,59 +397,10 @@ pub fn end_process(pid: i64) -> bool {
         .unwrap_or(false)
 }
 
-/// Terminals to try, in order, when opening a session in its own window.
-/// `$TERMINAL` wins if it is set, so anyone with a preference gets it.
-const TERMINALS: [&str; 8] = [
-    "kitty",
-    "wezterm",
-    "alacritty",
-    "ghostty",
-    "gnome-terminal",
-    "konsole",
-    "xfce4-terminal",
-    "xterm",
-];
-
 /// Open a session in a new terminal window, attached to its tmux session, so
 /// it can be watched without giving up the scope view.
 pub fn open_window(session: &str) -> Result<String, String> {
-    if cfg!(target_os = "macos") {
-        // Terminal.app takes a script rather than an argv.
-        let script = format!("tell app \"Terminal\" to do script \"tmux attach -t {session}\"");
-        return Command::new("osascript")
-            .args(["-e", &script])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map(|_| "Terminal".to_string())
-            .map_err(|e| e.to_string());
-    }
-    let preferred = std::env::var("TERMINAL").ok().filter(|t| !t.is_empty());
-    let candidates: Vec<String> = preferred
-        .into_iter()
-        .chain(TERMINALS.iter().map(|t| t.to_string()))
-        .collect();
-    for term in candidates {
-        // All of these accept `-e <command>`; gnome-terminal wants `--`.
-        let mut cmd = Command::new(&term);
-        if term.contains("gnome-terminal") {
-            cmd.args(["--", "tmux", "attach", "-t", session]);
-        } else {
-            cmd.args(["-e", "tmux", "attach", "-t", session]);
-        }
-        if cmd
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .is_ok()
-        {
-            return Ok(term);
-        }
-    }
-    Err(format!(
-        "no terminal to open — run: tmux attach -t {session}"
-    ))
+    crate::control::open_terminal_with(&format!("tmux attach -t {session}"))
 }
 
 /// Close every session scope started or adopted, leaving any tmux session the

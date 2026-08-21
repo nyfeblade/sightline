@@ -1,13 +1,13 @@
 //! Rendering. Nyfe palette: midnight ground, gold accent, everything else muted.
 
-use crate::app::{App, View};
-use crate::event::{Ev, Kind};
-use crate::session::{Session, Status};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
+use scope_core::app::{App, View};
+use scope_core::event::{Ev, Kind};
+use scope_core::session::{Session, Status};
 
 use std::sync::OnceLock;
 
@@ -289,13 +289,13 @@ fn draw_past(f: &mut Frame, app: &mut App, area: Rect) {
             .iter()
             .any(|s| s.id == p.id && s.live.is_some());
         let age = format!("{:>4}", fmt_age(p.age_secs()));
-        let where_ = crate::event::short_path(&p.cwd);
+        let where_ = scope_core::event::short_path(&p.cwd);
         // Size stands in for how much was said: a two-line question and a
         // fortnight of work look very different in the list.
         let size = format!("{:>6}", fmt_tokens(p.bytes / 4));
         // The title earns whatever the age and folder do not need.
         let room = width.saturating_sub(age.len() + where_.chars().count() + size.len() + 7);
-        let title = crate::event::clip(&p.label(), room.max(12));
+        let title = scope_core::event::clip(&p.label(), room.max(12));
         lines.push(Line::from(vec![
             Span::styled(
                 if selected { "▌" } else { " " },
@@ -510,7 +510,7 @@ fn draw_card(f: &mut Frame, app: &App, area: Rect) {
     };
     let control = if app.steer.contains_key(&s.id) {
         match app.steer.get(&s.id) {
-            Some(p) => crate::control::where_hint(&p.session),
+            Some(p) => scope_core::control::where_hint(&p.session),
             None => "steerable".into(),
         }
     } else if s.live.is_some() {
@@ -746,7 +746,7 @@ fn draw_files(f: &mut Frame, app: &mut App, area: Rect) {
             .unwrap_or_default();
         let right = format!("{ops} {churn}  {age} ");
         let path = clip_left(
-            &crate::event::short_path(key),
+            &scope_core::event::short_path(key),
             w.saturating_sub(right.chars().count() + 3),
         );
         lines.push(row(
@@ -1578,7 +1578,7 @@ fn draw_menu(f: &mut Frame, app: &mut App, area: Rect) {
 fn draw_popup(f: &mut Frame, app: &App, area: Rect) {
     let (title, color, body) = match app.view {
         View::Files => match app.file_history() {
-            Some((path, text)) => (crate::event::short_path(&path), pal().gold, text),
+            Some((path, text)) => (scope_core::event::short_path(&path), pal().gold, text),
             None => return,
         },
         View::Agents => {
@@ -1606,7 +1606,7 @@ fn draw_popup(f: &mut Frame, app: &App, area: Rect) {
             let Some(e) = t.entries.get(app.list_sel) else {
                 return;
             };
-            let body = crate::git::diff(std::path::Path::new(&s.cwd), &e.path)
+            let body = scope_core::git::diff(std::path::Path::new(&s.cwd), &e.path)
                 .unwrap_or_else(|| "no diff available".into());
             (e.path.clone(), pal().gold, body)
         }
