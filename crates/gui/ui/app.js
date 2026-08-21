@@ -1,14 +1,23 @@
 // The window. It holds no knowledge about sessions — every question and every
-// action goes to the engine, which the terminal view uses too.
+// action goes to the engine the terminal view uses, so the two cannot answer
+// the same question differently.
 const invoke = window.__TAURI__.core.invoke;
 const el = (id) => document.getElementById(id);
 const clear = (node) => {
   while (node.firstChild) node.removeChild(node.firstChild);
 };
+const make = (tag, cls, text) => {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text !== undefined) node.textContent = text;
+  return node;
+};
 
 let selected = null;
 let pane = "feed";
 let liveOnly = false;
+let showCost = false;
+let typing = false;
 let sessions = [];
 let dragging = null;
 
@@ -33,67 +42,61 @@ const age = (s) => {
   return `${Math.floor(s / 86400)}d`;
 };
 const clock = (iso) => (iso ? new Date(iso).toTimeString().slice(0, 8) : "");
+const ms = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}s` : `${n}ms`);
 
-// Home is written the way it is everywhere else.
 let home = "";
 const shortPath = (p) => (home && p.startsWith(home) ? `~${p.slice(home.length)}` : p || "—");
+// In a narrow rail the folder's name is the useful part: every session on this
+// machine shares the first three segments of its path.
+const folderName = (p) => {
+  if (!p) return "—";
+  if (home && p === home) return "~";
+  return p.split("/").filter(Boolean).pop() || p;
+};
 
 // A session's state, in the words the interface uses for it.
 function condition(s) {
-  if (s.asking) return ["needs", "Needs Permission"];
-  if (s.state === "running") return ["working", `Running ${s.tool || ""}`.trim()];
-  if (s.state === "working") return ["working", "Processing"];
-  if (s.state === "waiting") return ["idle", "Idle"];
-  return ["ended", "Ended"];
+  if (s.asking) return ["needs", "needs you"];
+  if (s.state === "running") return ["working", `running ${s.tool || ""}`.trim()];
+  if (s.state === "working") return ["working", "working"];
+  if (s.state === "waiting") return ["idle", "idle"];
+  return ["ended", "ended"];
 }
 
 const say = (text) => {
   el("note").textContent = text;
 };
+const current = () => sessions.find((s) => s.id === selected);
 
-// ── the list ───────────────────────────────────────────────────────────────
+// ── the session list ───────────────────────────────────────────────────────
 function drawAgents() {
   const shown = liveOnly ? sessions.filter((s) => s.live) : sessions;
-  el("agent-count").textContent = `Active Agents (${shown.length})`;
+  el("agent-count").textContent = `Sessions (${shown.length})`;
+  el("filter").classList.toggle("is-on", liveOnly);
   const list = el("agents");
   clear(list);
   for (const s of shown) {
     const [kind, label] = condition(s);
-    const li = document.createElement("li");
-    li.className = `agent${s.id === selected ? " is-on" : ""}`;
+    const li = make(
+      "li",
+      `agent${s.id === selected ? " is-on" : ""}${kind === "ended" ? " is-ended" : ""}`,
+    );
     li.draggable = true;
     li.dataset.id = s.id;
-
-    const top = document.createElement("div");
-    top.className = "agent-top";
-    const name = document.createElement("span");
-    name.className = "agent-name";
-    name.textContent = s.name;
-    const when = document.createElement("span");
-    when.className = "agent-age";
-    when.textContent = age(s.age_secs);
-    top.append(name, when);
-
-    const state = document.createElement("div");
-    state.className = "agent-state";
-    const dot = document.createElement("i");
-    dot.className = `dot ${kind}`;
-    const what = document.createElement("span");
-    what.className = `state-text ${kind}`;
-    what.textContent = label;
-    state.append(dot, what);
-
-    const foot = document.createElement("div");
-    foot.className = "agent-foot";
-    const where = document.createElement("span");
-    where.className = "agent-where";
-    where.textContent = shortPath(s.cwd);
-    const ctx = document.createElement("span");
-    ctx.className = "agent-ctx";
-    ctx.textContent = s.window ? `${tokens(s.context)} / ${tokens(s.window)}` : "";
-    foot.append(where, ctx);
-
-    li.append(top, state, foot);
+    li.append(make("i", `dot ${kind}`));
+    li.append(make("span", "name", s.name));
+    li.append(make("span", "age", age(s.age_secs)));
+    const where = make("span", "where");
+    where.append(
+      kind === "needs" ? make("span", "needs-text", "needs you") : make("span", null, label),
+    );
+    // The folder is worth a line only when it says something: every session on
+    // this machine would otherwise read "~".
+    const folder = folderName(s.cwd);
+    if (folder !== "~") where.append(document.createTextNode(` · ${folder}`));
+    else if (s.branch) where.append(document.createTextNode(` · ${s.branch}`));
+    li.append(where);
+    li.append(make("span", "ctx", s.window ? tokens(s.context) : ""));
     li.addEventListener("click", () => {
       selected = s.id;
       draw();
@@ -102,7 +105,7 @@ function drawAgents() {
   }
 }
 
-// Dragging a session moves it, and the order is remembered.
+// Dragging a session moves it, and the order is remembered between runs.
 function wireDragging() {
   const list = el("agents");
   list.addEventListener("dragstart", (e) => {
@@ -125,11 +128,12 @@ function wireDragging() {
     const ids = sessions.map((s) => s.id);
     const from = ids.indexOf(dragging);
     const to = ids.indexOf(row.dataset.id);
-    if (from < 0 || to < 0) return;
-    ids.splice(to, 0, ids.splice(from, 1)[0]);
-    await invoke("reorder", { ids });
+    if (from >= 0 && to >= 0) {
+      ids.splice(to, 0, ids.splice(from, 1)[0]);
+      await invoke("reorder", { ids });
+    }
     dragging = null;
-    await draw();
+    draw();
   });
   list.addEventListener("dragend", () => {
     dragging = null;
@@ -137,101 +141,105 @@ function wireDragging() {
   });
 }
 
-// ── the middle ─────────────────────────────────────────────────────────────
-function row(at, kind, head) {
-  const line = document.createElement("div");
-  line.className = "row";
-  const when = document.createElement("span");
-  when.className = "at";
-  when.textContent = clock(at);
-  const tag = document.createElement("span");
-  tag.className = `tag ${kind}`;
-  tag.textContent = `[${kind.toUpperCase().slice(0, 6)}]`;
-  const said = document.createElement("span");
-  said.className = "said";
-  said.textContent = head;
-  line.append(when, tag, said);
+// ── panes ──────────────────────────────────────────────────────────────────
+function eventRow(e) {
+  const line = make("div", "row");
+  line.append(make("span", "at", clock(e.at)));
+  const who = e.kind === "prompt" ? "you" : e.kind === "text" ? "claude" : e.kind;
+  line.append(make("span", `who ${e.kind}`, who));
+  line.append(make("span", "said", e.head));
   return line;
 }
 
-function card(e, pending) {
-  const box = document.createElement("div");
-  box.className = `card${pending ? " pending" : ""}`;
-  const head = document.createElement("div");
-  head.className = "card-head";
-  const title = document.createElement("span");
-  title.textContent = `${pending ? "Pending " : ""}Tool Call: ${e.tool || "tool"}`;
-  const when = document.createElement("span");
-  when.className = "card-id";
-  when.textContent = clock(e.at);
-  head.append(title, when);
-  const body = document.createElement("pre");
-  body.className = "card-body";
-  body.textContent = e.head;
-  box.append(head, body);
+function toolCard(e, running) {
+  const box = make("div", `card${running ? " pending" : ""}`);
+  const head = make("div", "card-head");
+  head.append(make("span", null, `${running ? "running · " : ""}${e.tool || "tool"}`));
+  head.append(make("span", null, clock(e.at)));
+  box.append(head, make("pre", "card-body", e.head));
   return box;
 }
 
+const empty = (text) => make("div", "empty", text);
+
+// Follow the feed only if it was already being followed: yanking someone back
+// to the bottom while they are reading is worse than not following.
+const keepingUp = (out) => out.scrollHeight - out.scrollTop - out.clientHeight < 40;
+
 async function drawFeed(id) {
-  const events = await invoke("feed", { id, limit: 200 });
+  const events = await invoke("feed", { id, limit: 250 });
   const out = el("pane");
-  // Follow the feed only if it was already being followed: yanking someone
-  // back to the bottom while they are reading is worse than not following.
-  const following = out.scrollHeight - out.scrollTop - out.clientHeight < 40;
+  const follow = keepingUp(out);
   clear(out);
-  if (!events.length) {
-    out.append(note("nothing on this session's record yet"));
-    return;
-  }
-  const lastTool = events.map((e) => e.kind).lastIndexOf("tool");
-  const answered = events.map((e) => e.kind).lastIndexOf("result") > lastTool;
+  if (!events.length) return out.append(empty("nothing on this session's record yet"));
+  const kinds = events.map((e) => e.kind);
+  const lastTool = kinds.lastIndexOf("tool");
+  const running = lastTool >= 0 && kinds.lastIndexOf("result") < lastTool;
   events.forEach((e, i) => {
-    if (e.kind === "tool") {
-      out.append(card(e, i === lastTool && !answered));
-    } else {
-      out.append(row(e.at, e.kind, e.head));
-    }
+    out.append(e.kind === "tool" ? toolCard(e, running && i === lastTool) : eventRow(e));
   });
-  const end = document.createElement("div");
-  end.className = "end";
-  end.textContent = "END OF STREAM";
-  out.append(end);
-  if (following) out.scrollTop = out.scrollHeight;
+  out.append(make("div", "end", "END OF STREAM"));
+  if (follow) out.scrollTop = out.scrollHeight;
 }
 
-function note(text) {
-  const p = document.createElement("div");
-  p.className = "empty";
-  p.textContent = text;
-  return p;
+// The conversation with the machinery taken out: what was said, by whom.
+async function drawRead(id) {
+  const events = await invoke("feed", { id, limit: 400 });
+  const out = el("pane");
+  const follow = keepingUp(out);
+  clear(out);
+  const talk = events.filter((e) => e.kind === "prompt" || e.kind === "text");
+  if (!talk.length) return out.append(empty("nothing said yet"));
+  for (const e of talk) {
+    const block = make("div", "row");
+    block.append(make("span", "at", clock(e.at)));
+    block.append(make("span", `who ${e.kind}`, e.kind === "prompt" ? "you" : "claude"));
+    block.append(make("span", "said", e.body || e.head));
+    out.append(block);
+  }
+  if (follow) out.scrollTop = out.scrollHeight;
 }
 
 async function drawFiles(id) {
   const files = await invoke("files", { id });
   const out = el("pane");
   clear(out);
-  if (!files.length) return out.append(note("no files touched yet"));
+  if (!files.length) return out.append(empty("no files touched yet"));
   for (const f of files) {
-    const line = document.createElement("div");
-    line.className = "line";
-    const path = document.createElement("span");
-    path.className = "path";
-    path.textContent = f.path;
-    const counts = document.createElement("span");
-    counts.className = "num";
-    counts.textContent = `${f.reads}r ${f.edits + f.writes}w`;
-    const diff = document.createElement("span");
-    diff.className = "num";
-    diff.innerHTML = "";
-    const plus = document.createElement("span");
-    plus.className = "added";
-    plus.textContent = `+${f.added}`;
-    const minus = document.createElement("span");
-    minus.className = "removed";
-    minus.textContent = ` −${f.removed}`;
-    diff.append(plus, minus);
-    line.append(path, document.createElement("span"), counts, diff);
-    line.style.justifyContent = "space-between";
+    const line = make("div", "line");
+    line.append(make("span", "path", shortPath(f.path)));
+    const right = make("span", "num");
+    right.append(make("span", null, `${f.reads}r ${f.edits + f.writes}w  `));
+    right.append(make("span", "added", `+${f.added}`));
+    right.append(make("span", "removed", ` −${f.removed}`));
+    line.append(right);
+    out.append(line);
+  }
+}
+
+async function drawTree(id) {
+  const tree = await invoke("tree", { id });
+  const out = el("pane");
+  clear(out);
+  if (!tree) return out.append(empty("this session is not inside a git repository"));
+  const head = make("div", "line");
+  head.append(make("span", "path", `on ${tree.branch}`));
+  const sum = make("span", "num");
+  sum.append(make("span", "added", `+${tree.insertions}`));
+  sum.append(make("span", "removed", ` −${tree.deletions}`));
+  head.append(sum);
+  out.append(head);
+  if (tree.ahead !== null && tree.ahead !== undefined) {
+    const iso = make("div", "line");
+    iso.append(make("span", "path", `${tree.ahead} commits ahead of ${tree.base}`));
+    iso.append(make("span", "num", "its own checkout"));
+    out.append(iso);
+  }
+  if (!tree.entries.length) return out.append(empty("working tree clean"));
+  for (const e of tree.entries) {
+    const line = make("div", "line");
+    line.append(make("span", "path", e.path));
+    line.append(make("span", "num", e.state));
     out.append(line);
   }
 }
@@ -240,70 +248,77 @@ async function drawPlan(id) {
   const todos = await invoke("plan", { id });
   const out = el("pane");
   clear(out);
-  if (!todos.length) return out.append(note("no plan written"));
+  if (!todos.length) return out.append(empty("no plan written"));
   for (const t of todos) {
-    const line = document.createElement("div");
     const state = t.state === "completed" ? "done" : t.state === "in_progress" ? "doing" : "";
-    line.className = `line todo ${state}`;
-    const mark = document.createElement("span");
-    mark.className = "num";
-    mark.textContent = state === "done" ? "✓" : state === "doing" ? "▸" : "○";
-    const what = document.createElement("span");
-    what.className = "what";
-    what.textContent = t.text;
-    line.append(mark, what);
+    const line = make("div", `line todo ${state}`);
+    const mark = state === "done" ? "✓" : state === "doing" ? "▸" : "○";
+    line.append(make("span", "what", `${mark}  ${t.text}`));
     out.append(line);
   }
 }
 
-async function drawAgentRuns(id) {
+async function drawSubagents(id) {
   const runs = await invoke("agents", { id });
   const out = el("pane");
   clear(out);
-  if (!runs.length) return out.append(note("no subagents launched"));
+  if (!runs.length) return out.append(empty("no subagents launched"));
   for (const a of runs) {
-    const line = document.createElement("div");
-    line.className = "line";
-    const kind = document.createElement("span");
-    kind.className = "num";
-    kind.textContent = a.kind || "agent";
-    const what = document.createElement("span");
-    what.className = "path";
-    what.textContent = a.description;
-    const state = document.createElement("span");
-    state.className = "num";
-    state.textContent = a.state;
-    line.append(kind, what, state);
-    line.style.justifyContent = "space-between";
+    const line = make("div", "line");
+    line.append(make("span", "path", `${a.kind || "agent"} · ${a.description}`));
+    line.append(make("span", "num", `${a.model} · ${a.state}`));
     out.append(line);
   }
+}
+
+function statLine(out, key, value) {
+  const line = make("div", "line");
+  line.append(make("span", "path", key));
+  line.append(make("span", "num", value));
+  out.append(line);
+}
+
+function drawStats(s) {
+  const out = el("pane");
+  clear(out);
+  statLine(out, "turns", String(s.turns));
+  statLine(out, "requests", String(s.requests));
+  statLine(out, "context", s.window ? `${tokens(s.context)} of ${tokens(s.window)}` : tokens(s.context));
+  statLine(out, "output", tokens(s.output));
+  statLine(out, "input", tokens(s.input));
+  statLine(out, "cache", `${tokens(s.cache_read)} read · ${tokens(s.cache_write)} written`);
+  statLine(out, "if run on the API", `~$${s.cost.toFixed(2)}`);
+  statLine(out, "tool calls", `median ${ms(s.latency[0])} · slowest ${ms(s.latency[1])}`);
+  statLine(out, "errors · refusals", `${s.errors} · ${s.denials}`);
+  if (s.model) statLine(out, "model", s.model + (s.effort ? ` · ${s.effort}` : ""));
+  if (s.version) statLine(out, "client", s.version);
 }
 
 async function drawErrors(id) {
   const errors = await invoke("errors", { id });
   const out = el("pane");
   clear(out);
-  if (!errors.length) return out.append(note("nothing has gone wrong"));
-  for (const e of errors) out.append(row(e.at, "result", e.head));
+  if (!errors.length) return out.append(empty("nothing has gone wrong"));
+  for (const e of errors) out.append(eventRow(e));
 }
 
-// How wide a character actually is in this font at this size, measured once
-// rather than guessed at: a column count that is off by one puts every wrapped
-// line in the wrong place.
+// How wide a character actually is in this font at this size, measured rather
+// than guessed: a column count off by one wraps every line in the wrong place.
 let cell = null;
 function cellSize() {
   if (cell) return cell;
-  const ruler = document.createElement("div");
-  ruler.className = "screen";
+  const ruler = make("div", "screen", "M".repeat(100));
   ruler.style.cssText = "position:absolute;visibility:hidden;white-space:pre";
-  ruler.textContent = "M".repeat(100);
   document.body.append(ruler);
-  cell = { w: ruler.getBoundingClientRect().width / 100, h: ruler.getBoundingClientRect().height };
+  const box = ruler.getBoundingClientRect();
+  cell = { w: box.width / 100, h: box.height };
   ruler.remove();
   return cell;
 }
 
-// The session's own screen, cell by cell, at the size of this panel.
+// The session's own screen, cell by cell, at the size of this panel — and it
+// takes the keyboard, so this is the session itself rather than a picture of
+// one.
 async function drawMirror(id) {
   const out = el("pane");
   const { w, h } = cellSize();
@@ -311,13 +326,12 @@ async function drawMirror(id) {
   const rows = Math.max(10, Math.floor((out.clientHeight - 20) / h));
   const frame = await invoke("frame", { id, cols, rows });
   clear(out);
-  if (!frame) return out.append(note("scope has no terminal for this session"));
-  const screen = document.createElement("div");
-  screen.className = "screen";
-  frame.lines.forEach((line, y) => {
-    const div = document.createElement("div");
+  if (!frame) return out.append(empty("scope has no terminal for this session"));
+  const screen = make("div", "screen");
+  for (const line of frame.lines) {
+    const div = make("div");
     for (const run of line) {
-      const span = run.bold ? document.createElement("b") : document.createElement("span");
+      const span = run.bold ? make("b") : make("span");
       span.textContent = run.text;
       if (run.fg) span.style.color = run.fg;
       if (run.bg) span.style.background = run.bg;
@@ -329,63 +343,127 @@ async function drawMirror(id) {
       }
       div.append(span);
     }
-    if (frame.cursor_visible && frame.cursor[0] === y) div.classList.add("has-caret");
     screen.append(div);
-  });
+  }
   out.append(screen);
 }
 
 const painters = {
-  feed: drawFeed,
-  files: drawFiles,
-  plan: drawPlan,
-  agents: drawAgentRuns,
-  mirror: drawMirror,
-  errors: drawErrors,
+  feed: (s) => drawFeed(s.id),
+  read: (s) => drawRead(s.id),
+  mirror: (s) => drawMirror(s.id),
+  files: (s) => drawFiles(s.id),
+  tree: (s) => drawTree(s.id),
+  plan: (s) => drawPlan(s.id),
+  agents: (s) => drawSubagents(s.id),
+  stats: (s) => drawStats(s),
+  errors: (s) => drawErrors(s.id),
 };
 
-// ── the right-hand meters ──────────────────────────────────────────────────
-function drawMeters(s) {
-  const cpu = s && s.cpu !== null && s.cpu !== undefined ? s.cpu : null;
-  el("cpu").textContent = cpu === null ? "—" : `${cpu.toFixed(1)}%`;
-  el("cpu-bar").style.width = `${Math.min(100, cpu || 0)}%`;
-  el("mem").textContent = s && s.memory ? bytes(s.memory) : "—";
-  // Against eight gigabytes, which is enough to read the bar by.
-  el("mem-bar").style.width = `${Math.min(100, ((s?.memory || 0) / (8 << 30)) * 100)}%`;
+// ── the selected session, and what can be done to it ───────────────────────
+function fact(parent, key, value) {
+  const line = make("div", "fact");
+  line.append(make("span", "k", key));
+  line.append(make("span", "v", value));
+  parent.append(line);
+}
 
-  const tools = el("tools");
-  clear(tools);
-  for (const t of s?.tools || []) {
-    const chip = document.createElement("span");
-    chip.className = "chip";
-    chip.textContent = t;
-    tools.append(chip);
+function action(parent, label, cls, run) {
+  const button = make("button", cls, label);
+  button.addEventListener("click", run);
+  parent.append(button);
+}
+
+function drawDetail(s) {
+  const box = el("detail");
+  clear(box);
+  if (!s) return;
+  const [, label] = condition(s);
+  box.append(make("h3", null, s.name));
+  box.append(make("div", "sub", `${label} · ${shortPath(s.cwd)}`));
+
+  fact(box, "model", s.model || "—");
+  fact(box, "branch", s.branch || "—");
+  fact(box, "held in", s.pane || "not steerable");
+  fact(box, "age", age(s.age_secs));
+
+  box.append(make("div", "group", "CONTEXT"));
+  const track = make("div", "bar-line");
+  const fill = make("i");
+  fill.style.width = `${s.window ? Math.min(100, (s.context / s.window) * 100) : 0}%`;
+  track.append(fill);
+  box.append(track);
+  box.append(make("div", "sub", s.window ? `${tokens(s.context)} of ${tokens(s.window)}` : "—"));
+
+  box.append(make("div", "group", "MACHINE"));
+  fact(box, "processor", s.cpu === null || s.cpu === undefined ? "—" : `${s.cpu.toFixed(1)}%`);
+  fact(box, "memory", s.memory ? bytes(s.memory) : "—");
+
+  if (s.tools.length) {
+    box.append(make("div", "group", "REACHES FOR"));
+    const chips = make("div", "chips");
+    for (const t of s.tools) chips.append(make("span", "chip", t));
+    box.append(chips);
   }
-  const share = s && s.window ? Math.min(100, (s.context / s.window) * 100) : 0;
-  el("ctx-bar").style.width = `${share}%`;
-  el("ctx-text").textContent = s && s.window ? `${tokens(s.context)} of ${tokens(s.window)}` : "";
+
+  const actions = make("div", "actions");
+  if (s.steerable) {
+    action(actions, "Window", "ghost", async () => {
+      try {
+        say(`opened in ${await invoke("window", { id: s.id })}`);
+      } catch (e) {
+        say(String(e));
+      }
+    });
+    action(actions, "Rename", "ghost", async () => {
+      const name = window.prompt("Call this session:", s.name);
+      if (!name) return;
+      try {
+        await invoke("rename", { id: s.id, name });
+        say(`renamed to ${name}`);
+      } catch (e) {
+        say(String(e));
+      }
+      draw();
+    });
+    action(actions, "Close", "ghost danger", async () => {
+      try {
+        await invoke("stop", { id: s.id });
+        say("closed — bring it back from Resume");
+      } catch (e) {
+        say(String(e));
+      }
+      draw();
+    });
+  } else {
+    action(actions, "Reopen here", "primary", async () => {
+      try {
+        await invoke("reopen", { id: s.id, cwd: s.cwd });
+        say("reopening…");
+      } catch (e) {
+        say(String(e));
+      }
+      draw();
+    });
+  }
+  box.append(actions);
 }
 
 // ── what is waiting on you ─────────────────────────────────────────────────
 function drawAsk() {
-  const waiting = sessions.find((s) => s.id === selected && s.asking) || sessions.find((s) => s.asking);
+  const waiting =
+    sessions.find((s) => s.id === selected && s.asking) || sessions.find((s) => s.asking);
   const bar = el("ask");
-  if (!waiting) {
-    bar.hidden = true;
-    return;
-  }
-  bar.hidden = false;
-  el("ask-who").textContent = `[${waiting.name}]`;
+  bar.hidden = !waiting;
+  if (!waiting) return;
+  el("ask-who").textContent = waiting.name;
   el("ask-what").textContent = waiting.asking.question;
   const answers = el("answers");
   clear(answers);
   waiting.asking.options.forEach((option, i) => {
-    const button = document.createElement("button");
-    button.className = `answer${i === 0 ? " first" : ""}`;
-    const key = document.createElement("span");
-    key.className = "key";
-    key.textContent = i === 0 ? "[Y]" : i === 1 ? "[N]" : `[${i + 1}]`;
-    button.append(key, document.createTextNode(option.replace(/^\d+\.\s*/, "")));
+    const button = make("button", `answer${i === 0 ? " first" : ""}`);
+    button.append(make("span", "key", i === 0 ? "y" : i === 1 ? "n" : String(i + 1)));
+    button.append(document.createTextNode(option.replace(/^\d+\.\s*/, "")));
     button.addEventListener("click", async () => {
       try {
         await invoke("answer", { id: waiting.id, option: i + 1 });
@@ -402,43 +480,54 @@ function drawAsk() {
 // ── the whole window ───────────────────────────────────────────────────────
 async function draw() {
   sessions = await invoke("sessions");
-  if (!home) home = sessions.find((s) => s.cwd.startsWith("/home/"))?.cwd.match(/^\/home\/[^/]+/)?.[0] || "";
-  if (!sessions.some((s) => s.id === selected)) {
-    selected = (sessions.find((s) => s.asking) || sessions.find((s) => s.live) || sessions[0])?.id ?? null;
+  if (!home) {
+    home = sessions.find((s) => s.cwd.startsWith("/home/"))?.cwd.match(/^\/home\/[^/]+/)?.[0] || "";
   }
-  const current = sessions.find((s) => s.id === selected);
+  if (!sessions.some((s) => s.id === selected)) {
+    selected =
+      (sessions.find((s) => s.asking) || sessions.find((s) => s.live) || sessions[0])?.id ?? null;
+  }
+  const s = current();
 
-  const working = sessions.filter((s) => s.state === "working" || s.state === "running").length;
-  const asking = sessions.filter((s) => s.asking).length;
-  el("summary").textContent = `${sessions.length} sessions · ${working} working · ${asking} awaiting input`;
-  const out = sessions.reduce((n, s) => n + s.output, 0);
-  const spend = sessions.reduce((n, s) => n + s.cost, 0);
-  el("spend").textContent = `${tokens(out)} out · ~$${spend.toFixed(2)} if API`;
-  el("context").textContent = current ? `Context: ${current.name}` : "";
+  const working = sessions.filter((x) => x.state === "working" || x.state === "running").length;
+  const asking = sessions.filter((x) => x.asking).length;
+  const counts = el("counts");
+  clear(counts);
+  counts.append(document.createTextNode(`${sessions.length} sessions · ${working} working · `));
+  counts.append(asking ? make("b", null, `${asking} need you`) : document.createTextNode("none waiting"));
+
+  const out = sessions.reduce((n, x) => n + x.output, 0);
+  const spend = sessions.reduce((n, x) => n + x.cost, 0);
+  const requests = sessions.reduce((n, x) => n + x.requests, 0);
+  el("spend").textContent = showCost
+    ? `${tokens(out)} out · ~$${spend.toFixed(2)} if API`
+    : `${tokens(out)} out · ${requests} requests`;
+  el("context").textContent = s ? s.name : "";
+
+  const canType = !!s && s.steerable;
+  el("message").disabled = !canType;
+  el("message").placeholder = canType ? "Message this session…" : "not steerable from here";
 
   drawAgents();
-  drawMeters(current);
+  drawDetail(s);
   drawAsk();
-  if (current) await painters[pane](current.id);
-  else {
+  if (s) {
+    await painters[pane](s);
+  } else {
     clear(el("pane"));
-    el("pane").append(note("no sessions yet — start one"));
+    el("pane").append(empty("no sessions yet — start one"));
   }
 }
 
 // ── the things you can press ───────────────────────────────────────────────
-el("views").addEventListener("click", (e) => {
-  const tab = e.target.closest(".tab");
-  if (!tab) return;
-  for (const other of el("views").children) other.classList.toggle("is-on", other === tab);
-  say(tab.dataset.view === "fleet" ? "" : `${tab.dataset.view} is not built yet`);
-});
-
 el("panes").addEventListener("click", (e) => {
   const tab = e.target.closest(".tab");
   if (!tab) return;
   if (pane === "mirror" && tab.dataset.pane !== "mirror" && selected) {
+    // Stop holding the session at this window's shape.
     invoke("release_frame", { id: selected });
+    typing = false;
+    el("pane").classList.remove("typing");
   }
   pane = tab.dataset.pane;
   for (const other of el("panes").querySelectorAll(".tab")) {
@@ -449,7 +538,11 @@ el("panes").addEventListener("click", (e) => {
 
 el("filter").addEventListener("click", () => {
   liveOnly = !liveOnly;
-  say(liveOnly ? "showing only what is running" : "showing everything");
+  draw();
+});
+
+el("cost").addEventListener("click", () => {
+  showCost = !showCost;
   draw();
 });
 
@@ -461,8 +554,31 @@ el("tui").addEventListener("click", async () => {
   }
 });
 
+el("composer").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = el("message").value.trim();
+  if (!text || !selected) return;
+  try {
+    await invoke("send", { id: selected, text });
+    el("message").value = "";
+    say("sent");
+  } catch (err) {
+    say(String(err));
+  }
+});
+
+el("interrupt").addEventListener("click", async () => {
+  if (!selected) return;
+  try {
+    await invoke("interrupt", { id: selected });
+    say("interrupted");
+  } catch (e) {
+    say(String(e));
+  }
+});
+
 el("new").addEventListener("click", () => {
-  el("start-path").value = sessions.find((s) => s.id === selected)?.cwd || "";
+  el("start-path").value = current()?.cwd || "";
   el("starter").showModal();
 });
 
@@ -470,14 +586,13 @@ el("start-form").addEventListener("submit", async (e) => {
   if (e.submitter && e.submitter.value === "cancel") return;
   const agent = el("start-agent").value;
   const model = el("start-model").value.trim();
-  const prompt = el("start-prompt").value.trim();
+  const first = el("start-prompt").value.trim();
   let line = el("start-path").value.trim() || ".";
   if (agent && agent !== "claude") line += ` --agent ${agent}`;
   if (model) line += ` --model ${model}`;
-  if (prompt) line += ` ${prompt}`;
+  if (first) line += ` ${first}`;
   try {
-    const name = await invoke("start", { line, name: el("start-name").value.trim() || null });
-    say(`started ${name}`);
+    say(`started ${await invoke("start", { line, name: el("start-name").value.trim() || null })}`);
   } catch (err) {
     say(String(err));
   }
@@ -485,15 +600,84 @@ el("start-form").addEventListener("submit", async (e) => {
   draw();
 });
 
-// y and n answer whatever is waiting, as they do in the terminal view.
-document.addEventListener("keydown", (e) => {
-  if (e.target.matches("input, select, textarea")) return;
-  const first = el("answers").firstElementChild;
-  if (e.key === "y" && first) first.click();
-  if (e.key === "n" && el("answers").children[1]) el("answers").children[1].click();
+// Every conversation on the machine, to bring one back.
+let history = [];
+function drawPast() {
+  const words = el("past-filter").value.toLowerCase().split(/\s+/).filter(Boolean);
+  const list = el("past-list");
+  clear(list);
+  const hits = history.filter((p) => {
+    const hay = `${p.title} ${p.cwd}`.toLowerCase();
+    return words.every((word) => hay.includes(word));
+  });
+  for (const p of hits.slice(0, 200)) {
+    const row = make("li", "past-row");
+    row.append(make("span", "when", age(p.age_secs)));
+    const title = make("span", "title");
+    if (p.open) title.append(make("span", "open", "● "));
+    title.append(document.createTextNode(p.title));
+    row.append(title);
+    row.append(make("span", "folder", shortPath(p.cwd)));
+    row.addEventListener("click", async () => {
+      el("past").close();
+      try {
+        await invoke("reopen", { id: p.id, cwd: p.cwd });
+        say("reopening…");
+      } catch (e) {
+        say(String(e));
+      }
+      draw();
+    });
+    list.append(row);
+  }
+  if (!hits.length) list.append(empty("nothing matches that"));
+}
+
+el("resume").addEventListener("click", async () => {
+  el("past-filter").value = "";
+  history = await invoke("past");
+  drawPast();
+  el("past").showModal();
+  el("past-filter").focus();
+});
+el("past-filter").addEventListener("input", drawPast);
+el("past-close").addEventListener("click", () => el("past").close());
+
+// Typing into the session's own screen: click it, and the keyboard belongs to
+// the session until you click away.
+el("pane").addEventListener("click", () => {
+  if (pane !== "mirror") return;
+  typing = true;
+  el("pane").focus();
+  el("pane").classList.add("typing");
+  say("typing into the session · click away to stop");
+});
+el("pane").addEventListener("blur", () => {
+  typing = false;
+  el("pane").classList.remove("typing");
+});
+el("pane").addEventListener("keydown", async (e) => {
+  if (!typing || !selected) return;
+  e.preventDefault();
+  try {
+    await invoke("key", { id: selected, key: e.key, ctrl: e.ctrlKey });
+  } catch (err) {
+    say(String(err));
+  }
+  drawMirror(selected);
 });
 
-el("hint").textContent = "y accept · n decline · drag to reorder · F12 in a session comes back";
+// y and n answer whatever is waiting, as they do in the terminal view.
+document.addEventListener("keydown", (e) => {
+  if (typing || e.target.matches("input, select, textarea")) return;
+  const answers = el("answers");
+  if (e.key === "y" && answers.children[0]) answers.children[0].click();
+  if (e.key === "n" && answers.children[1]) answers.children[1].click();
+});
+
+el("hint").textContent = "y accept · n decline · drag to reorder · click the session to type into it";
 wireDragging();
 draw();
-setInterval(draw, 1000);
+// A session's own screen moves; a transcript does not need twenty looks a
+// second, so the pace follows what is being watched.
+setInterval(() => draw(), 400);

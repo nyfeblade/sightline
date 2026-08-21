@@ -3,6 +3,7 @@
 // view cannot answer the same question differently.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use crossterm::event::KeyCode;
 use scope_core::app::App;
 use scope_core::session::Status;
 use scope_core::{app as core_app, bootstrap, control, history, screen, usage};
@@ -74,6 +75,16 @@ struct SessionDto {
     requests: u64,
     cost: f64,
     errors: usize,
+    turns: usize,
+    denials: usize,
+    input: u64,
+    cache_read: u64,
+    cache_write: u64,
+    version: String,
+    effort: String,
+    branch_ahead: Option<usize>,
+    /// median and slowest tool call, in milliseconds
+    latency: (i64, i64),
     /// share of one processor, once there have been two readings to compare
     cpu: Option<f64>,
     /// resident bytes across the session's whole process tree
@@ -184,6 +195,15 @@ fn sessions(shared: State<Shared>) -> Vec<SessionDto> {
                     requests: s.totals.requests as u64,
                     cost: s.totals.cost,
                     errors: s.errors,
+                    turns: s.turns,
+                    denials: s.denials,
+                    input: s.totals.input,
+                    cache_read: s.totals.cache_read,
+                    cache_write: s.totals.cache_write,
+                    version: s.version.clone(),
+                    effort: s.effort.clone(),
+                    branch_ahead: None,
+                    latency: s.latency(),
                     cpu: used.cpu,
                     memory: used.memory,
                     tools: tools.into_iter().take(6).map(|(n, _)| n.clone()).collect(),
@@ -222,6 +242,23 @@ fn feed(shared: State<Shared>, id: String, limit: usize) -> Vec<EventDto> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[derive(Serialize)]
+struct TreeDto {
+    branch: String,
+    insertions: usize,
+    deletions: usize,
+    entries: Vec<TreeEntryDto>,
+    /// how far ahead of its base branch, when it is working on its own
+    ahead: Option<usize>,
+    base: Option<String>,
+}
+
+#[derive(Serialize)]
+struct TreeEntryDto {
+    path: String,
+    state: String,
 }
 
 #[derive(Serialize)]
@@ -272,6 +309,31 @@ fn files(shared: State<Shared>, id: String) -> Vec<FileDto> {
             out
         })
         .unwrap_or_default()
+}
+
+/// The state of the working tree it is editing, and how far ahead its branch
+/// is when it has one of its own.
+#[tauri::command]
+fn tree(shared: State<Shared>, id: String) -> Option<TreeDto> {
+    shared.on(&id, |app| {
+        let iso = app.isolation();
+        let tree = app.tree()?;
+        Some(TreeDto {
+            branch: tree.branch.clone(),
+            insertions: tree.insertions,
+            deletions: tree.deletions,
+            entries: tree
+                .entries
+                .iter()
+                .map(|e| TreeEntryDto {
+                    path: e.path.clone(),
+                    state: e.code.clone(),
+                })
+                .collect(),
+            ahead: iso.as_ref().map(|i| i.ahead),
+            base: iso.map(|i| i.base),
+        })
+    })?
 }
 
 /// Its current plan, from the last time it wrote one.
@@ -346,6 +408,48 @@ fn errors(shared: State<Shared>, id: String) -> Vec<EventDto> {
 fn frame(shared: State<Shared>, id: String, cols: u16, rows: u16) -> Option<screen::Frame> {
     let pane = shared.with(|app| app.pane_of(&id).map(|p| p.id.clone()))?;
     control::frame(&pane, cols, rows)
+}
+
+/// Send one key press to a session, so its own screen can be typed into.
+/// Browsers name keys their own way; this is the translation, and anything
+/// without a terminal meaning is dropped rather than guessed at.
+#[tauri::command]
+fn key(shared: State<Shared>, id: String, key: String, ctrl: bool) -> Result<(), String> {
+    let code = match key.as_str() {
+        "Enter" => KeyCode::Enter,
+        "Escape" => KeyCode::Esc,
+        "Tab" => KeyCode::Tab,
+        "Backspace" => KeyCode::Backspace,
+        "Delete" => KeyCode::Delete,
+        "ArrowUp" => KeyCode::Up,
+        "ArrowDown" => KeyCode::Down,
+        "ArrowLeft" => KeyCode::Left,
+        "ArrowRight" => KeyCode::Right,
+        "Home" => KeyCode::Home,
+        "End" => KeyCode::End,
+        "PageUp" => KeyCode::PageUp,
+        "PageDown" => KeyCode::PageDown,
+        other => {
+            let mut chars = other.chars();
+            match (chars.next(), chars.next()) {
+                (Some(c), None) => KeyCode::Char(c),
+                _ => return Ok(()),
+            }
+        }
+    };
+    let pane = shared
+        .with(|app| app.pane_of(&id).map(|p| p.id.clone()))
+        .ok_or("that session cannot be typed into")?;
+    control::forward_key(&pane, code, ctrl)
+}
+
+/// Open a session in a terminal window of its own.
+#[tauri::command]
+fn window(shared: State<Shared>, id: String) -> Result<String, String> {
+    let pane = shared
+        .with(|app| app.pane_of(&id).map(|p| p.session.clone()))
+        .ok_or("scope has no terminal for that session")?;
+    control::open_window(&pane)
 }
 
 /// Stop holding a session at the window's size, when the window stops showing
@@ -502,7 +606,10 @@ fn main() {
             agents,
             errors,
             frame,
-            release_frame
+            release_frame,
+            key,
+            window,
+            tree
         ])
         .run(tauri::generate_context!())
         .expect("scope failed to start");

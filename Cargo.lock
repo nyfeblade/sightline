@@ -3335,6 +3335,7 @@ dependencies = [
 name = "scope-gui"
 version = "0.3.0"
 dependencies = [
+ "crossterm",
  "scope-core",
  "serde",
  "serde_json",
