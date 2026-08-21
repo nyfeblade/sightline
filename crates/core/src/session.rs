@@ -116,6 +116,8 @@ pub struct Session {
     /// a live session that has not written a transcript yet — it is in the
     /// registry, so it is real, but there is nothing to read until it is used
     pub placeholder: bool,
+    /// the title was chosen by a person, not derived from the conversation
+    pub titled: bool,
     /// whether this Claude Code install keeps a live-session registry
     pub registry_seen: bool,
     /// running in a tmux pane, even if the registry has not caught up
@@ -177,6 +179,7 @@ impl Session {
             turn_ms: Vec::new(),
             partial: false,
             placeholder: false,
+            titled: false,
             registry_seen: true,
             in_pane: false,
             skip_first: false,
@@ -519,7 +522,10 @@ impl Session {
                     self.title = take("aiTitle");
                 }
             }
-            "custom-title" => self.title = take("customTitle"),
+            "custom-title" => {
+                self.title = take("customTitle");
+                self.titled = true;
+            }
             "agent-name" => self.agent_name = take("agentName"),
             "permission-mode" => self.mode = take("permissionMode"),
             _ => {}
@@ -713,6 +719,11 @@ impl Session {
     pub fn label(&self) -> String {
         if !self.agent_name.is_empty() {
             return self.agent_name.clone();
+        }
+        // A name someone chose wins over one Claude Code derived, including
+        // over the running client's own, which may not have caught up yet.
+        if self.titled && !self.title.is_empty() {
+            return self.title.clone();
         }
         if let Some(live) = &self.live {
             if !live.name.is_empty() {

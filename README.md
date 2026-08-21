@@ -101,8 +101,9 @@ same actions have direct keys once you know them:
 | `R` | resume any conversation on this machine, however old |
 | `W` | start one on its own branch in its own checkout |
 | `M` `X` | merge that branch back · remove the checkout |
-| `K` `P` | stop the session · tidy up finished scope sessions |
-| `Z` | stop everything scope started (each one reopens with `A`) |
+| `x` `P` | close the session · tidy up finished scope sessions |
+| `F2` | rename the selected session |
+| `Z` | close everything scope started (each one reopens with `A`) |
 | `L` | launch a whole fleet from a config file |
 
 When you attach, the session's status line shows the way back, so a
@@ -137,6 +138,18 @@ line: `~/api --model opus --effort high fix the failing tests`. Whatever is left
 after the flags is the first thing the session is asked, unquoted, because
 typing a message is the common case. `W` does the same on a fresh branch in its
 own worktree.
+
+### Naming and closing
+
+`F2` renames the selected session. A running one is asked to rename itself —
+`/rename` is a real command, so its own header, the registry and the transcript
+all stay in step. One that has stopped has nobody to ask, so scope writes the
+same record Claude Code writes, and the name is there when the conversation is
+reopened.
+
+`x` closes a session, one key. It used to want the word "yes" typed, from when a
+closed session was gone for good; it is not, so the only thing left to protect is
+a turn in flight, and that is the only case that asks twice.
 
 ### Stopping is not losing
 

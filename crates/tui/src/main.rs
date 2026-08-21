@@ -716,6 +716,8 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     KeyCode::Char('a') => app.run_action('a'),
                     KeyCode::Char('A') => app.run_action('A'),
                     KeyCode::Char('R') => app.run_action('R'),
+                    KeyCode::F(2) => app.run_action('N'),
+                    KeyCode::Char('x') => app.run_action('x'),
                     KeyCode::Char('y') => app.answer(1),
                     KeyCode::Char('d') => app.answer(0),
 

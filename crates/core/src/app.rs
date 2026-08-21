@@ -24,8 +24,8 @@ pub enum Prompt {
     Isolate,
     Merge,
     Discard,
-    Stop,
     StopAll,
+    Rename,
     Adopt,
 }
 
@@ -83,6 +83,23 @@ pub struct NewSpec {
     pub effort: Option<String>,
     pub mode: Option<String>,
     pub prompt: Option<String>,
+}
+
+/// Append the record Claude Code writes when a conversation is renamed. Its
+/// own `/rename` does exactly this, so a name set here is the same name, read
+/// the same way, whenever the conversation is next opened.
+fn write_title(path: &std::path::Path, id: &str, name: &str) -> Result<(), String> {
+    use std::io::Write;
+    let record = serde_json::json!({
+        "type": "custom-title",
+        "customTitle": name,
+        "sessionId": id,
+    });
+    let mut f = std::fs::OpenOptions::new()
+        .append(true)
+        .open(path)
+        .map_err(|e| format!("cannot write to that transcript: {e}"))?;
+    writeln!(f, "{record}").map_err(|e| format!("cannot write to that transcript: {e}"))
 }
 
 /// `~` means home, as it does everywhere else a path is typed. Nothing here
@@ -331,6 +348,8 @@ pub struct App {
     view_before: Option<View>,
     /// when quitting was last asked about, where quitting ends sessions
     quit_asked: Option<Instant>,
+    /// which session was asked about stopping, and when
+    stop_asked: Option<(String, Instant)>,
     /// the conversation browser: everything on the machine, resumable
     pub past: Vec<Past>,
     pub past_open: bool,
@@ -394,6 +413,7 @@ impl App {
             passthrough: false,
             view_before: None,
             quit_asked: None,
+            stop_asked: None,
             past: Vec::new(),
             past_open: false,
             past_sel: 0,
@@ -651,8 +671,8 @@ impl App {
                 let n = self.steer.len();
                 format!("stop all {n} sessions scope started? type yes")
             }
-            Prompt::Stop => match self.current() {
-                Some(s) => format!("stop {}? type yes", s.label()),
+            Prompt::Rename => match self.current() {
+                Some(s) => format!("rename {}", s.label()),
                 None => return,
             },
             Prompt::Discard => match self.isolation() {
@@ -748,7 +768,7 @@ impl App {
                 if text.eq_ignore_ascii_case("yes") || text.eq_ignore_ascii_case("y") {
                     let closed = control::stop_all();
                     self.say(format!(
-                        "stopped {} session{} — each one can be reopened with A",
+                        "closed {} session{} — each one can be reopened with A",
                         closed.len(),
                         if closed.len() == 1 { "" } else { "s" }
                     ));
@@ -757,11 +777,12 @@ impl App {
                     self.say("left running");
                 }
             }
-            Prompt::Stop => {
-                if text.eq_ignore_ascii_case("yes") || text.eq_ignore_ascii_case("y") {
-                    self.stop_session();
-                } else {
-                    self.say("left running");
+            Prompt::Rename => {
+                let Some(id) = input.target.clone() else {
+                    return;
+                };
+                if let Err(e) = self.rename(&id, &text) {
+                    self.say(e);
                 }
             }
             Prompt::Discard => {
@@ -806,6 +827,76 @@ impl App {
         if matches!(kind, Prompt::Send | Prompt::Queue | Prompt::Broadcast) {
             self.open_input(kind);
         }
+    }
+
+    /// Give a session a name of your own.
+    ///
+    /// A running session renames itself: `/rename` is a real command, so typing
+    /// it is the honest route and everything downstream — its own header, the
+    /// registry, the transcript — stays in step. A session that has stopped has
+    /// nobody to type to, so scope appends the same record Claude Code would
+    /// have written, which is where the name actually lives.
+    pub fn rename(&mut self, id: &str, name: &str) -> Result<(), String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("a name cannot be empty".into());
+        }
+        if name.contains(['\n', '\r']) {
+            return Err("a name has to be one line".into());
+        }
+        let name = crate::event::clip(name, 80);
+        if let Some(p) = self.pane_of(id).cloned() {
+            control::send_text(&p.id, &format!("/rename {name}"))?;
+            self.say(format!("renamed to {name}"));
+        } else {
+            let Some(path) = self
+                .sessions
+                .iter()
+                .find(|s| s.id == id && !s.placeholder)
+                .map(|s| s.path.clone())
+            else {
+                return Err("that session has nothing to rename yet".into());
+            };
+            write_title(&path, id, &name)?;
+            self.say(format!(
+                "renamed to {name} — it will show that when reopened"
+            ));
+        }
+        if let Some(s) = self.sessions.iter_mut().find(|s| s.id == id) {
+            s.title = name.clone();
+            s.titled = true;
+        }
+        Ok(())
+    }
+
+    /// Close a session, one key.
+    ///
+    /// Stopping used to want the word "yes" typed, from when a stopped session
+    /// was gone for good. It is not: the conversation reopens with `A`. The
+    /// only thing a keystroke can still cost is a turn in flight, so that is
+    /// the only case that asks twice.
+    pub fn stop_now(&mut self) -> Result<(), String> {
+        let Some((id, name, busy)) = self.current().map(|s| {
+            (
+                s.id.clone(),
+                s.label(),
+                matches!(s.status(), Status::Running(_) | Status::Working),
+            )
+        }) else {
+            return Err("no session selected".into());
+        };
+        let confirmed = self
+            .stop_asked
+            .as_ref()
+            .map(|(asked, at)| *asked == id && at.elapsed() < Duration::from_secs(5))
+            .unwrap_or(false);
+        if busy && !confirmed {
+            self.stop_asked = Some((id, Instant::now()));
+            return Err(format!("{name} is mid-turn — x again to close it"));
+        }
+        self.stop_asked = None;
+        self.stop_session();
+        Ok(())
     }
 
     /// Type a line into one session and submit it. Every front end sends this
@@ -1322,8 +1413,14 @@ impl App {
             });
         }
         v.push(Action {
-            key: 'K',
-            label: "Stop this session",
+            key: 'N',
+            label: "Rename it",
+            enabled: true,
+            why: String::new(),
+        });
+        v.push(Action {
+            key: 'x',
+            label: "Close this session",
             enabled: steerable,
             why: "only sessions scope can reach can be stopped".into(),
         });
@@ -1392,7 +1489,12 @@ impl App {
             'A' => self.open_input(Prompt::Adopt),
             'M' => self.open_input(Prompt::Merge),
             'X' => self.open_input(Prompt::Discard),
-            'K' => self.open_input(Prompt::Stop),
+            'x' => {
+                if let Err(e) = self.stop_now() {
+                    self.say(e);
+                }
+            }
+            'N' => self.open_input(Prompt::Rename),
             'Z' => self.open_input(Prompt::StopAll),
             'R' => self.open_past(),
             'O' => {
@@ -1599,7 +1701,7 @@ impl App {
         };
         match control::kill_session(&pane.session) {
             Ok(()) => {
-                self.say(format!("stopped {} — press A to reopen it", pane.session));
+                self.say(format!("closed {} — press A to reopen it", pane.session));
                 self.discover();
             }
             Err(e) => self.say(e),
@@ -2026,6 +2128,40 @@ mod tests {
         );
         // A flag with nothing after it is ignored rather than eating the line.
         assert_eq!(parse_new("~/api --model").model, None);
+    }
+
+    #[test]
+    fn a_name_written_here_is_read_back_as_a_name() {
+        // The record scope appends and the record Claude Code appends are the
+        // same record, so the test is: write one, then read it the way every
+        // other part of scope reads a title.
+        let dir = std::env::temp_dir().join(format!("scope-rename-{}", std::process::id()));
+        let project = dir.join("-home-someone");
+        std::fs::create_dir_all(&project).unwrap();
+        let id = "aaaa1111-0000-0000-0000-000000000000";
+        let path = project.join(format!("{id}.jsonl"));
+        std::fs::write(
+            &path,
+            "{\"type\":\"user\",\"cwd\":\"/home/someone/api\",\"message\":{\"role\":\"user\",\"content\":\"start\"}}\n\
+             {\"type\":\"ai-title\",\"aiTitle\":\"Something Claude thought of\"}\n",
+        )
+        .unwrap();
+
+        write_title(&path, id, "the rate limiter one").expect("append");
+
+        let found = crate::history::scan(&dir);
+        assert_eq!(found.len(), 1);
+        assert_eq!(
+            found[0].title, "the rate limiter one",
+            "a chosen name outranks the derived one"
+        );
+
+        // And the transcript is still a transcript: every line parses.
+        let text = std::fs::read_to_string(&path).unwrap();
+        for line in text.lines() {
+            serde_json::from_str::<serde_json::Value>(line).expect("valid json line");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -85,6 +85,7 @@ fn describe(path: &Path, modified: SystemTime, bytes: u64) -> Option<Past> {
     let id = path.file_stem()?.to_str()?.to_string();
     let mut cwd = String::new();
     let mut title = String::new();
+    let mut chosen = String::new();
     let mut opening = String::new();
     for line in head_of(path)?.lines() {
         let Ok(rec) = serde_json::from_str::<Value>(line) else {
@@ -100,19 +101,30 @@ fn describe(path: &Path, modified: SystemTime, bytes: u64) -> Option<Past> {
                 title = t.to_string();
             }
         }
+        // A name someone chose outranks the derived one, and can be written at
+        // any point in the conversation, so this one keeps looking.
+        if let Some(t) = rec.get("customTitle").and_then(Value::as_str) {
+            chosen = t.to_string();
+        }
         if opening.is_empty() {
             if let Some(p) = opening_prompt(&rec) {
                 opening = p;
             }
         }
-        if !cwd.is_empty() && !title.is_empty() {
+        // A chosen name can be written at any point, and is the one that
+        // matters, so reading stops only once there is nothing better to find.
+        if !cwd.is_empty() && !chosen.is_empty() {
             break;
         }
     }
     Some(Past {
         id,
         cwd,
-        title: if title.is_empty() { opening } else { title },
+        title: match (chosen.is_empty(), title.is_empty()) {
+            (false, _) => chosen,
+            (true, false) => title,
+            (true, true) => opening,
+        },
         modified,
         bytes,
     })

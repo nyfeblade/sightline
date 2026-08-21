@@ -1665,7 +1665,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
         .title(Span::styled(" keys ", Style::new().fg(pal().gold)));
     let inner = block.inner(rect);
     f.render_widget(block, rect);
-    let rows: [(&str, &str); 33] = [
+    let rows: [(&str, &str); 34] = [
         ("  look", ""),
         ("j / k, ↓ ↑", "select a session"),
         (
@@ -1708,7 +1708,11 @@ fn draw_help(f: &mut Frame, area: Rect) {
         ("n / W", "new session · new isolated session on a branch"),
         ("M / X", "merge that branch back · remove the checkout"),
         ("b / L", "broadcast a message · launch the fleet file"),
-        ("K / Z", "stop this session · stop everything scope started"),
+        (
+            "K / Z",
+            "close this session · close everything scope started",
+        ),
+        ("F2", "rename the selected session"),
         ("", ""),
         ("  other", ""),
         ("$", "subscription view or API-equivalent cost"),

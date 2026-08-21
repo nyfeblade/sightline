@@ -281,6 +281,13 @@ fn past(shared: State<Shared>) -> Vec<PastDto> {
     })
 }
 
+/// Give a session a name. A running one renames itself; a stopped one has the
+/// name written to its transcript, which is where a name lives.
+#[tauri::command]
+fn rename(shared: State<Shared>, id: String, name: String) -> Result<(), String> {
+    shared.with(|app| app.rename(&id, &name))
+}
+
 #[tauri::command]
 fn stop(shared: State<Shared>, id: String) -> Result<(), String> {
     shared
@@ -311,8 +318,8 @@ fn main() {
     tauri::Builder::default()
         .manage(Shared(Mutex::new(app)))
         .invoke_handler(tauri::generate_handler![
-            readiness, sessions, feed, screen, send, answer, interrupt, start, reopen, past, stop,
-            open_tui
+            readiness, sessions, feed, screen, send, answer, interrupt, start, reopen, past,
+            rename, stop, open_tui
         ])
         .run(tauri::generate_context!())
         .expect("scope failed to start");
