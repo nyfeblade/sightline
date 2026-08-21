@@ -20,7 +20,7 @@ No hooks to install, no server, no configuration, nothing leaves the machine.
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/nyfeblade/nyfe-scope/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/nyfeblade/nyfe-scope/master/install.sh | sh
 ```
 
 Or, if you would rather not pipe a script into a shell — it is short, read it
@@ -47,7 +47,7 @@ a normal desktop already has.
 On Windows:
 
 ```powershell
-irm https://raw.githubusercontent.com/nyfeblade/nyfe-scope/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/nyfeblade/nyfe-scope/master/install.ps1 | iex
 ```
 
 Then run `scope`. Linux, macOS and Windows. On Linux and macOS tmux is optional,

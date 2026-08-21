@@ -1,5 +1,5 @@
 # Install scope from the latest GitHub release.
-#   irm https://raw.githubusercontent.com/nyfeblade/nyfe-scope/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/nyfeblade/nyfe-scope/master/install.ps1 | iex
 # Or read this file first and run the four commands yourself — it is short on
 # purpose.
 $ErrorActionPreference = 'Stop'

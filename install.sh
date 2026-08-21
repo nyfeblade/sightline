@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 # Install scope from the latest GitHub release.
-#   curl -fsSL https://raw.githubusercontent.com/nyfeblade/nyfe-scope/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/nyfeblade/nyfe-scope/master/install.sh | sh
 # Or read this file first and run the three commands yourself — it is short on
 # purpose.
 set -eu
