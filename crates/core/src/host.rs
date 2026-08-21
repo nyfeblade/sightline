@@ -1,15 +1,15 @@
-//! Sessions scope hosts itself, for machines with no tmux.
+//! Sessions Ironsight hosts itself, for machines with no tmux.
 //!
 //! Windows has no way to reach into a console another process owns, so the
 //! trick that works on Unix — let tmux hold the session and type into it — has
-//! no equivalent. Here scope is the terminal: it starts Claude Code on a
+//! no equivalent. Here Ironsight is the terminal: it starts Claude Code on a
 //! pseudo-console it owns, keeps a screen model of everything the session
 //! draws, and writes key presses into it. Everything above this module then
 //! works unchanged, because a hosted session answers the same questions a tmux
 //! pane does — what is on your screen, and take this key.
 //!
-//! The difference worth knowing is lifetime. tmux outlives scope; this does
-//! not. A hosted session ends when scope exits, which is why quitting asks
+//! The difference worth knowing is lifetime. tmux outlives Ironsight; this does
+//! not. A hosted session ends when Ironsight exits, which is why quitting asks
 //! first, and why the conversation being reopenable matters more here than on
 //! Unix.
 //!
@@ -62,12 +62,12 @@ fn sessions() -> &'static Sessions {
     SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// scope can always host a session — there is nothing to install.
+/// Ironsight can always host a session — there is nothing to install.
 pub fn available() -> bool {
     true
 }
 
-/// scope never nests inside anything here.
+/// Ironsight never nests inside anything here.
 pub fn inside_tmux() -> bool {
     false
 }
@@ -88,7 +88,7 @@ fn reap() -> Vec<String> {
     done
 }
 
-/// Every session scope is hosting.
+/// Every session Ironsight is hosting.
 pub fn panes() -> Vec<Pane> {
     reap();
     let map = match sessions().lock() {
@@ -102,9 +102,9 @@ pub fn panes() -> Vec<Pane> {
 
 /// The pane a session's process is running inside.
 ///
-/// A pid match is the answer whenever scope started Claude Code directly. An
+/// A pid match is the answer whenever Ironsight started Claude Code directly. An
 /// npm install is a `claude.cmd` shim, which has to be run through the command
-/// interpreter, so the pid scope knows is the interpreter's and the session's
+/// interpreter, so the pid Ironsight knows is the interpreter's and the session's
 /// own pid is one below it; there the working directory identifies it, as long
 /// as only one hosted session is in that directory.
 pub fn pane_for(pid: i64, cwd: &str, panes: &[Pane]) -> Option<Pane> {
@@ -126,7 +126,7 @@ fn with<T>(name: &str, f: impl FnOnce(&mut Hosted) -> T) -> Result<T, String> {
     };
     match map.get_mut(name) {
         Some(s) => Ok(f(s)),
-        None => Err(format!("{name} is not a session scope is hosting")),
+        None => Err(format!("{name} is not a session Ironsight is hosting")),
     }
 }
 
@@ -156,7 +156,7 @@ pub fn send_key(pane: &str, key: &str) -> Result<(), String> {
     write(pane, &bytes)
 }
 
-/// The bytes a terminal sends for the key names scope uses.
+/// The bytes a terminal sends for the key names Ironsight uses.
 fn named_key(key: &str) -> Option<Vec<u8>> {
     let one = |b: u8| Some(vec![b]);
     match key {
@@ -225,10 +225,10 @@ pub fn forward_key(pane: &str, code: crossterm::event::KeyCode, ctrl: bool) -> R
     }
 }
 
-/// scope owns the pseudo-console here, so there is nothing to hand back.
+/// Ironsight owns the pseudo-console here, so there is nothing to hand back.
 pub fn release_frame(_pane: &str) {}
 
-/// A session's screen at a given size. scope owns the pseudo-console here, so
+/// A session's screen at a given size. Ironsight owns the pseudo-console here, so
 /// the size is set on it directly and the screen model is already parsed.
 pub fn frame(pane: &str, cols: u16, rows: u16) -> Option<crate::screen::Frame> {
     with(pane, |s| {
@@ -345,7 +345,7 @@ fn next_name() -> String {
     next_name_after(&existing)
 }
 
-/// Start a session on a pty scope owns, and read whatever it draws into a
+/// Start a session on a pty Ironsight owns, and read whatever it draws into a
 /// screen that can be looked at later.
 fn spawn(cwd: &Path, argv: Vec<String>) -> Result<String, String> {
     let pty = portable_pty::native_pty_system()
@@ -416,7 +416,7 @@ fn read_into(mut reader: Box<dyn Read + Send>, screen: Arc<Mutex<vt100::Parser>>
 }
 
 /// Start a session with explicit Claude Code options.
-/// Start a session on a pty scope owns, running whatever agent was asked for,
+/// Start a session on a pty Ironsight owns, running whatever agent was asked for,
 /// and type the opening lines into it once it is up.
 pub fn new_session_with(cwd: &Path, argv: &[String], opening: &[String]) -> Result<String, String> {
     let program = argv.first().cloned().unwrap_or_default();
@@ -462,7 +462,7 @@ pub fn kill_session(session: &str) -> Result<(), String> {
     };
     let mut hosted = map
         .remove(session)
-        .ok_or_else(|| format!("{session} is not a session scope is hosting"))?;
+        .ok_or_else(|| format!("{session} is not a session Ironsight is hosting"))?;
     hosted.child.kill().map_err(|e| e.to_string())?;
     let _ = hosted.child.wait();
     Ok(())
@@ -473,7 +473,7 @@ pub fn prune() -> Vec<String> {
     reap()
 }
 
-/// Close every session scope is hosting. Returns the names that were closed.
+/// Close every session Ironsight is hosting. Returns the names that were closed.
 pub fn stop_all() -> Vec<String> {
     let names: Vec<String> = panes().into_iter().map(|p| p.session).collect();
     names
@@ -482,7 +482,7 @@ pub fn stop_all() -> Vec<String> {
         .collect()
 }
 
-/// End a Claude Code process scope does not host — the original window, after
+/// End a Claude Code process Ironsight does not host — the original window, after
 /// its conversation has been reopened here.
 pub fn end_process(pid: i64) -> bool {
     std::process::Command::new("taskkill")
@@ -494,7 +494,7 @@ pub fn end_process(pid: i64) -> bool {
         .unwrap_or(false)
 }
 
-/// There is no window to hand a hosted session to: scope is its terminal.
+/// There is no window to hand a hosted session to: Ironsight is its terminal.
 /// The mirror shows it full-screen instead, which is what `a` does here.
 pub fn attach(_session: &str) -> Result<bool, String> {
     Err("scope is this session's terminal — press m to type into it".into())
@@ -508,10 +508,10 @@ pub fn open_window(_session: &str) -> Result<String, String> {
 /// subcommands would start something and immediately take it away again.
 pub const OUTLIVES_SCOPE: bool = false;
 
-/// What to call the place scope steers sessions from, in a sentence.
-pub const WHERE: &str = "scope";
+/// What to call the place Ironsight steers sessions from, in a sentence.
+pub const WHERE: &str = "Ironsight";
 
-/// There is no multiplexer to take a key from here: scope is the terminal, and
+/// There is no multiplexer to take a key from here: Ironsight is the terminal, and
 /// leaving a session is leaving the pane it is drawn in.
 pub fn hold_way_back() -> bool {
     false
@@ -519,29 +519,29 @@ pub fn hold_way_back() -> bool {
 
 pub fn drop_way_back(_held: bool) {}
 
-/// How to look at a session. scope is its terminal, so the way to see it is
-/// scope's own mirror.
+/// How to look at a session. Ironsight is its terminal, so the way to see it is
+/// Ironsight's own mirror.
 pub fn attach_hint(_session: &str) -> String {
     "press a to watch it".to_string()
 }
 
-/// Why a session cannot be steered, and what to do about it. Here scope can
+/// Why a session cannot be steered, and what to do about it. Here Ironsight can
 /// only steer what it started, because it has to own the terminal.
 pub fn steer_hint(name: &str) -> String {
-    format!("{name} is not one scope started — press A to reopen it here")
+    format!("{name} is not one Ironsight started — press A to reopen it here")
 }
 
-/// scope can always host a session, so this is never the reason.
+/// Ironsight can always host a session, so this is never the reason.
 pub fn unavailable_hint() -> &'static str {
     "scope cannot start a session here"
 }
 
-/// Where a session scope can steer is running, for the session card.
+/// Where a session Ironsight can steer is running, for the session card.
 pub fn where_hint(session: &str) -> String {
-    format!("steerable · hosted by scope as {session}")
+    format!("steerable · hosted by Ironsight as {session}")
 }
 
-/// How many sessions would end if scope exited now.
+/// How many sessions would end if Ironsight exited now.
 pub fn hosted_count() -> usize {
     panes().len()
 }

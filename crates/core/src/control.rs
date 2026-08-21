@@ -1,11 +1,11 @@
-//! What scope can do to a session, whichever way it reaches one.
+//! What Ironsight can do to a session, whichever way it reaches one.
 //!
 //! Steering needs the terminal a session is running inside. Unix has tmux,
-//! which already holds sessions that outlive scope, so that is the backend
+//! which already holds sessions that outlive Ironsight, so that is the backend
 //! there. Windows has neither tmux nor any way to reach into a console another
-//! process owns, so scope hosts the pseudo-terminal itself — see `host`. Both
+//! process owns, so Ironsight hosts the pseudo-terminal itself — see `host`. Both
 //! backends offer the same functions under the same names, and the rest of
-//! scope is written against these rather than against either one.
+//! Ironsight is written against these rather than against either one.
 
 #[cfg(not(windows))]
 pub use crate::tmux::{
@@ -33,18 +33,33 @@ pub struct Pane {
     pub cwd: String,
 }
 
-/// The next free scope-N. Counting up from the highest existing name rather
+/// What a session Ironsight started is called. Sessions made before the rename
+/// carry the old one and are still ours: a rename must not orphan work that is
+/// already running.
+pub const PREFIX: &str = "ironsight-";
+pub const FORMER_PREFIX: &str = "scope-";
+
+/// Whether a session is one of ours, under either name.
+pub fn is_ours(session: &str) -> bool {
+    session.starts_with(PREFIX) || session.starts_with(FORMER_PREFIX)
+}
+
+/// The next free ironsight-N. Counting up from the highest existing name rather
 /// than searching a fixed range means the pool can never be "full" — an early
 /// version scanned scope-1..scope-98 and refused to start anything once those
 /// were taken.
 pub fn next_name_after(existing: &str) -> String {
     let highest = existing
         .lines()
-        .filter_map(|l| l.trim().strip_prefix("scope-"))
+        .filter_map(|l| {
+            let l = l.trim();
+            l.strip_prefix(PREFIX)
+                .or_else(|| l.strip_prefix(FORMER_PREFIX))
+        })
         .filter_map(|n| n.parse::<u64>().ok())
         .max()
         .unwrap_or(0);
-    format!("scope-{}", highest + 1)
+    format!("{PREFIX}{}", highest + 1)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -232,7 +247,7 @@ const TERMINALS: [&str; 8] = [
 ];
 
 /// Run a command in a terminal window of its own. Used to watch a session
-/// outside scope, and to hand the whole thing over to the terminal view from
+/// outside Ironsight, and to hand the whole thing over to the terminal view from
 /// the desktop app.
 pub fn open_terminal_with(command: &str) -> Result<String, String> {
     use std::process::{Command, Stdio};
@@ -308,13 +323,19 @@ mod tests {
 
     #[test]
     fn names_never_run_out() {
-        assert_eq!(next_name_after(""), "scope-1");
-        assert_eq!(next_name_after("work\nnotes"), "scope-1");
-        assert_eq!(next_name_after("scope-1\nscope-2"), "scope-3");
+        assert_eq!(next_name_after(""), "ironsight-1");
+        assert_eq!(next_name_after("work\nnotes"), "ironsight-1");
+        assert_eq!(next_name_after("ironsight-1\nironsight-2"), "ironsight-3");
         // The pool used to stop at 98; it must simply keep counting.
-        let many: String = (1..=98).map(|n| format!("scope-{n}\n")).collect();
-        assert_eq!(next_name_after(&many), "scope-99");
-        assert_eq!(next_name_after("scope-7\nother\nscope-3"), "scope-8");
+        let many: String = (1..=98).map(|n| format!("ironsight-{n}\n")).collect();
+        assert_eq!(next_name_after(&many), "ironsight-99");
+        // Sessions started before the rename still count, so a new one cannot
+        // be given a name that is already taken.
+        assert_eq!(
+            next_name_after("scope-7\nother\nironsight-3"),
+            "ironsight-8"
+        );
+        assert!(is_ours("scope-4") && is_ours("ironsight-4") && !is_ours("work"));
     }
 
     const TRUST: &str = "\

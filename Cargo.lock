@@ -1797,6 +1797,43 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a756c3fac73139e83f14c2d742155dd2b78d3ee56597b419a0579b7bdd6dd78"
 
 [[package]]
+name = "ironsight"
+version = "0.4.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "crossterm",
+ "ironsight-core",
+ "ratatui",
+ "serde_json",
+]
+
+[[package]]
+name = "ironsight-core"
+version = "0.4.0"
+dependencies = [
+ "chrono",
+ "crossterm",
+ "portable-pty",
+ "serde",
+ "serde_json",
+ "vt100",
+]
+
+[[package]]
+name = "ironsight-gui"
+version = "0.4.0"
+dependencies = [
+ "chrono",
+ "crossterm",
+ "ironsight-core",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+]
+
+[[package]]
 name = "itertools"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2330,18 +2367,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c7398b9c8b70908f6371f47ed36737907c87c52af34c268fed0bf0ceb92ead9"
 dependencies = [
  "libc",
-]
-
-[[package]]
-name = "nyfe-scope"
-version = "0.4.0"
-dependencies = [
- "anyhow",
- "chrono",
- "crossterm",
- "ratatui",
- "scope-core",
- "serde_json",
 ]
 
 [[package]]
@@ -3317,31 +3342,6 @@ dependencies = [
  "quote",
  "serde_derive_internals",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "scope-core"
-version = "0.4.0"
-dependencies = [
- "chrono",
- "crossterm",
- "portable-pty",
- "serde",
- "serde_json",
- "vt100",
-]
-
-[[package]]
-name = "scope-gui"
-version = "0.4.0"
-dependencies = [
- "chrono",
- "crossterm",
- "scope-core",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
 ]
 
 [[package]]

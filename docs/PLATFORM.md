@@ -1,6 +1,6 @@
-# Where scope is going
+# Where Ironsight is going
 
-scope today is a way to watch and steer the coding agents running on your
+Ironsight today is a way to watch and steer the coding agents running on your
 machine. This document is about what it could become, why the shape of it
 matters, and — more usefully — which parts already exist, which are ordinary
 work, and which are guesses that have not been tested yet.
@@ -39,7 +39,7 @@ if this is the top layer. If there is no answer, it is not a layer — it is a
 feature of the layer below, pretending.
 
 This is also the failure plan. Everything here reads artifacts that other
-projects do not document, and those change. A well-layered scope that loses its
+projects do not document, and those change. A well-layered Ironsight that loses its
 transcript reader still watches, steers and isolates sessions. A monolith loses
 everything at once.
 
@@ -48,12 +48,12 @@ everything at once.
 Status: exists, in use daily.
 
 A session is discovered, watched, and driven through the terminal it runs in:
-tmux on Unix, a pseudo-console scope owns on Windows. From that come the things
+tmux on Unix, a pseudo-console Ironsight owns on Windows. From that come the things
 everything else needs.
 
 - Sessions: discovery, status, selection, an order you choose and that persists
 - Terminals: the live screen as cells with colour and a caret, keys forwarded
-  back, one key that always returns to scope
+  back, one key that always returns to Ironsight
 - Transcripts: what was said, what was called, what it returned, what failed
 - Permissions: prompts read off the screen and answered in the shape each agent
   expects — a number for Claude Code, a letter for Aider
@@ -71,7 +71,7 @@ holds logic the other lacks.
 
 Status: exists as of the first fixtures in `crates/core/tests/`.
 
-Everything scope knows comes from files nobody documents. When one changes, the
+Everything Ironsight knows comes from files nobody documents. When one changes, the
 failure is quiet: a status that reads wrong, a prompt nobody is told about, a
 cost of zero.
 
@@ -80,7 +80,7 @@ name what moved rather than merely failing — the registry no longer carries
 `procStart`, the prompt is no longer answered by number, the token line is no
 longer written after each exchange.
 
-This comes before anything else builds on scope. Without it, an ecosystem is a
+This comes before anything else builds on Ironsight. Without it, an ecosystem is a
 pile of other people's code that breaks in unison and blames the wrong thing.
 
 Product if this is the top layer: a tool that tells you the moment your agent's
@@ -90,7 +90,7 @@ own format changes, which is worth having on its own.
 
 Status: not built. Roughly one working session.
 
-scope already computes every transition worth naming; it simply keeps them to
+Ironsight already computes every transition worth naming; it simply keeps them to
 itself. Making them a versioned stream turns supervision from screen-scraping
 into consumption.
 
@@ -155,7 +155,7 @@ deliberately mechanical at first: no judgement, no review of quality, nothing
 that requires another model's opinion.
 
     Agent:      done
-    scope:      build failed, 2 tests failing
+    Ironsight:      build failed, 2 tests failing
     task state: not done
 
 Product if this is the top layer: nothing is marked finished until it is
@@ -202,9 +202,9 @@ decomposition, and which decisions are too consequential to make alone. It
 converts a paragraph from a human into assignments, and converts results back
 into a report a human can act on.
 
-Neither needs a new runtime. A chief is a session with scope on its path and a
-brief; the recursion falls out — a chief is a session scope manages, managing
-sessions scope manages.
+Neither needs a new runtime. A chief is a session with Ironsight on its path and a
+brief; the recursion falls out — a chief is a session Ironsight manages, managing
+sessions Ironsight manages.
 
 Constraints that are not optional:
 
@@ -238,11 +238,11 @@ session costs roughly 450MB of resident memory, so twenty is nine gigabytes
 before compilers, test runners and databases. A hundred agents is a
 fleet-of-machines problem and a different product.
 
-## What scope does not become
+## What Ironsight does not become
 
-- An agent. scope runs other people's agents and does not compete with them.
+- An agent. Ironsight runs other people's agents and does not compete with them.
 - A model provider. Whatever you are already authenticated as is what runs;
-  scope never handles a key.
+  Ironsight never handles a key.
 - A monolith. Capability grows through layers and adapters, not by adding
   features to the core.
 - A judge of quality. It can tell you the tests passed. It cannot tell you the
@@ -288,7 +288,7 @@ failed, however good its code is.
 
 Terms of use are real. Model subscriptions are for a person working
 interactively. A fleet running continuously belongs on API keys or local models,
-with the cost visibility scope already provides.
+with the cost visibility Ironsight already provides.
 
 ## Sequence
 
@@ -301,6 +301,6 @@ with the cost visibility scope already provides.
     7  measure, honestly             a fortnight of real use
     8  organisations                 only with evidence from 7
 
-Every step before 6 improves scope for someone who never builds an organisation
+Every step before 6 improves Ironsight for someone who never builds an organisation
 at all. That is the property to protect: add a layer and it gets better, remove
 one and what remains is still a thing worth running.

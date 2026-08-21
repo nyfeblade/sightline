@@ -1,4 +1,4 @@
-//! Everything scope knows how to do, with no opinion about how it is shown.
+//! Everything Ironsight knows how to do, with no opinion about how it is shown.
 //!
 //! The terminal view and the desktop app are both front ends over this: they
 //! ask the same questions and call the same actions, so behaviour cannot drift

@@ -92,12 +92,20 @@ pub struct NewSpec {
     pub prompt: Option<String>,
 }
 
-/// Where scope keeps what it knows between runs.
+/// Where Ironsight keeps what it knows between runs.
+///
+/// State written under the old name is moved across on first use rather than
+/// abandoned: a rename should cost nobody the names and order they chose.
 fn data_dir() -> PathBuf {
     let base = std::env::var("XDG_DATA_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| home().join(".local").join("share"));
-    base.join("nyfe-scope")
+    let dir = base.join("ironsight");
+    let former = base.join("nyfe-scope");
+    if !dir.exists() && former.is_dir() {
+        let _ = std::fs::rename(&former, &dir);
+    }
+    dir
 }
 
 fn order_path() -> PathBuf {
@@ -164,7 +172,7 @@ fn write_title(path: &std::path::Path, id: &str, name: &str) -> Result<(), Strin
 }
 
 /// `~` means home, as it does everywhere else a path is typed. Nothing here
-/// goes through a shell, so if scope does not expand it nothing will — the
+/// goes through a shell, so if Ironsight does not expand it nothing will — the
 /// fleet file has always documented `~/api` and it never worked.
 pub fn expand(path: &str) -> String {
     match path.strip_prefix("~/") {
@@ -413,7 +421,7 @@ pub struct App {
     quit_asked: Option<Instant>,
     /// which session was asked about stopping, and when
     stop_asked: Option<(String, Instant)>,
-    /// names scope keeps for sessions that have none of their own
+    /// names Ironsight keeps for sessions that have none of their own
     names: HashMap<String, String>,
     /// the order you put the list in, by session id
     order: Vec<String>,
@@ -629,14 +637,14 @@ impl App {
         }
         let claimed: Vec<String> = self.steer.values().map(|p| p.id.clone()).collect();
         for p in panes {
-            // Something scope started is a session whatever it is running:
+            // Something Ironsight started is a session whatever it is running:
             // an agent it has an entry for, or a command someone named itself.
-            let ours = agent::is_agent(&p.cmd) || p.session.starts_with("scope-");
+            let ours = agent::is_agent(&p.cmd) || control::is_ours(&p.session);
             if !ours || claimed.contains(&p.id) {
                 continue;
             }
             let mut session = Session::from_pane(&p);
-            // A session with no transcript is whatever scope has been told to
+            // A session with no transcript is whatever Ironsight has been told to
             // call it, since nothing else will ever name it.
             if let Some(name) = self.names.get(&p.session) {
                 session.title = name.clone();
@@ -684,9 +692,9 @@ impl App {
         }
     }
 
-    /// Whether quitting can go ahead. Sessions scope hosts itself end with it,
+    /// Whether quitting can go ahead. Sessions Ironsight hosts itself end with it,
     /// so the first `q` says what would be lost and the second one means it.
-    /// Where the backend outlives scope there is nothing to lose, and `q` quits.
+    /// Where the backend outlives Ironsight there is nothing to lose, and `q` quits.
     pub fn may_quit(&mut self) -> bool {
         let n = control::hosted_count();
         let asked = self
@@ -698,7 +706,7 @@ impl App {
         }
         self.quit_asked = Some(Instant::now());
         self.say(format!(
-            "q again to quit — {n} session{} scope is hosting would stop (each reopens with A)",
+            "q again to quit — {n} session{} Ironsight is hosting would stop (each reopens with A)",
             if n == 1 { "" } else { "s" }
         ));
         false
@@ -751,7 +759,7 @@ impl App {
             },
             Prompt::StopAll => {
                 let n = self.steer.len();
-                format!("stop all {n} sessions scope started? type yes")
+                format!("stop all {n} sessions Ironsight started? type yes")
             }
             Prompt::Rename => match self.current() {
                 Some(s) => format!("rename {}", s.label()),
@@ -919,7 +927,7 @@ impl App {
     ///
     /// Claude Code is asked to name itself, because it has a name of its own
     /// that its header, the registry and the transcript all share. An agent
-    /// with no such idea gets the name scope keeps for it.
+    /// with no such idea gets the name Ironsight keeps for it.
     pub fn start_session(&mut self, spec: &NewSpec) -> Result<String, String> {
         let chosen = spec.agent.as_deref().unwrap_or("claude");
         let known = agent::find(chosen);
@@ -929,13 +937,13 @@ impl App {
                 effort: spec.effort.as_deref(),
                 mode: spec.mode.as_deref(),
             }),
-            // Not an agent scope knows: run it as typed, which is how anything
+            // Not an agent Ironsight knows: run it as typed, which is how anything
             // else local gets to be a session too.
             None => agent::custom_command(chosen),
         };
         // How a session gets a name is the agent's business: Claude Code
         // renames itself when told, and an agent with no such idea gets the
-        // name scope keeps for it.
+        // name Ironsight keeps for it.
         let renames_itself = match known.as_ref().map(|a| a.naming()) {
             Some(agent::Naming::Command(command)) => Some(command),
             _ => None,
@@ -1020,8 +1028,8 @@ impl App {
     }
 
     /// Remember what to call a session that has no name of its own. Anything
-    /// but Claude Code is a program in a terminal as far as scope can tell, so
-    /// the name is scope's to keep.
+    /// but Claude Code is a program in a terminal as far as Ironsight can tell, so
+    /// the name is Ironsight's to keep.
     pub fn name_pane(&mut self, session: &str, name: &str) {
         self.names.insert(session.to_string(), name.to_string());
         save_names(&self.names);
@@ -1032,7 +1040,7 @@ impl App {
     /// A running session renames itself: `/rename` is a real command, so typing
     /// it is the honest route and everything downstream — its own header, the
     /// registry, the transcript — stays in step. A session that has stopped has
-    /// nobody to type to, so scope appends the same record Claude Code would
+    /// nobody to type to, so Ironsight appends the same record Claude Code would
     /// have written, which is where the name actually lives.
     pub fn rename(&mut self, id: &str, name: &str) -> Result<(), String> {
         let name = name.trim();
@@ -1103,7 +1111,7 @@ impl App {
         Ok(())
     }
 
-    /// Say the same thing to every session scope can reach. Returns how many
+    /// Say the same thing to every session Ironsight can reach. Returns how many
     /// heard it.
     pub fn broadcast(&mut self, text: &str) -> usize {
         let panes: Vec<Pane> = self.steer.values().cloned().collect();
@@ -1172,8 +1180,8 @@ impl App {
         }
     }
 
-    /// Show a session full-screen. Where scope hosts the session itself there
-    /// is no terminal to hand over, so full-screen is scope's own mirror with
+    /// Show a session full-screen. Where Ironsight hosts the session itself there
+    /// is no terminal to hand over, so full-screen is Ironsight's own mirror with
     /// every key going to the session — the same thing, drawn by scope.
     pub fn attach(&mut self) {
         let Some(id) = self.current().map(|s| s.id.clone()) else {
@@ -1422,7 +1430,7 @@ impl App {
         self.reopen(id, cwd, original);
     }
 
-    /// Bring one conversation up somewhere scope can steer it, whether it is
+    /// Bring one conversation up somewhere Ironsight can steer it, whether it is
     /// still running or finished months ago. `original` is the process holding
     /// it now, if any: two clients on one conversation would both append to the
     /// same transcript, so it goes as soon as the new one is up.
@@ -1543,7 +1551,7 @@ impl App {
                 return;
             }
         }
-        // A conversation still held by a process outside scope has to be taken
+        // A conversation still held by a process outside Ironsight has to be taken
         // from it, exactly as adopting does.
         let original = self
             .sessions
@@ -1662,7 +1670,7 @@ impl App {
             key: 'x',
             label: "Close this session",
             enabled: steerable,
-            why: "only sessions scope can reach can be stopped".into(),
+            why: "only sessions Ironsight can reach can be stopped".into(),
         });
         v.push(Action {
             key: 'O',
@@ -1672,9 +1680,9 @@ impl App {
         });
         v.push(Action {
             key: 'Z',
-            label: "Stop everything scope started",
+            label: "Stop everything Ironsight started",
             enabled: !self.steer.is_empty(),
-            why: "nothing of scope's is running".into(),
+            why: "nothing of Ironsight's is running".into(),
         });
         v.push(Action {
             key: 'R',
@@ -1684,7 +1692,7 @@ impl App {
         });
         v.push(Action {
             key: 'P',
-            label: "Tidy up finished scope sessions",
+            label: "Tidy up finished Ironsight sessions",
             enabled: self.tmux_ok,
             why: control::unavailable_hint().into(),
         });
@@ -1755,7 +1763,9 @@ impl App {
             'P' => {
                 let closed = control::prune();
                 self.say(match closed.len() {
-                    0 => "nothing to tidy up — everything scope started is still running".into(),
+                    0 => {
+                        "nothing to tidy up — everything Ironsight started is still running".into()
+                    }
                     _ => format!("closed {}", closed.join(", ")),
                 });
                 self.discover();
@@ -2037,7 +2047,7 @@ impl App {
         }
     }
 
-    /// Launch every session described in ~/.config/nyfe-scope/fleet.json.
+    /// Launch every session described in ~/.config/ironsight/fleet.json.
     pub fn launch_fleet(&mut self) {
         if !self.may_spawn() {
             return;
@@ -2242,7 +2252,7 @@ impl App {
 
     /// (output tokens, estimated dollars, sessions currently working)
     /// A warning to show once when this Claude Code install looks newer or
-    /// stranger than what scope was built against.
+    /// stranger than what Ironsight was built against.
     pub fn compatibility(&self) -> Option<String> {
         for s in &self.sessions {
             if s.unreadable() {
@@ -2311,10 +2321,10 @@ pub fn config_dir() -> PathBuf {
 pub fn fleet_path() -> PathBuf {
     if let Ok(dir) = std::env::var("XDG_CONFIG_HOME") {
         if !dir.is_empty() {
-            return PathBuf::from(dir).join("nyfe-scope").join("fleet.json");
+            return PathBuf::from(dir).join("ironsight").join("fleet.json");
         }
     }
-    home().join(".config").join("nyfe-scope").join("fleet.json")
+    home().join(".config").join("ironsight").join("fleet.json")
 }
 
 /// Home, or the current directory when there is no home to speak of.
@@ -2342,7 +2352,7 @@ mod tests {
         assert_eq!(spec.agent.as_deref(), Some("codex"));
         assert_eq!(spec.name.as_deref(), Some("refactor"));
         assert_eq!(spec.prompt.as_deref(), Some("fix the auth tests"));
-        // Nothing said, so it is Claude Code and scope asks for a name.
+        // Nothing said, so it is Claude Code and Ironsight asks for a name.
         let plain = parse_new("~/api");
         assert!(plain.agent.is_none() && plain.name.is_none());
     }
@@ -2389,9 +2399,9 @@ mod tests {
 
     #[test]
     fn a_name_written_here_is_read_back_as_a_name() {
-        // The record scope appends and the record Claude Code appends are the
+        // The record Ironsight appends and the record Claude Code appends are the
         // same record, so the test is: write one, then read it the way every
-        // other part of scope reads a title.
+        // other part of Ironsight reads a title.
         let dir = std::env::temp_dir().join(format!("scope-rename-{}", std::process::id()));
         let project = dir.join("-home-someone");
         std::fs::create_dir_all(&project).unwrap();

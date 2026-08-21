@@ -3,7 +3,7 @@
 //! The terminal view can simply show a session's own drawing, because it is a
 //! terminal. A window is not, so the screen has to be taken apart first: what
 //! character is in each cell, what colour it is, where the cursor sits. That is
-//! what a terminal emulator does, and scope already carries one for the sessions
+//! what a terminal emulator does, and Ironsight already carries one for the sessions
 //! it hosts itself, so the same parser is pointed at tmux's rendering too.
 //!
 //! Colours come out as CSS. The first sixteen are named rather than resolved —

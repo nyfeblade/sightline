@@ -1,6 +1,6 @@
-//! What scope depends on in other people's files, pinned down.
+//! What Ironsight depends on in other people's files, pinned down.
 //!
-//! Everything scope knows about a session comes from artifacts nobody
+//! Everything Ironsight knows about a session comes from artifacts nobody
 //! documents: Claude Code's transcript and session registry, Aider's chat
 //! history, the shape of a permission prompt on screen. Any of them can change
 //! in a release, and when one does the failure is quiet — a status that reads
@@ -25,7 +25,7 @@ fn read(name: &str) -> String {
 
 #[test]
 fn claude_code_still_writes_a_transcript_scope_can_read() {
-    let mut session = scope_core::session::Session::open(fixture("claude-transcript.jsonl"));
+    let mut session = ironsight_core::session::Session::open(fixture("claude-transcript.jsonl"));
     session.backfill();
 
     assert_eq!(
@@ -41,7 +41,7 @@ fn claude_code_still_writes_a_transcript_scope_can_read() {
         session.title, "the rate limiter one",
         "a chosen title outranks the derived one"
     );
-    assert!(session.titled, "and scope knows a person chose it");
+    assert!(session.titled, "and Ironsight knows a person chose it");
     assert_eq!(
         session.turns, 1,
         "a turn is counted from the record Claude Code writes when one ends"
@@ -54,7 +54,7 @@ fn claude_code_still_writes_a_transcript_scope_can_read() {
     assert_eq!(session.totals.cache_write, 6_200);
     assert!(
         session.totals.cost > 0.0,
-        "usage was priced, so the model id is still one scope knows"
+        "usage was priced, so the model id is still one Ironsight knows"
     );
 
     // Tool calls, their results, and the plan.
@@ -73,7 +73,7 @@ fn claude_code_still_writes_a_transcript_scope_can_read() {
 fn the_session_registry_still_says_what_is_running() {
     let text = read("claude-registry.json");
     let record: serde_json::Value = serde_json::from_str(&text).expect("still JSON");
-    // Each of these is a field scope reads by name. A rename breaks liveness,
+    // Each of these is a field Ironsight reads by name. A rename breaks liveness,
     // which is what everything else hangs off.
     for field in [
         "pid",
@@ -86,7 +86,7 @@ fn the_session_registry_still_says_what_is_running() {
     ] {
         assert!(
             record.get(field).is_some(),
-            "the registry no longer has `{field}`, which scope reads to know a \
+            "the registry no longer has `{field}`, which Ironsight reads to know a \
              session is alive and what it is doing"
         );
     }
@@ -99,8 +99,8 @@ fn the_session_registry_still_says_what_is_running() {
 #[test]
 fn a_permission_prompt_is_still_recognisable_on_screen() {
     let screen = read("claude-permission-screen.txt");
-    let asking = scope_core::control::pending_approval(&screen)
-        .expect("Claude Code draws a prompt scope can no longer see");
+    let asking = ironsight_core::control::pending_approval(&screen)
+        .expect("Claude Code draws a prompt Ironsight can no longer see");
     assert_eq!(asking.question, "Do you want to proceed?");
     assert_eq!(asking.options.len(), 3);
     assert_eq!(asking.keys, vec!["1", "2", "3"], "answered by number");
@@ -109,8 +109,8 @@ fn a_permission_prompt_is_still_recognisable_on_screen() {
 #[test]
 fn aider_still_asks_in_letters_and_answers_to_them() {
     let screen = read("aider-permission-screen.txt");
-    let asking = scope_core::control::pending_approval(&screen)
-        .expect("Aider draws a prompt scope can no longer see");
+    let asking = ironsight_core::control::pending_approval(&screen)
+        .expect("Aider draws a prompt Ironsight can no longer see");
     assert!(asking.question.contains("gitignore"));
     assert_eq!(asking.options, vec!["Yes", "No"]);
     assert_eq!(
@@ -122,7 +122,7 @@ fn aider_still_asks_in_letters_and_answers_to_them() {
 
 #[test]
 fn aider_still_records_what_it_did_and_what_it_cost() {
-    use scope_core::agent::aider::{Line, read_line};
+    use ironsight_core::agent::aider::{Line, read_line};
     let history = read("aider-history.md");
     let lines: Vec<Line> = history.lines().map(read_line).collect();
 

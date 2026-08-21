@@ -1,9 +1,9 @@
-//! What scope needs from a coding agent, and how each one answers.
+//! What Ironsight needs from a coding agent, and how each one answers.
 //!
-//! scope grew around Claude Code and learned its habits: a JSONL transcript per
+//! Ironsight grew around Claude Code and learned its habits: a JSONL transcript per
 //! conversation under `~/.claude/projects`, a registry of live sessions under
 //! `~/.claude/sessions`, numbered permission prompts. None of that is shared by
-//! other agents, and none of it is what makes scope work.
+//! other agents, and none of it is what makes Ironsight work.
 //!
 //! What makes it work is lower down: a session is a program in a terminal, and
 //! a terminal can be read and typed into. Everything above that — which
@@ -28,7 +28,7 @@ pub enum Naming {
     /// The agent renames itself when told: the name then lives wherever the
     /// agent keeps it, and everything downstream agrees.
     Command(&'static str),
-    /// The agent has no idea of a name, so scope keeps one for it.
+    /// The agent has no idea of a name, so Ironsight keeps one for it.
     Kept,
 }
 
@@ -82,7 +82,7 @@ pub trait Adapter: Send + Sync {
     /// How its transcript is written, if it writes one.
     fn record(&self) -> Record;
 
-    /// Conversations it has recorded. `roots` are the folders scope has seen
+    /// Conversations it has recorded. `roots` are the folders Ironsight has seen
     /// this agent working in — an agent that keeps its history beside the code
     /// has nowhere else to be found.
     fn conversations(&self, roots: &[PathBuf]) -> Vec<Found>;
@@ -98,7 +98,7 @@ pub trait Adapter: Send + Sync {
     }
 }
 
-/// Everything scope knows how to run.
+/// Everything Ironsight knows how to run.
 pub fn all() -> Vec<Box<dyn Adapter>> {
     vec![
         Box::new(claude::ClaudeCode),
@@ -123,12 +123,12 @@ pub fn of_command(cmd: &str) -> Option<Box<dyn Adapter>> {
     find(program)
 }
 
-/// Whether a pane is running something scope should treat as a session.
+/// Whether a pane is running something Ironsight should treat as a session.
 pub fn is_agent(cmd: &str) -> bool {
     of_command(cmd).is_some()
 }
 
-/// An agent scope can run and watch on screen, but whose records it cannot
+/// An agent Ironsight can run and watch on screen, but whose records it cannot
 /// read — either because it keeps none, or because nobody has written the
 /// adapter yet. Everything terminal-shaped still works.
 pub struct Plain {
@@ -180,7 +180,7 @@ pub fn custom_command(program: &str) -> Vec<String> {
     program.split_whitespace().map(str::to_string).collect()
 }
 
-/// Whether a folder is worth asking an agent about — somewhere scope has seen
+/// Whether a folder is worth asking an agent about — somewhere Ironsight has seen
 /// one working.
 pub fn is_dir(path: &Path) -> bool {
     path.is_dir()
@@ -229,7 +229,7 @@ mod tests {
                 "plan"
             ]
         );
-        // Aider takes a model and nothing else scope offers.
+        // Aider takes a model and nothing else Ironsight offers.
         assert_eq!(
             find("aider").unwrap().command(opts),
             vec!["aider", "--model", "opus"]

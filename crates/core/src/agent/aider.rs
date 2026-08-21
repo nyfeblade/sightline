@@ -2,7 +2,7 @@
 //!
 //! It keeps no registry and no central store of conversations: the record lives
 //! beside the code, as `.aider.chat.history.md` in the repository being worked
-//! on. So conversations are found by looking where scope has seen Aider
+//! on. So conversations are found by looking where Ironsight has seen Aider
 //! working rather than in one known place.
 //!
 //! The record is markdown, written as it goes:
@@ -19,7 +19,7 @@
 //!
 //! `####` is what a person asked, plain text is the answer, and `>` is
 //! everything the tool said about it — including how many tokens it cost, which
-//! is where scope's figures for an Aider session come from.
+//! is where Ironsight's figures for an Aider session come from.
 
 use super::{Adapter, Found, Naming, Options, Record};
 use std::path::{Path, PathBuf};
@@ -44,7 +44,7 @@ impl Adapter for Aider {
 
     fn command(&self, options: Options) -> Vec<String> {
         let mut argv = vec!["aider".to_string()];
-        // Aider has a model and nothing else scope offers; effort and
+        // Aider has a model and nothing else Ironsight offers; effort and
         // permission mode are Claude Code's ideas.
         if let Some(m) = options.model {
             argv.push("--model".into());
@@ -97,7 +97,7 @@ pub fn found_in(root: &Path) -> Option<Found> {
 }
 
 /// What one line of the record says. Reading it a line at a time is what lets
-/// scope follow a session as it works rather than re-reading the file.
+/// Ironsight follow a session as it works rather than re-reading the file.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Line {
     /// a new run of aider in this folder

@@ -102,7 +102,7 @@ pub fn worktree_root(repo: &Path) -> std::path::PathBuf {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "repo".into());
-    base.join("nyfe-scope").join("worktrees").join(name)
+    base.join("ironsight").join("worktrees").join(name)
 }
 
 /// Branch names are used as directory names, so keep them to safe characters.
@@ -245,7 +245,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         run(&dir, &["init", "-q", "-b", "main"]);
-        // The repository carries the identity, not each commit: scope's own
+        // The repository carries the identity, not each commit: Ironsight's own
         // merge makes a commit too, and on a machine that has never had git
         // configured — every fresh runner — git refuses without one.
         run(&dir, &["config", "user.email", "test@scope.invalid"]);
@@ -266,7 +266,7 @@ mod tests {
                 "-c",
                 "user.email=test@scope.invalid",
                 "-c",
-                "user.name=scope tests",
+                "user.name=Ironsight tests",
                 "commit",
                 "-qm",
                 message,

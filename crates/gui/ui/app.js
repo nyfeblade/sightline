@@ -379,7 +379,7 @@ async function drawMirror(id) {
   if (!frame) {
     clear(out);
     lastFrame = [];
-    return out.append(empty("scope has no terminal for this session"));
+    return out.append(empty("Ironsight has no terminal for this session"));
   }
   let screen = out.querySelector(".screen");
   if (!screen || lastFrame.length !== frame.lines.length) {
@@ -992,7 +992,7 @@ function drawMenu() {
     grid.append(button);
   };
   item("Broadcast…", "say one thing to every session", async () => {
-    const text = await ask("Send to every session scope can reach:");
+    const text = await ask("Send to every session Ironsight can reach:");
     if (text) say(`sent to ${await invoke("broadcast", { text })} sessions`);
   });
   item("Launch the fleet", "start everything the fleet file describes", async () => {
@@ -1002,7 +1002,7 @@ function drawMenu() {
     const closed = await invoke("prune");
     say(closed.length ? `closed ${closed.join(", ")}` : "nothing to tidy up");
   });
-  item("Close everything", "every session scope started", async () => {
+  item("Close everything", "every session Ironsight started", async () => {
     const closed = await invoke("close_all");
     say(`closed ${closed.length} — each reopens from Resume`);
   });

@@ -1,11 +1,11 @@
 //! Steering sessions through tmux, the backend everywhere but Windows.
 //!
 //! Claude Code's own cross-session channel is a token-authenticated private
-//! socket, so scope drives the terminal instead: a session running in a tmux
+//! socket, so Ironsight drives the terminal instead: a session running in a tmux
 //! pane can be typed into exactly as a person would type into it. That keeps
 //! permission prompts, slash commands and every other interactive affordance
 //! working, and it does not depend on Claude Code internals. Sessions outlive
-//! scope, because tmux holds them, not scope.
+//! Ironsight, because tmux holds them, not scope.
 //!
 //! Sessions started outside tmux are observable but not steerable. Nothing here
 //! fails loudly when tmux is missing — the control keys simply say so.
@@ -119,7 +119,7 @@ pub fn send_key(pane: &str, key: &str) -> Result<(), String> {
         .map(|_| ())
 }
 
-/// True when scope is itself running inside tmux. Attaching from there is
+/// True when Ironsight is itself running inside tmux. Attaching from there is
 /// refused by tmux — the client has to be switched instead.
 pub fn inside_tmux() -> bool {
     std::env::var_os("TMUX").is_some()
@@ -139,14 +139,14 @@ fn show_way_back(session: &str, hint: &str) {
 /// A desktop or a terminal can take a key before tmux ever sees it — F12 is a
 /// drop-down console in more than one setup — so it can be named.
 pub fn way_back() -> String {
-    std::env::var("SCOPE_WAY_BACK")
+    std::env::var("IRONSIGHT_WAY_BACK")
         .ok()
         .filter(|k| !k.trim().is_empty())
         .unwrap_or_else(|| "F12".into())
 }
 
 /// What it should do depends on how you got to the session, and tmux can work
-/// that out itself: a client that has a previous session came from scope and
+/// that out itself: a client that has a previous session came from Ironsight and
 /// switches back to it, and a client that was made by attaching has nowhere to
 /// switch to, so it detaches.
 const WAY_BACK_ACTION: [&str; 4] = [
@@ -157,7 +157,7 @@ const WAY_BACK_ACTION: [&str; 4] = [
 ];
 
 /// Whether the key is free. tmux key tables belong to the whole server rather
-/// than to one session, so a key someone has already bound is theirs, and scope
+/// than to one session, so a key someone has already bound is theirs, and Ironsight
 /// says the tmux way out instead of quietly taking it.
 fn way_back_is_free() -> bool {
     let Some(table) = tmux(&["list-keys", "-T", "root"]) else {
@@ -172,10 +172,10 @@ fn way_back_is_free() -> bool {
     })
 }
 
-/// Take the key for as long as scope is running.
+/// Take the key for as long as Ironsight is running.
 ///
 /// It used to be taken for the length of one attach, which meant the key worked
-/// from `a` and from nowhere else — while the hint scope had written on the
+/// from `a` and from nowhere else — while the hint Ironsight had written on the
 /// session's status line stayed there, promising a key that was no longer
 /// bound. Returns whether it was taken, which is also whether to promise it.
 pub fn hold_way_back() -> bool {
@@ -196,7 +196,7 @@ pub fn drop_way_back(held: bool) {
     }
 }
 
-/// Whether scope currently holds it, for anything that wants to say so.
+/// Whether Ironsight currently holds it, for anything that wants to say so.
 pub fn holds_way_back() -> bool {
     tmux(&["list-keys", "-T", "root"])
         .map(|table| {
@@ -211,19 +211,19 @@ pub fn holds_way_back() -> bool {
         .unwrap_or(false)
 }
 
-/// What to tell someone about getting back, which depends on whether scope was
+/// What to tell someone about getting back, which depends on whether Ironsight was
 /// able to give them one key for it.
 fn hint(taken: bool, tmux_way: &str) -> String {
     if taken {
-        format!(" {} → back to scope ", way_back())
+        format!(" {} → back to Ironsight ", way_back())
     } else {
-        format!(" {tmux_way} → back to scope ")
+        format!(" {tmux_way} → back to Ironsight ")
     }
 }
 
-/// Show a session full-screen. Returns true when scope's own terminal was
+/// Show a session full-screen. Returns true when Ironsight's own terminal was
 /// handed over and must be taken back afterwards; false when the tmux client
-/// was switched instead, which leaves scope running where it is.
+/// was switched instead, which leaves Ironsight running where it is.
 pub fn attach(session: &str) -> Result<bool, String> {
     let held = holds_way_back();
     if inside_tmux() {
@@ -424,7 +424,7 @@ fn finished_in(rows: &str, table: Option<&[Proc]>) -> Vec<String> {
         let (Some(session), Some(dead), pid) = (f.next(), f.next(), f.next()) else {
             continue;
         };
-        if !session.starts_with("scope-") {
+        if !crate::control::is_ours(session) {
             continue;
         }
         if !order.iter().any(|s| s == session) {
@@ -554,7 +554,7 @@ pub fn end_process(pid: i64) -> bool {
 }
 
 /// Open a session in a new terminal window, attached to its tmux session, so
-/// it can be watched without giving up the scope view.
+/// it can be watched without giving up the Ironsight view.
 pub fn open_window(session: &str) -> Result<String, String> {
     // A window opened this way is a client like any other, so it gets the same
     // way back — and is told the truth about which one.
@@ -562,14 +562,14 @@ pub fn open_window(session: &str) -> Result<String, String> {
     crate::control::open_terminal_with(&format!("tmux attach -t {session}"))
 }
 
-/// Close every session scope started or adopted, leaving any tmux session the
+/// Close every session Ironsight started or adopted, leaving any tmux session the
 /// user made themselves alone. Returns the names that were closed.
 pub fn stop_all() -> Vec<String> {
     let Some(out) = tmux(&["list-sessions", "-F", "#{session_name}"]) else {
         return Vec::new();
     };
     let mut closed = Vec::new();
-    for name in out.lines().filter(|n| n.starts_with("scope-")) {
+    for name in out.lines().filter(|n| crate::control::is_ours(n)) {
         if kill_session(name).is_ok() {
             closed.push(name.to_string());
         }
@@ -577,11 +577,11 @@ pub fn stop_all() -> Vec<String> {
     closed
 }
 
-/// Whether sessions outlive the scope process that started them. tmux holds
+/// Whether sessions outlive the Ironsight process that started them. tmux holds
 /// them, so they do; that is what makes the one-shot subcommands meaningful.
 pub const OUTLIVES_SCOPE: bool = true;
 
-/// What to call the place scope steers sessions from, in a sentence.
+/// What to call the place Ironsight steers sessions from, in a sentence.
 pub const WHERE: &str = "tmux";
 
 /// How to look at a session outside scope.
@@ -600,12 +600,12 @@ pub fn unavailable_hint() -> &'static str {
     "tmux is not installed"
 }
 
-/// Where a session scope can steer is running, for the session card.
+/// Where a session Ironsight can steer is running, for the session card.
 pub fn where_hint(session: &str) -> String {
     format!("steerable · tmux {session}")
 }
 
-/// Sessions that would end if scope exited now. tmux holds its own, so none.
+/// Sessions that would end if Ironsight exited now. tmux holds its own, so none.
 pub fn hosted_count() -> usize {
     0
 }

@@ -3,11 +3,11 @@
 # changes, and one tmux session parked on a permission prompt so the approvals
 # path is exercised for real rather than mocked.
 #
-# usage: scripts/demo.sh [fixture-dir]    then: CLAUDE_CONFIG_DIR=<dir> scope
+# usage: scripts/demo.sh [fixture-dir]    then: CLAUDE_CONFIG_DIR=<dir> Ironsight
 set -euo pipefail
 
-FIXTURE="${1:-/tmp/scope-fixture}"
-REPO=/tmp/scope-demo-repo
+FIXTURE="${1:-/tmp/ironsight-fixture}"
+REPO=/tmp/ironsight-demo-repo
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 rm -rf "$FIXTURE" "$REPO"
@@ -45,5 +45,5 @@ JSON
 
 echo "fixture:  $FIXTURE"
 echo "repo:     $REPO"
-echo "run:      CLAUDE_CONFIG_DIR=$FIXTURE scope --since 30d"
+echo "run:      CLAUDE_CONFIG_DIR=$FIXTURE Ironsight --since 30d"
 echo "teardown: tmux kill-session -t demo-agent; rm -rf $FIXTURE $REPO"

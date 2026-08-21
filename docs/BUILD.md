@@ -14,7 +14,7 @@ typed, a screen actually read back. Three rounds of continuous integration
 failures on other platforms came from tests that asserted something about one
 laptop rather than about the code.
 
-Pin other people's formats. Anything read from a file scope does not write gets
+Pin other people's formats. Anything read from a file Ironsight does not write gets
 a fixture in `crates/core/tests/fixtures/` and an assertion that names what
 moved. See `crates/core/tests/compatibility.rs`.
 
@@ -23,7 +23,7 @@ guessing: no reading rather than a made-up number, "cannot tell" rather than a
 confident wrong status. Nothing is closed, killed or answered on a guess.
 
 One implementation, two callers. The terminal view and the desktop app are front
-ends over `scope-core`. Any behaviour that both need lives in core; anything a
+ends over `ironsight-core`. Any behaviour that both need lives in core; anything a
 front end knows that the other does not is a bug waiting to be reported twice.
 
 Every layer standalone. Dependencies point downward only. If a layer cannot be
@@ -33,14 +33,14 @@ described as a product with nothing above it, it is not a layer.
 
 ### What it does
 
-Turns state changes scope already detects into a stream anything can consume,
+Turns state changes Ironsight already detects into a stream anything can consume,
 so supervision never has to scrape a screen.
 
 ### Where it lives
 
     crates/core/src/event_stream.rs      the types, the bus, the subscribers
     crates/core/src/app.rs               emission points (already the detector)
-    crates/tui/src/main.rs               `scope events` subcommand
+    crates/tui/src/main.rs               `ironsight events` subcommand
     crates/gui/src/main.rs               a Tauri channel for the window
 
 ### The shape
@@ -52,7 +52,7 @@ pub struct Event {
     pub at: DateTime<Utc>,
     pub session: String,
     pub agent: String,
-    /// the session that started this one, when scope started it
+    /// the session that started this one, when Ironsight started it
     pub parent: Option<String>,
     /// the assignment that session was given, when it has one
     pub task: Option<String>,
@@ -99,9 +99,9 @@ Nothing new is detected. Every event has an existing detection point:
 
 Three transports, one format — JSON, one event per line:
 
-    scope events                     follow the stream in a terminal
-    scope events --since <id>        replay from a point, for a consumer restart
-    ~/.local/share/nyfe-scope/events.sock   a socket for anything else
+    ironsight events                     follow the stream in a terminal
+    ironsight events --since <id>        replay from a point, for a consumer restart
+    ~/.local/share/ironsight/events.sock   a socket for anything else
     Tauri channel                    the window, which stops polling for status
 
 Consumers are never assumed. The bus drops events for a subscriber that has
@@ -121,14 +121,14 @@ sequence of events, asserted whole rather than by sampling.
 Fixture: `compatibility.rs` gains a case that reads the Claude transcript
 fixture and asserts the events it yields, so a format change fails here first.
 
-Live: start a real session under scope, run `scope events` beside it, send a
+Live: start a real session under Ironsight, run `ironsight events` beside it, send a
 message, watch `SessionWorking`, `ToolCalled`, `ChecksFailed` and `SessionWaiting`
 arrive in order; kill the subscriber mid-stream and confirm the engine is
 unaffected.
 
 ### Done when
 
-`scope events` prints a correct stream for a real session, the window uses it
+`ironsight events` prints a correct stream for a real session, the window uses it
 instead of polling for status, and the compatibility suite covers it.
 
 ## Layer 3 — lineage and task records
@@ -141,7 +141,7 @@ list becomes a tree with work attached to it.
 ### Where it lives
 
     crates/core/src/work.rs                       the types and the store
-    ~/.local/share/nyfe-scope/work.json           the store on disk
+    ~/.local/share/ironsight/work.json           the store on disk
     crates/core/src/app.rs                        set on start, read on refresh
 
 ### The shape
@@ -176,9 +176,9 @@ says so, and to `Verified` only by layer 4.
 Front ends: the session list indents children under their parent and shows the
 assignment beneath the name; cost rolls up the tree.
 
-    scope tasks                  what exists, and in what state
-    scope assign <session> ...   give a session an assignment
-    scope task <id> --note ...   append what was learned
+    ironsight tasks                  what exists, and in what state
+    ironsight assign <session> ...   give a session an assignment
+    Ironsight task <id> --note ...   append what was learned
 
 ### How it is tested
 
@@ -202,13 +202,13 @@ Refuses to accept "done" without evidence. The single highest-value layer.
 ### Where it lives
 
     crates/core/src/checks.rs                     the runner
-    <project>/.scope/checks.toml                  what the checks are, per project
+    <project>/.ironsight/checks.toml                  what the checks are, per project
 
 ### The shape
 
 ```toml
-# .scope/checks.toml — committed with the project, so it is the project's
-# definition of done rather than scope's
+# .ironsight/checks.toml — committed with the project, so it is the project's
+# definition of done rather than Ironsight's
 [[check]]
 name    = "build"
 run     = "cargo build --release"
@@ -229,7 +229,7 @@ optional = true      # missing tooling reports unknown, never failure
 ### How it behaves
 
 Checks run in the session's own worktree, so a failing check never blocks
-another session. They run on demand (`scope check <session>`), when a task is
+another session. They run on demand (`ironsight check <session>`), when a task is
 `Claimed`, and on a commit event. Results become `ChecksPassed` or
 `ChecksFailed`, and a claimed task with a failing check returns to `Working`
 with the first failure appended as a note — which is the message the agent
@@ -263,7 +263,7 @@ only the context it needs.
 
 ### Where it lives
 
-    <project>/.scope/constitution.md      the project's standing decisions
+    <project>/.ironsight/constitution.md      the project's standing decisions
     crates/core/src/brief.rs              rendering a packet from it
 
 ### The constitution
@@ -279,7 +279,7 @@ the session that decided it.
 ### The packet
 
 ```
-scope brief <session> --task "implement the OAuth callback"
+ironsight brief <session> --task "implement the OAuth callback"
 ```
 
 Renders the assignment, the constraints that apply, the success criteria, and
@@ -306,13 +306,13 @@ recorded once is visible to every session started afterwards.
 
 ### What they are
 
-Not new runtimes. A foreman and a chief are sessions with `scope` on their path,
+Not new runtimes. A foreman and a chief are sessions with `ironsight` on their path,
 a brief, and permission to run a specific set of commands.
 
-    Foreman: reads `scope events`, runs `scope check`, appends notes, returns
+    Foreman: reads `ironsight events`, runs `ironsight check`, appends notes, returns
              claimed work that fails, escalates stalls. Never writes code.
-    Chief:   reads the constitution and `scope tasks`, writes assignments, starts
-             workers with `scope new --task`, reports to the human, and asks
+    Chief:   reads the constitution and `ironsight tasks`, writes assignments, starts
+             workers with `ironsight new --task`, reports to the human, and asks
              when a decision exceeds its threshold.
 
 ### Safety, which is not optional
@@ -324,7 +324,7 @@ a brief, and permission to run a specific set of commands.
   marked `By::Policy`.
 - Stalls escalate, never restart. From outside, thinking and wedged look the
   same.
-- Spend and agent-count ceilings are enforced by scope, not by the supervisor's
+- Spend and agent-count ceilings are enforced by Ironsight, not by the supervisor's
   good intentions: a start that would exceed them fails with the reason.
 
 ### How it is tested
@@ -371,7 +371,7 @@ implementations found later; decisions re-litigated after being recorded.
 
 Throughput: work verified per hour of wall clock.
 
-Cost: tokens and estimate, from data scope already has, per unit of verified
+Cost: tokens and estimate, from data Ironsight already has, per unit of verified
 work rather than per session.
 
 ### What counts as a result
@@ -389,6 +389,6 @@ hierarchy always looks good.
 ### If the answer is no
 
 Layers 0 through 5 stay. Events, lineage, verification and briefing improve
-scope for one person running agents by hand, which is what it is for today. That
+Ironsight for one person running agents by hand, which is what it is for today. That
 is the reason for this order: the experiment is cheap because everything under
 it was worth building anyway.

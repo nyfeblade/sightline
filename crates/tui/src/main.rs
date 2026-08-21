@@ -1,6 +1,6 @@
-//! nyfe scope — watch every Claude Code session on this machine, live.
+//! Ironsight — watch every Claude Code session on this machine, live.
 
-use scope_core::{app, bootstrap, control, git, session};
+use ironsight_core::{app, bootstrap, control, git, session};
 
 mod ui;
 
@@ -16,21 +16,21 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 const USAGE: &str = "\
-nyfe scope — live view of what Claude Code is doing
+Ironsight — live view of what Claude Code is doing
 
-usage: scope [options]
-       scope new [path] [--agent A] [--name N] [--model M] [--effort E]
+usage: Ironsight [options]
+       ironsight new [path] [--agent A] [--name N] [--model M] [--effort E]
                  [--permission-mode P] [--prompt T] [--worktree BRANCH]
                                start a session and exit; --agent picks which
                                agent to run (claude, codex, gemini, aider, or
                                any command), default claude
-       scope send <who> <text> type a line into a running session and submit it
-       scope adopt <who>        (re)open a conversation in tmux so it can be steered
-       scope prune              close scope sessions whose process has exited
-       scope doctor             check everything scope needs is installed
-       scope stop [who|--all]   stop one session, or everything scope started
-       scope waiting            list sessions blocked on a prompt
-       scope approve <who> [n]  answer a blocked session (default option 1)
+       ironsight send <who> <text> type a line into a running session and submit it
+       ironsight adopt <who>        (re)open a conversation in tmux so it can be steered
+       ironsight prune              close Ironsight sessions whose process has exited
+       ironsight doctor             check everything Ironsight needs is installed
+       ironsight stop [who|--all]   stop one session, or everything Ironsight started
+       ironsight waiting            list sessions blocked on a prompt
+       ironsight approve <who> [n]  answer a blocked session (default option 1)
 
 options:
   --since <dur>   include sessions touched within this window (default 24h)
@@ -73,7 +73,7 @@ fn main() -> Result<()> {
 
     let args: Vec<String> = std::env::args().skip(1).collect();
 
-    // Where scope holds sessions itself, a subcommand would start or steer
+    // Where Ironsight holds sessions itself, a subcommand would start or steer
     // something and then exit, taking it with it. Say so rather than doing it.
     const ONE_SHOT: [&str; 7] = [
         "new", "send", "adopt", "approve", "waiting", "stop", "prune",
@@ -82,7 +82,7 @@ fn main() -> Result<()> {
         if !control::OUTLIVES_SCOPE && ONE_SHOT.contains(&cmd.as_str()) {
             anyhow::bail!(
                 "scope holds sessions itself on this platform, so they end when it exits.\n\
-                 `scope {cmd}` would do that immediately — run scope and use it from there."
+                 `Ironsight {cmd}` would do that immediately — run Ironsight and use it from there."
             );
         }
     }
@@ -92,7 +92,7 @@ fn main() -> Result<()> {
         if who == "--all" {
             let closed = control::stop_all();
             if closed.is_empty() {
-                println!("nothing of scope's was running");
+                println!("nothing of Ironsight's was running");
             } else {
                 println!("stopped {}", closed.join(", "));
             }
@@ -103,7 +103,7 @@ fn main() -> Result<()> {
             .iter()
             .find(|p| p.session == who)
             .map(|p| p.session.clone())
-            .ok_or_else(|| anyhow::anyhow!("no session called {who} — try scope stop --all"))?;
+            .ok_or_else(|| anyhow::anyhow!("no session called {who} — try ironsight stop --all"))?;
         control::kill_session(&target).map_err(|e| anyhow::anyhow!(e))?;
         println!("stopped {target}");
         return Ok(());
@@ -130,7 +130,7 @@ fn main() -> Result<()> {
     if args.first().map(String::as_str) == Some("prune") {
         let closed = control::prune();
         if closed.is_empty() {
-            println!("nothing to tidy up — everything scope started is still running");
+            println!("nothing to tidy up — everything Ironsight started is still running");
         } else {
             println!("closed {}", closed.join(", "));
         }
@@ -170,7 +170,7 @@ fn main() -> Result<()> {
         if args[0] == "adopt" {
             let who = args
                 .get(1)
-                .ok_or_else(|| anyhow::anyhow!("usage: scope adopt <who>"))?;
+                .ok_or_else(|| anyhow::anyhow!("usage: ironsight adopt <who>"))?;
             let idx = app
                 .sessions
                 .iter()
@@ -183,7 +183,7 @@ fn main() -> Result<()> {
         }
         let who = args
             .get(1)
-            .ok_or_else(|| anyhow::anyhow!("usage: scope approve <who> [n]"))?;
+            .ok_or_else(|| anyhow::anyhow!("usage: ironsight approve <who> [n]"))?;
         let n: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(1);
         let idx = app
             .sessions
@@ -199,10 +199,10 @@ fn main() -> Result<()> {
     if args.first().map(String::as_str) == Some("send") {
         let who = args
             .get(1)
-            .ok_or_else(|| anyhow::anyhow!("usage: scope send <who> <text>"))?;
+            .ok_or_else(|| anyhow::anyhow!("usage: ironsight send <who> <text>"))?;
         let text = args[2..].join(" ");
         if text.is_empty() {
-            anyhow::bail!("usage: scope send <who> <text>");
+            anyhow::bail!("usage: ironsight send <who> <text>");
         }
         // A tmux session or pane name works even before the session has written
         // a transcript — which is the case while it is still asking whether the
@@ -239,7 +239,7 @@ fn main() -> Result<()> {
         let pane = app
             .pane_of(&hit)
             .ok_or_else(|| {
-                anyhow::anyhow!("{who} cannot be typed into — scope has no terminal for it")
+                anyhow::anyhow!("{who} cannot be typed into — Ironsight has no terminal for it")
             })?
             .clone();
         control::send_text(&pane.id, &text).map_err(|e| anyhow::anyhow!(e))?;
@@ -300,7 +300,7 @@ fn main() -> Result<()> {
                 return Ok(());
             }
             "-V" | "--version" => {
-                println!("nyfe scope {}", env!("CARGO_PKG_VERSION"));
+                println!("Ironsight {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
             }
             "--live" => only_live = true,
@@ -354,7 +354,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    // One key that always means "back to scope", held for as long as scope is
+    // One key that always means "back to scope", held for as long as Ironsight is
     // here to come back to.
     let way_back = control::hold_way_back();
     let mut term = ratatui::init();
@@ -372,7 +372,7 @@ fn main() -> Result<()> {
 
 /// The one-shot table.
 ///
-/// Writes rather than prints: `scope --once | head` closes the pipe halfway,
+/// Writes rather than prints: `Ironsight --once | head` closes the pipe halfway,
 /// and a tool that panics when someone pipes it into `head` is a tool that
 /// looks broken.
 fn print_once(app: &App) {
@@ -445,7 +445,7 @@ fn truncate(s: &str, n: usize) -> String {
 ///
 /// ctrl+] is the classic escape, but a terminal without the kitty keyboard
 /// protocol sends the raw control byte 0x1D, which crossterm reports as
-/// ctrl+5 — so scope watched for a key press that could never arrive and
+/// ctrl+5 — so Ironsight watched for a key press that could never arrive and
 /// passthrough became a one-way door. F12 is there as a way out that no
 /// keyboard layout can withhold.
 fn leaves_passthrough(code: KeyCode, ctrl: bool) -> bool {
@@ -728,7 +728,7 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     KeyCode::Char('s') => app.run_action('s'),
                     KeyCode::Char('b') => {
                         if app.steer.is_empty() {
-                            app.say("nothing scope can steer is running");
+                            app.say("nothing Ironsight can steer is running");
                         } else {
                             app.open_input(Prompt::Broadcast);
                         }
@@ -770,7 +770,7 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
 
         if let Some(session) = app.attach_to.take() {
             if control::inside_tmux() {
-                // scope stays where it is; only the tmux client moves.
+                // Ironsight stays where it is; only the tmux client moves.
                 match control::attach(&session) {
                     Ok(_) => app.say(format!("switched to {session} — F12 comes back")),
                     Err(e) => app.say(e),

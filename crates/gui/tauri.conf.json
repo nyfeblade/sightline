@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "scope",
+  "productName": "Ironsight",
   "version": "0.4.0",
-  "identifier": "dev.nyfe.scope",
+  "identifier": "dev.nyfe.ironsight",
   "build": {
     "frontendDist": "ui"
   },
@@ -10,7 +10,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "scope",
+        "title": "Ironsight",
         "width": 1280,
         "height": 840,
         "minWidth": 940,

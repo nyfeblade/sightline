@@ -1,12 +1,12 @@
 // The desktop front end. It owns no logic: every command here is a thin
-// translation between the window and `scope-core`, so the app and the terminal
+// translation between the window and `ironsight-core`, so the app and the terminal
 // view cannot answer the same question differently.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use crossterm::event::KeyCode;
-use scope_core::app::App;
-use scope_core::session::Status;
-use scope_core::{app as core_app, bootstrap, control, history, screen, usage};
+use ironsight_core::app::App;
+use ironsight_core::session::Status;
+use ironsight_core::{app as core_app, bootstrap, control, history, screen, usage};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -118,7 +118,7 @@ struct CheckDto {
 struct ReadinessDto {
     ready: bool,
     checks: Vec<CheckDto>,
-    /// what holds sessions here: "tmux", or "scope" where it hosts its own
+    /// what holds sessions here: "tmux", or "Ironsight" where it hosts its own
     backend: String,
 }
 
@@ -194,7 +194,7 @@ struct PastDto {
     open: bool,
 }
 
-fn state_of(s: &scope_core::session::Session) -> (String, Option<String>) {
+fn state_of(s: &ironsight_core::session::Session) -> (String, Option<String>) {
     match s.status() {
         Status::Running(tool) => ("running".into(), Some(tool)),
         Status::Working => ("working".into(), None),
@@ -500,7 +500,7 @@ struct HitDto {
     head: String,
 }
 
-/// Every mention of this across every session scope is watching — the same
+/// Every mention of this across every session Ironsight is watching — the same
 /// search the terminal view does with `/`.
 #[tauri::command]
 fn search(shared: State<Shared>, text: String) -> Vec<HitDto> {
@@ -534,7 +534,7 @@ fn queue(shared: State<Shared>, id: String, text: String) -> Result<usize, Strin
     shared.raw(|app| app.queue_for(&id, &text))
 }
 
-/// Say the same thing to every session scope can reach.
+/// Say the same thing to every session Ironsight can reach.
 #[tauri::command]
 fn broadcast(shared: State<Shared>, text: String) -> usize {
     shared.raw(|app| app.broadcast(&text))
@@ -590,7 +590,7 @@ fn fleet() -> (String, String) {
     (path.to_string_lossy().into_owned(), text)
 }
 
-/// Close everything scope started, or just what has already finished.
+/// Close everything Ironsight started, or just what has already finished.
 #[tauri::command]
 fn close_all() -> Vec<String> {
     control::stop_all()
@@ -716,7 +716,7 @@ fn start(shared: State<Shared>, line: String, name: Option<String>) -> Result<St
     shared.raw(|app| app.start_session(&spec))
 }
 
-/// Bring a conversation somewhere scope can steer it — the one it is showing,
+/// Bring a conversation somewhere Ironsight can steer it — the one it is showing,
 /// or any conversation on the machine by id.
 #[tauri::command]
 fn reopen(shared: State<Shared>, id: String, cwd: String) -> Result<String, String> {
@@ -780,7 +780,7 @@ fn stop(shared: State<Shared>, id: String) -> Result<(), String> {
 /// drive it that way. The window stays where it is.
 #[tauri::command]
 fn open_tui() -> Result<String, String> {
-    control::open_terminal_with("scope")
+    control::open_terminal_with("ironsight")
 }
 
 fn main() {

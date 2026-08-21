@@ -1,10 +1,10 @@
-//! What has to be true before scope can do anything, and putting it right
+//! What has to be true before Ironsight can do anything, and putting it right
 //! where that is possible.
 //!
 //! In a terminal the answer to a missing tool is an error message and a person
 //! who knows what to do with it. An app launched from a dock has neither: the
 //! window opens, nothing works, and there is nowhere for the reason to go. So
-//! the state of the world is a thing scope can be asked about, in the same
+//! the state of the world is a thing Ironsight can be asked about, in the same
 //! shape whichever front end is asking — is this present, what does it mean if
 //! it is not, and what exactly should be typed to fix it.
 
@@ -36,7 +36,7 @@ pub struct Check {
 pub struct Probes {
     pub claude: Option<PathBuf>,
     pub multiplexer: bool,
-    /// scope hosts its own sessions and needs no multiplexer
+    /// Ironsight hosts its own sessions and needs no multiplexer
     pub hosts_own_sessions: bool,
     pub transcripts: bool,
     pub terminal: Option<String>,
@@ -60,7 +60,7 @@ pub fn assess(p: &Probes) -> Vec<Check> {
             name: "Claude Code",
             ok: false,
             weight: Weight::Required,
-            detail: "not on PATH — scope watches and steers it, so there is \
+            detail: "not on PATH — Ironsight watches and steers it, so there is \
                      nothing to do without it"
                 .into(),
             fix: Some("curl -fsSL https://claude.ai/install.sh | bash".into()),
@@ -104,7 +104,7 @@ pub fn assess(p: &Probes) -> Vec<Check> {
             weight: Weight::Optional,
             detail: match &p.terminal {
                 Some(t) => format!("{t} — sessions can be opened in their own window"),
-                None => "none found — sessions open inside scope instead".into(),
+                None => "none found — sessions open inside Ironsight instead".into(),
             },
             fix: None,
         });

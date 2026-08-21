@@ -1,8 +1,8 @@
-# scope
+# Ironsight
 
 **Never miss the Claude Code session that is waiting on you.**
 
-![scope](docs/demo.gif)
+![Ironsight](docs/demo.gif)
 
 The same thing as a desktop app, for anyone who would rather click than type:
 
@@ -10,7 +10,7 @@ The same thing as a desktop app, for anyone who would rather click than type:
 
 Run three or four Claude Code sessions at once and the bottleneck is never the
 model — it is the session sitting on a permission prompt in a window you are not
-looking at. scope watches every session on the machine, puts the blocked one at
+looking at. Ironsight watches every session on the machine, puts the blocked one at
 the top, and lets you answer it without leaving the window. Then, when you want
 the detail, it has everything the transcripts know: every file touched, every
 diff, every subagent, every error.
@@ -20,25 +20,25 @@ No hooks to install, no server, no configuration, nothing leaves the machine.
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/nyfeblade/nyfe-scope/master/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/nyfeblade/ironsight/master/install.sh | sh
 ```
 
 Or, if you would rather not pipe a script into a shell — it is short, read it
-first — grab a binary from [releases](https://github.com/nyfeblade/nyfe-scope/releases),
+first — grab a binary from [releases](https://github.com/nyfeblade/ironsight/releases),
 or build it:
 
 ```sh
-cargo install --git https://github.com/nyfeblade/nyfe-scope
+cargo install --git https://github.com/nyfeblade/ironsight
 ```
 
 As a desktop app on Linux, one file, nothing installed:
 
 ```sh
-scripts/appimage.sh            # builds dist/scope-<version>-x86_64.AppImage
+scripts/appimage.sh            # builds dist/ironsight-<version>-x86_64.AppImage
 ```
 
 Clicking it opens the app. The same file is also the terminal view —
-`./scope-0.3.0-x86_64.AppImage --tui` runs it in the shell you started it from,
+`./ironsight-0.4.0-x86_64.AppImage --tui` runs it in the shell you started it from,
 and any other argument goes there too, so `--once` and `doctor` work from it as
 well. `scripts/desktop-entry.sh` puts it in your application menu instead, if you
 would rather run it from a checkout. The app needs webkit2gtk on the host, which
@@ -47,17 +47,17 @@ a normal desktop already has.
 On Windows:
 
 ```powershell
-irm https://raw.githubusercontent.com/nyfeblade/nyfe-scope/master/install.ps1 | iex
+irm https://raw.githubusercontent.com/nyfeblade/ironsight/master/install.ps1 | iex
 ```
 
-Then run `scope`. Linux, macOS and Windows. On Linux and macOS tmux is optional,
+Then run `ironsight`. Linux, macOS and Windows. On Linux and macOS tmux is optional,
 and only needed to steer sessions rather than watch them.
 
 ### What runs where
 
 The terminal view runs on all three. Linux and macOS steer sessions through
-tmux, so a session outlives scope; Windows has no tmux, so scope hosts the
-session itself and it ends when scope does.
+tmux, so a session outlives Ironsight; Windows has no tmux, so Ironsight hosts the
+session itself and it ends when Ironsight does.
 
 The desktop app is built and tested on Linux. It compiles for macOS and Windows
 and the bundle knows how to make a `.app`, a `.dmg` and an installer, but no
@@ -76,7 +76,7 @@ inventing a number several times too large.
 ![approvals](docs/approvals.png)
 
 A session blocked on a prompt is the only state that cannot make progress on its
-own, so scope treats it as the most important thing on screen: blocked sessions
+own, so Ironsight treats it as the most important thing on screen: blocked sessions
 sort to the top, the header counts them, and the question with its options
 appears at the bottom of the window wherever you are.
 
@@ -92,15 +92,15 @@ on internals that can change.
 From a script, without opening the UI:
 
 ```sh
-scope waiting              # what is blocked, and what it is asking
-scope approve api-7c       # answer it (option 1 by default)
-scope adopt nyfe-32        # (re)open a conversation in tmux so it can be steered
-scope prune                # close scope sessions whose process has exited
+ironsight waiting              # what is blocked, and what it is asking
+ironsight approve api-7c       # answer it (option 1 by default)
+ironsight adopt nyfe-32        # (re)open a conversation in tmux so it can be steered
+ironsight prune                # close Ironsight sessions whose process has exited
 ```
 
 ## Managing sessions
 
-Press `enter` on a session and scope shows everything you can do to it, with the
+Press `enter` on a session and Ironsight shows everything you can do to it, with the
 reason spelled out for anything it cannot do — so nothing has to be memorised
 and no key is a dead end.
 
@@ -123,21 +123,21 @@ same actions have direct keys once you know them:
 | `R` | resume any conversation on this machine, however old |
 | `W` | start one on its own branch in its own checkout |
 | `M` `X` | merge that branch back · remove the checkout |
-| `x` `P` | close the session · tidy up finished scope sessions |
+| `x` `P` | close the session · tidy up finished Ironsight sessions |
 | `F2` | rename the selected session |
-| `Z` | close everything scope started (each one reopens with `A`) |
+| `Z` | close everything Ironsight started (each one reopens with `A`) |
 | `L` | launch a whole fleet from a config file |
 
-`F12` always means back to scope: out of passthrough, out of a session shown
+`F12` always means back to Ironsight: out of passthrough, out of a session shown
 full-screen, and out of one opened in its own window. The session's own status
 line says so while you are in it. tmux's prefix-then-letter still works, but
 knowing tmux should not be the price of looking at a session.
 
-The key is held for as long as scope is running and given back when it exits,
+The key is held for as long as Ironsight is running and given back when it exits,
 and it is only taken when nothing else has it — tmux key tables belong to the
-whole server, so a key you have already bound stays yours and scope tells you
+whole server, so a key you have already bound stays yours and Ironsight tells you
 the tmux way instead. If something outside tmux eats F12 first, which a
-drop-down terminal often does, name another one: `SCOPE_WAY_BACK=F9 scope`.
+drop-down terminal often does, name another one: `IRONSIGHT_WAY_BACK=F9 Ironsight`.
 
 Sessions started outside tmux are fully visible but cannot be typed into; they
 are marked, so it is always clear which is which. `A` moves one: it resumes the
@@ -151,7 +151,7 @@ disappears — `O` does the same for any session on demand.
 The session list is a window on now — what is running, and what ran recently
 enough to still matter. `R` answers the other question: every conversation on
 this machine, whenever it happened. Type to filter across titles and folders,
-`enter` brings one back inside scope, and the ones already open are marked so
+`enter` brings one back inside Ironsight, and the ones already open are marked so
 you do not start a second client on the same conversation.
 
 ![resume](docs/resume.png)
@@ -171,7 +171,7 @@ own worktree.
 
 ### Other agents
 
-Claude Code is what scope grew around, and everything it knows about a session's
+Claude Code is what Ironsight grew around, and everything it knows about a session's
 insides — the feed, files, cost, subagents, plans — comes from the transcript
 and registry that only Claude Code writes. What generalises is the part that made
 steering work at all: a session is a program in a terminal, and a terminal can be
@@ -196,7 +196,7 @@ command. `enter` skips.
 
 `F2` renames the selected session. A running one is asked to rename itself —
 `/rename` is a real command, so its own header, the registry and the transcript
-all stay in step. One that has stopped has nobody to ask, so scope writes the
+all stay in step. One that has stopped has nobody to ask, so Ironsight writes the
 same record Claude Code writes, and the name is there when the conversation is
 reopened.
 
@@ -208,32 +208,32 @@ a turn in flight, and that is the only case that asks twice.
 
 `A` is also the way back into a session that has stopped, whether you stopped it,
 it crashed, or its terminal closed: the transcript is on disk, so it reopens in
-tmux with its history and picks up where it left off. Anything scope can see it
+tmux with its history and picks up where it left off. Anything Ironsight can see it
 can get back to.
 
 Because of that, nothing is closed on a guess. `P` tidies up only sessions with
 no Claude Code process left anywhere in them — a pane sitting at a shell prompt
 while a command runs below it is still working, and closing it would throw away a
-turn nobody asked to end. When scope cannot tell, it leaves the session alone and
+turn nobody asked to end. When Ironsight cannot tell, it leaves the session alone and
 says so.
 
 ### On Windows
 
 Windows has no tmux, and no way to reach into a console another program owns, so
-scope is the terminal there: `n` starts Claude Code on a pseudo-console scope
+Ironsight is the terminal there: `n` starts Claude Code on a pseudo-console Ironsight
 owns, and everything else — send, queue, interrupt, passthrough, approvals, the
-mirror — works the same way it does on Unix, against the screen scope keeps of
+mirror — works the same way it does on Unix, against the screen Ironsight keeps of
 what the session drew.
 
 Two differences follow from that, and both are visible in the UI rather than
 hidden:
 
-- scope can only steer sessions it started. One started in another window is
-  still watched in full; `A` reopens that conversation inside scope, which is
+- Ironsight can only steer sessions it started. One started in another window is
+  still watched in full; `A` reopens that conversation inside Ironsight, which is
   the way to take control of it.
-- A hosted session ends when scope does, because scope is holding it. `q` says
+- A hosted session ends when Ironsight does, because Ironsight is holding it. `q` says
   how many would stop and waits for a second `q`, and `A` brings any of them
-  back afterwards. On Unix tmux holds the session instead, so it outlives scope.
+  back afterwards. On Unix tmux holds the session instead, so it outlives Ironsight.
 
 `a` shows a session full-screen: on Unix by attaching to tmux, on Windows by
 drawing the mirror with every key going to the session — `ctrl+]` or `F12`
@@ -246,14 +246,14 @@ session on a fresh branch in its own git worktree, so each edits its own files
 and commits its own history while your working tree stays untouched. The tree
 pane shows how far ahead the branch is, `M` merges it back with `--no-ff`, `X`
 removes the checkout. Worktrees live under
-`~/.local/share/nyfe-scope/worktrees/`, well away from the repository.
+`~/.local/share/ironsight/worktrees/`, well away from the repository.
 
 Merging refuses rather than guesses: if the repository is not on the base branch
 it says so and does nothing, and a conflict is reported for you to resolve.
 
 ### Fleets
 
-`~/.config/nyfe-scope/fleet.json` describes sessions to start together, and `L`
+`~/.config/ironsight/fleet.json` describes sessions to start together, and `L`
 launches all of them:
 
 ```json
@@ -329,17 +329,17 @@ Two files Claude Code already writes.
 `CLAUDE_CONFIG_DIR` is honoured; `--root` points at transcripts anywhere.
 
 Steering needs the terminal the session is in, and that is the one part with two
-implementations: tmux on Unix, a pseudo-console scope owns on Windows. Both
+implementations: tmux on Unix, a pseudo-console Ironsight owns on Windows. Both
 answer the same two questions — what is on this session's screen, and take this
 key — so everything above them is written once.
 
-Both formats are Claude Code's own and undocumented, so they can change. scope
+Both formats are Claude Code's own and undocumented, so they can change. Ironsight
 parses defensively and says so in the footer when it meets a version it was not
 built against or a transcript it cannot read, rather than quietly showing
 figures that are wrong. It was built against Claude Code 2.1.x.
 
 Read that as the maintenance promise it is: a Claude Code release can move a
-field, rename a status or redraw a prompt, and when that happens scope loses a
+field, rename a status or redraw a prompt, and when that happens Ironsight loses a
 detail — a status that reads wrong, a prompt it no longer recognises — rather
 than inventing one. If you meet that, open an issue with your Claude Code
 version; the fix is usually a few lines. The same is true of the pane reading
@@ -351,7 +351,7 @@ drawn on screen.
 The desktop app and the terminal view are two front ends over one engine. Opening
 the app starts whatever holds sessions — the tmux server on Unix — before the
 window is drawn, so the first thing you click does not wait for it, and it says
-plainly what is missing rather than failing quietly: `scope doctor` prints the
+plainly what is missing rather than failing quietly: `ironsight doctor` prints the
 same checks in a terminal.
 
 Neither front end is allowed to grow logic the other needs. `crates/core` holds
@@ -361,7 +361,7 @@ conversation is one implementation with two callers.
 
 ## Where it is going
 
-`docs/PLATFORM.md` describes the layers scope could grow — events, lineage,
+`docs/PLATFORM.md` describes the layers Ironsight could grow — events, lineage,
 verification, briefing, supervision — what already exists, and the rule that
 keeps each one useful on its own. `docs/BUILD.md` is the working spec for each:
 what it does, where it lives, and what would have to be true for it to count as
