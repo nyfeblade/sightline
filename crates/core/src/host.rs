@@ -601,9 +601,17 @@ mod tests {
     #[test]
     fn a_script_shim_runs_through_the_interpreter() {
         // Only the resolved extension decides this, so it can be checked
-        // without a Windows machine to run it on.
+        // without a Windows machine to run it on. What comes back is a full
+        // path where the program was found — which on Windows it is — so the
+        // name is what this asserts, not the string it was handed.
         let cmd = command(&["cmd.exe".into(), "/c".into()], "");
-        assert_eq!(cmd.get_argv()[0], "cmd.exe");
+        let program = PathBuf::from(cmd.get_argv()[0].to_string_lossy().to_string());
+        assert_eq!(
+            program
+                .file_name()
+                .map(|n| n.to_string_lossy().to_lowercase()),
+            Some("cmd.exe".to_string())
+        );
     }
 
     #[test]
@@ -645,6 +653,10 @@ mod tests {
         let dir = std::env::temp_dir().join("scope-host-test");
         std::fs::create_dir_all(&dir).unwrap();
         let fake = dir.join("claude");
+        // The prompt marker goes in as itself rather than as a `\u` escape:
+        // macOS ships bash 3.2, whose printf does not know that escape, so the
+        // fixture drew a literal backslash-u and the test looked for a prompt
+        // that was never on screen.
         std::fs::write(
             &fake,
             "#!/usr/bin/env bash\n\
@@ -653,7 +665,7 @@ mod tests {
                printf 'you said: %s\\n' \"$line\"\n\
                if [ \"$line\" = ask ]; then\n\
                  printf 'Do you want to proceed?\\n'\n\
-                 printf '\\u276f 1. Yes\\n'\n\
+                 printf '\u{276f} 1. Yes\\n'\n\
                  printf '  2. No\\n'\n\
                fi\n\
              done\n",

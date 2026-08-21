@@ -2421,10 +2421,14 @@ mod tests {
 
     #[test]
     fn expands_home_in_a_typed_path() {
-        let home = dirs_home().to_string_lossy().into_owned();
-        assert_eq!(expand("~/api"), format!("{home}/api"));
-        assert_eq!(expand("~"), home);
-        assert_eq!(expand("/tmp/x"), "/tmp/x");
+        // Built the same way the code builds it: a path separator is the
+        // platform's, and asserting a forward slash only passes on Unix.
+        assert_eq!(
+            PathBuf::from(expand("~/api")),
+            dirs_home().join("api"),
+            "~ is home, joined the way this machine joins paths"
+        );
+        assert_eq!(PathBuf::from(expand("~")), dirs_home());
         assert_eq!(expand("relative/path"), "relative/path");
         // Not a home reference, so it is left alone.
         assert_eq!(expand("~notauser/x"), "~notauser/x");

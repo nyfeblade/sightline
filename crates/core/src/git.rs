@@ -247,8 +247,26 @@ mod tests {
         run(&dir, &["init", "-q", "-b", "main"]);
         std::fs::write(dir.join("a.txt"), "one\n").unwrap();
         run(&dir, &["add", "."]);
-        run(&dir, &["commit", "-qm", "first"]);
+        commit(&dir, "first");
         dir
+    }
+
+    /// Commit with an identity of the test's own. A machine that has never had
+    /// git configured — every fresh CI runner — refuses to commit otherwise,
+    /// and then every assertion after it is about an empty repository.
+    fn commit(dir: &std::path::Path, message: &str) {
+        run(
+            dir,
+            &[
+                "-c",
+                "user.email=test@scope.invalid",
+                "-c",
+                "user.name=scope tests",
+                "commit",
+                "-qm",
+                message,
+            ],
+        );
     }
 
     #[test]
@@ -264,7 +282,7 @@ mod tests {
 
         std::fs::write(tree.join("b.txt"), "two\n").unwrap();
         run(&tree, &["add", "."]);
-        run(&tree, &["commit", "-qm", "work from the session"]);
+        commit(&tree, "work from the session");
 
         assert_eq!(
             ahead_behind(&tree, "main"),
