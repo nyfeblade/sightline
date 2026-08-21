@@ -100,6 +100,7 @@ function drawAgents() {
     li.addEventListener("click", () => {
       selected = s.id;
       draw();
+      soon();
     });
     list.append(li);
   }
@@ -335,6 +336,7 @@ async function drawMirror(id) {
       span.textContent = run.text;
       if (run.fg) span.style.color = run.fg;
       if (run.bg) span.style.background = run.bg;
+      if (run.dim) span.style.opacity = ".62";
       if (run.italic) span.style.fontStyle = "italic";
       if (run.underline) span.style.textDecoration = "underline";
       if (run.inverse) {
@@ -385,7 +387,10 @@ function drawDetail(s) {
   fact(box, "model", s.model || "—");
   fact(box, "branch", s.branch || "—");
   fact(box, "held in", s.pane || "not steerable");
-  fact(box, "age", age(s.age_secs));
+  // Two different questions, and reporting one of them as "age" made a busy
+  // session look like it kept restarting.
+  fact(box, "started", s.started_secs >= 0 ? `${age(s.started_secs)} ago` : "—");
+  fact(box, "last active", `${age(s.age_secs)} ago`);
 
   box.append(make("div", "group", "CONTEXT"));
   const track = make("div", "bar-line");
@@ -395,8 +400,11 @@ function drawDetail(s) {
   box.append(track);
   box.append(make("div", "sub", s.window ? `${tokens(s.context)} of ${tokens(s.window)}` : "—"));
 
-  box.append(make("div", "group", "MACHINE"));
-  fact(box, "processor", s.cpu === null || s.cpu === undefined ? "—" : `${s.cpu.toFixed(1)}%`);
+  // Not the machine's numbers — what this one session is costing it. The
+  // heading used to say MACHINE, which invited exactly the wrong reading.
+  box.append(make("div", "group", "THIS SESSION IS USING"));
+  const share = s.cpu === null || s.cpu === undefined ? null : s.cpu / (s.cores || 1);
+  fact(box, "processor", share === null ? "—" : `${share.toFixed(1)}% of ${s.cores} cores`);
   fact(box, "memory", s.memory ? bytes(s.memory) : "—");
 
   if (s.tools.length) {
@@ -511,9 +519,7 @@ async function draw() {
   drawAgents();
   drawDetail(s);
   drawAsk();
-  if (s) {
-    await painters[pane](s);
-  } else {
+  if (!s) {
     clear(el("pane"));
     el("pane").append(empty("no sessions yet — start one"));
   }
@@ -533,7 +539,9 @@ el("panes").addEventListener("click", (e) => {
   for (const other of el("panes").querySelectorAll(".tab")) {
     other.classList.toggle("is-on", other === tab);
   }
+  clear(el("pane"));
   draw();
+  soon();
 });
 
 el("filter").addEventListener("click", () => {
@@ -556,12 +564,17 @@ el("tui").addEventListener("click", async () => {
 
 el("composer").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const text = el("message").value.trim();
+  const box = el("message");
+  const text = box.value.trim();
   if (!text || !selected) return;
   try {
     await invoke("send", { id: selected, text });
-    el("message").value = "";
+    box.value = "";
     say("sent");
+    // Stay where you are, the way a prompt does: sending one message is
+    // usually the start of a conversation rather than the end of one.
+    box.focus();
+    soon();
   } catch (err) {
     say(String(err));
   }
@@ -656,15 +669,13 @@ el("pane").addEventListener("blur", () => {
   typing = false;
   el("pane").classList.remove("typing");
 });
-el("pane").addEventListener("keydown", async (e) => {
+el("pane").addEventListener("keydown", (e) => {
   if (!typing || !selected) return;
   e.preventDefault();
-  try {
-    await invoke("key", { id: selected, key: e.key, ctrl: e.ctrlKey });
-  } catch (err) {
-    say(String(err));
-  }
-  drawMirror(selected);
+  // Send and move on. Waiting for the round trip, and then for a redraw, made
+  // every key cost the sum of both — which is what "delayed" was.
+  invoke("key", { id: selected, key: e.key, ctrl: e.ctrlKey }).catch((err) => say(String(err)));
+  soon();
 });
 
 // y and n answer whatever is waiting, as they do in the terminal view.
@@ -675,9 +686,74 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "n" && answers.children[1]) answers.children[1].click();
 });
 
+// ── the accent ────────────────────────────────────────────────────────────
+// A session lets you pick its colours; so does this. The accent is the only
+// colour that carries meaning here, so it is the only one worth choosing.
+const ACCENTS = ["#d99a4e", "#c08542", "#6fbf73", "#6aa3c8", "#a98bc7", "#d3675a", "#c9cdd6"];
+
+function dim(hex, amount) {
+  const n = parseInt(hex.slice(1), 16);
+  const mix = (c) => Math.round(c * amount);
+  return `#${[(n >> 16) & 255, (n >> 8) & 255, n & 255].map((c) => mix(c).toString(16).padStart(2, "0")).join("")}`;
+}
+
+function useAccent(hex) {
+  document.documentElement.style.setProperty("--gold", hex);
+  document.documentElement.style.setProperty("--gold-dim", dim(hex, 0.6));
+  localStorage.setItem("accent", hex);
+  for (const s of el("swatches").children) s.classList.toggle("is-on", s.dataset.hex === hex);
+}
+
+function drawSwatches() {
+  const box = el("swatches");
+  clear(box);
+  for (const hex of ACCENTS) {
+    const swatch = make("button", "swatch");
+    swatch.dataset.hex = hex;
+    swatch.style.background = hex;
+    swatch.addEventListener("click", () => useAccent(hex));
+    box.append(swatch);
+  }
+}
+
+el("theme").addEventListener("click", () => {
+  drawSwatches();
+  useAccent(localStorage.getItem("accent") || ACCENTS[0]);
+  el("colours").showModal();
+});
+el("custom-accent").addEventListener("input", (e) => useAccent(e.target.value));
+el("colours-close").addEventListener("click", () => el("colours").close());
+useAccent(localStorage.getItem("accent") || ACCENTS[0]);
+
 el("hint").textContent = "y accept · n decline · drag to reorder · click the session to type into it";
 wireDragging();
+
+// Two rhythms. Everything around the edges — the list, the counts, the detail —
+// changes slowly and is redrawn slowly. The pane in the middle is whatever you
+// are actually watching, and when that is a session's own screen it has to keep
+// up with the session.
+let paneSoon = null;
+function soon() {
+  if (paneSoon) return;
+  paneSoon = setTimeout(async () => {
+    paneSoon = null;
+    const s = current();
+    if (s) await painters[pane](s);
+  }, 16);
+}
+
+async function paneTick() {
+  const s = current();
+  if (s) {
+    try {
+      await painters[pane](s);
+    } catch (e) {
+      say(String(e));
+    }
+  }
+  setTimeout(paneTick, pane === "mirror" ? (typing ? 90 : 160) : 500);
+}
+
 draw();
-// A session's own screen moves; a transcript does not need twenty looks a
-// second, so the pace follows what is being watched.
-setInterval(() => draw(), 400);
+paneTick();
+setInterval(draw, 900);

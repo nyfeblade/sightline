@@ -8,29 +8,93 @@ use scope_core::app::App;
 use scope_core::session::Status;
 use scope_core::{app as core_app, bootstrap, control, history, screen, usage};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::State;
 
-struct Shared(Mutex<App>, Mutex<usage::Meter>);
+/// What the window shares with the engine.
+///
+/// The lock matters more than it looks. Catching up — pumping every transcript,
+/// reading the registry, capturing every steerable pane — used to happen at the
+/// top of *every* command, so a keystroke queued behind three hundred megabytes
+/// of transcript and a dozen tmux calls before it could be sent. Now catching
+/// up is a thing that happens on its own rhythm, and typing is allowed to be
+/// nothing more than a write to a pane.
+struct Shared {
+    app: Mutex<App>,
+    meter: Mutex<usage::Meter>,
+    /// session id to the pane it lives in, kept by the refresh so that typing
+    /// never has to ask the engine anything
+    panes: Mutex<HashMap<String, String>>,
+    caught_up: Mutex<Instant>,
+}
+
+/// How stale the engine's view may be. Fast enough that nothing looks frozen,
+/// slow enough that it is not re-read for every frame of a moving screen.
+const CATCH_UP: Duration = Duration::from_millis(250);
 
 impl Shared {
-    /// Every command starts by catching up, exactly as the terminal view's tick
-    /// does. A poisoned lock is not worth taking the window down for.
-    fn with<T>(&self, f: impl FnOnce(&mut App) -> T) -> T {
-        let mut app = match self.0.lock() {
+    fn new(app: App) -> Self {
+        Shared {
+            app: Mutex::new(app),
+            meter: Mutex::new(usage::Meter::default()),
+            panes: Mutex::new(HashMap::new()),
+            caught_up: Mutex::new(Instant::now() - CATCH_UP),
+        }
+    }
+
+    /// The engine, without making it catch up first. A poisoned lock is not
+    /// worth taking the window down for.
+    fn raw<T>(&self, f: impl FnOnce(&mut App) -> T) -> T {
+        let mut app = match self.app.lock() {
             Ok(a) => a,
             Err(e) => e.into_inner(),
         };
-        app.refresh();
-        app.probe();
         f(&mut app)
+    }
+
+    /// The engine, caught up — at most as often as that is worth doing.
+    fn fresh<T>(&self, f: impl FnOnce(&mut App) -> T) -> T {
+        let mut app = match self.app.lock() {
+            Ok(a) => a,
+            Err(e) => e.into_inner(),
+        };
+        let mut at = match self.caught_up.lock() {
+            Ok(t) => t,
+            Err(e) => e.into_inner(),
+        };
+        if at.elapsed() >= CATCH_UP {
+            app.refresh();
+            app.probe();
+            *at = Instant::now();
+            let mut panes = match self.panes.lock() {
+                Ok(p) => p,
+                Err(e) => e.into_inner(),
+            };
+            panes.clear();
+            for s in &app.sessions {
+                if let Some(pane) = app.pane_of(&s.id) {
+                    panes.insert(s.id.clone(), pane.id.clone());
+                }
+            }
+        }
+        f(&mut app)
+    }
+
+    /// Where a session lives, without touching the engine at all. This is the
+    /// whole reason a keystroke is fast.
+    fn pane(&self, id: &str) -> Option<String> {
+        match self.panes.lock() {
+            Ok(p) => p.get(id).cloned(),
+            Err(e) => e.into_inner().get(id).cloned(),
+        }
     }
 
     /// Run something against one session by id, leaving the selection where it
     /// was. The engine is written around a cursor; the window is not.
     fn on<T>(&self, id: &str, f: impl FnOnce(&mut App) -> T) -> Option<T> {
-        self.with(|app| {
+        self.raw(|app| {
             let was = app.sel;
             let found = app.sessions.iter().position(|s| s.id == id)?;
             app.sel = found;
@@ -68,7 +132,10 @@ struct SessionDto {
     cwd: String,
     branch: String,
     model: String,
+    /// seconds since it last did anything
     age_secs: i64,
+    /// seconds since it started, which is a different question
+    started_secs: i64,
     context: u64,
     window: u64,
     output: u64,
@@ -87,6 +154,9 @@ struct SessionDto {
     latency: (i64, i64),
     /// share of one processor, once there have been two readings to compare
     cpu: Option<f64>,
+    /// how many processors there are, so a share of one can be read as a share
+    /// of the machine
+    cores: f64,
     /// resident bytes across the session's whole process tree
     memory: u64,
     /// the tools it has reached for, most used first
@@ -154,12 +224,23 @@ fn readiness() -> ReadinessDto {
 
 #[tauri::command]
 fn sessions(shared: State<Shared>) -> Vec<SessionDto> {
-    let table = usage::table();
-    let mut meter = match shared.1.lock() {
+    let mut meter = match shared.meter.lock() {
         Ok(m) => m,
         Err(e) => e.into_inner(),
     };
-    shared.with(|app| {
+    let pids: Vec<i64> = shared.fresh(|app| {
+        app.sessions
+            .iter()
+            .filter_map(|s| {
+                s.live
+                    .as_ref()
+                    .map(|l| l.pid)
+                    .or_else(|| app.pane_of(&s.id).map(|p| p.pid))
+            })
+            .collect()
+    });
+    let used_by = meter.measure_all(&pids);
+    shared.raw(|app| {
         app.sessions
             .iter()
             .map(|s| {
@@ -173,11 +254,7 @@ fn sessions(shared: State<Shared>) -> Vec<SessionDto> {
                     .map(|l| l.pid)
                     .or_else(|| app.pane_of(&s.id).map(|p| p.pid))
                     .unwrap_or(0);
-                let used = if pid > 0 {
-                    meter.measure(pid, &table)
-                } else {
-                    usage::Usage::default()
-                };
+                let used = used_by.get(&pid).copied().unwrap_or_default();
                 let mut tools: Vec<(&String, &usize)> = s.tools.iter().collect();
                 tools.sort_by(|a, b| b.1.cmp(a.1));
                 SessionDto {
@@ -189,6 +266,10 @@ fn sessions(shared: State<Shared>) -> Vec<SessionDto> {
                     branch: s.branch.clone(),
                     model: s.model.clone(),
                     age_secs: s.age_secs(),
+                    started_secs: s
+                        .started
+                        .map(|t| (chrono::Utc::now() - t).num_seconds())
+                        .unwrap_or(-1),
                     context: s.totals.ctx,
                     window: s.window(),
                     output: s.totals.output,
@@ -205,6 +286,7 @@ fn sessions(shared: State<Shared>) -> Vec<SessionDto> {
                     branch_ahead: None,
                     latency: s.latency(),
                     cpu: used.cpu,
+                    cores: usage::cores(),
                     memory: used.memory,
                     tools: tools.into_iter().take(6).map(|(n, _)| n.clone()).collect(),
                     steerable: pane.is_some(),
@@ -406,7 +488,7 @@ fn errors(shared: State<Shared>, id: String) -> Vec<EventDto> {
 /// A session's screen, drawn as cells rather than handed over as a terminal.
 #[tauri::command]
 fn frame(shared: State<Shared>, id: String, cols: u16, rows: u16) -> Option<screen::Frame> {
-    let pane = shared.with(|app| app.pane_of(&id).map(|p| p.id.clone()))?;
+    let pane = shared.pane(&id)?;
     control::frame(&pane, cols, rows)
 }
 
@@ -438,7 +520,7 @@ fn key(shared: State<Shared>, id: String, key: String, ctrl: bool) -> Result<(),
         }
     };
     let pane = shared
-        .with(|app| app.pane_of(&id).map(|p| p.id.clone()))
+        .pane(&id)
         .ok_or("that session cannot be typed into")?;
     control::forward_key(&pane, code, ctrl)
 }
@@ -447,7 +529,7 @@ fn key(shared: State<Shared>, id: String, key: String, ctrl: bool) -> Result<(),
 #[tauri::command]
 fn window(shared: State<Shared>, id: String) -> Result<String, String> {
     let pane = shared
-        .with(|app| app.pane_of(&id).map(|p| p.session.clone()))
+        .raw(|app| app.pane_of(&id).map(|p| p.session.clone()))
         .ok_or("scope has no terminal for that session")?;
     control::open_window(&pane)
 }
@@ -456,7 +538,7 @@ fn window(shared: State<Shared>, id: String) -> Result<String, String> {
 /// it.
 #[tauri::command]
 fn release_frame(shared: State<Shared>, id: String) {
-    if let Some(pane) = shared.with(|app| app.pane_of(&id).map(|p| p.id.clone())) {
+    if let Some(pane) = shared.pane(&id) {
         control::release_frame(&pane);
     }
 }
@@ -464,7 +546,7 @@ fn release_frame(shared: State<Shared>, id: String) {
 /// What a session's terminal is showing, as plain text.
 #[tauri::command]
 fn screen(shared: State<Shared>, id: String) -> Option<String> {
-    shared.with(|app| app.mirror.get(&id).cloned())
+    shared.raw(|app| app.mirror.get(&id).cloned())
 }
 
 #[tauri::command]
@@ -504,7 +586,7 @@ fn start(shared: State<Shared>, line: String, name: Option<String>) -> Result<St
     if let Some(n) = name.filter(|n| !n.trim().is_empty()) {
         spec.name = Some(n);
     }
-    shared.with(|app| app.start_session(&spec))
+    shared.raw(|app| app.start_session(&spec))
 }
 
 /// Bring a conversation somewhere scope can steer it — the one it is showing,
@@ -512,7 +594,7 @@ fn start(shared: State<Shared>, line: String, name: Option<String>) -> Result<St
 #[tauri::command]
 fn reopen(shared: State<Shared>, id: String, cwd: String) -> Result<String, String> {
     bootstrap::ensure_backend()?;
-    shared.with(|app| {
+    shared.raw(|app| {
         let original = app
             .sessions
             .iter()
@@ -527,7 +609,7 @@ fn reopen(shared: State<Shared>, id: String, cwd: String) -> Result<String, Stri
 #[tauri::command]
 fn past(shared: State<Shared>) -> Vec<PastDto> {
     let all = history::scan(&core_app::default_root());
-    shared.with(|app| {
+    shared.raw(|app| {
         all.into_iter()
             .map(|p| PastDto {
                 open: app
@@ -548,13 +630,13 @@ fn past(shared: State<Shared>) -> Vec<PastDto> {
 /// name written to its transcript, which is where a name lives.
 #[tauri::command]
 fn rename(shared: State<Shared>, id: String, name: String) -> Result<(), String> {
-    shared.with(|app| app.rename(&id, &name))
+    shared.raw(|app| app.rename(&id, &name))
 }
 
 /// Put the list in the order it was dragged into.
 #[tauri::command]
 fn reorder(shared: State<Shared>, ids: Vec<String>) {
-    shared.with(|app| app.reorder(ids));
+    shared.raw(|app| app.reorder(ids));
 }
 
 #[tauri::command]
@@ -588,7 +670,7 @@ fn main() {
         false,
     );
     tauri::Builder::default()
-        .manage(Shared(Mutex::new(app), Mutex::new(usage::Meter::default())))
+        .manage(Shared::new(app))
         .invoke_handler(tauri::generate_handler![
             readiness,
             sessions,

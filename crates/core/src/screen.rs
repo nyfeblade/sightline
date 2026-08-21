@@ -21,6 +21,7 @@ pub struct Run {
     pub fg: Option<String>,
     pub bg: Option<String>,
     pub bold: bool,
+    pub dim: bool,
     pub italic: bool,
     pub underline: bool,
     pub inverse: bool,
@@ -31,6 +32,7 @@ impl Run {
         self.fg == other.fg
             && self.bg == other.bg
             && self.bold == other.bold
+            && self.dim == other.dim
             && self.italic == other.italic
             && self.underline == other.underline
             && self.inverse == other.inverse
@@ -97,6 +99,7 @@ pub fn frame_of(screen: &vt100::Screen) -> Frame {
                 fg: css(cell.fgcolor()),
                 bg: css(cell.bgcolor()),
                 bold: cell.bold(),
+                dim: cell.dim(),
                 italic: cell.italic(),
                 underline: cell.underline(),
                 inverse: cell.inverse(),
@@ -155,6 +158,12 @@ mod tests {
         assert!(line[0].bold);
         assert_eq!(line[1].text, " ok", "same style, so one run");
         assert!(!line[1].bold);
+    }
+
+    #[test]
+    fn keeps_the_faint_text_a_session_writes_its_hints_in() {
+        let f = frame_from_render(b"\x1b[2mesc to interrupt", 30, 1);
+        assert!(f.lines[0][0].dim, "dim is a colour decision, not noise");
     }
 
     #[test]

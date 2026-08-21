@@ -25,6 +25,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 scope-core = { path = "../core" }
 crossterm.workspace = true
+chrono.workspace = true
 tauri = { version = "2", features = [] }
 serde.workspace = true
 serde_json.workspace = true

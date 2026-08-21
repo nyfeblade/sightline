@@ -17,10 +17,19 @@ use std::time::Instant;
 pub struct Usage {
     /// share of one processor, as a percentage; None until measurable
     pub cpu: Option<f64>,
-    /// resident bytes across the tree
+    /// bytes the tree is actually costing the machine — shared pages counted
+    /// once between the processes sharing them, not once each
     pub memory: u64,
     /// how many processes are in the tree
     pub processes: usize,
+}
+
+/// How many processors the machine has, so a share of one can be turned into a
+/// share of the machine — which is the number every system monitor shows.
+pub fn cores() -> f64 {
+    std::thread::available_parallelism()
+        .map(|n| n.get() as f64)
+        .unwrap_or(1.0)
 }
 
 /// One process, as the machine describes it.
@@ -37,7 +46,15 @@ pub struct Proc {
 #[derive(Default)]
 pub struct Meter {
     last: HashMap<i64, (u64, Instant)>,
+    /// what was last reported, so a window drawing itself several times a
+    /// second does not read every process on the machine each time
+    cached: HashMap<i64, Usage>,
+    taken: Option<Instant>,
 }
+
+/// How stale a reading may be before the machine is asked again. Processor and
+/// memory do not move fast enough to be worth a procfs walk per frame.
+const FRESH_FOR: std::time::Duration = std::time::Duration::from_millis(900);
 
 /// Ticks per second, which is what /proc counts processor time in.
 fn hz() -> f64 {
@@ -49,7 +66,13 @@ impl Meter {
     pub fn measure(&mut self, root: i64, table: &[Proc]) -> Usage {
         let tree = descendants(root, table);
         let ticks: u64 = tree.iter().map(|p| p.ticks).sum();
-        let memory: u64 = tree.iter().map(|p| p.rss).sum();
+        // Proportional set size where the machine offers it. Resident size
+        // summed over a tree counts every shared page once per process, which
+        // reported a Claude Code session as using five gigabytes.
+        let memory: u64 = tree
+            .iter()
+            .map(|p| proportional(p.pid).unwrap_or(p.rss))
+            .sum();
         let now = Instant::now();
         let cpu = match self.last.insert(root, (ticks, now)) {
             Some((before, at)) => {
@@ -71,10 +94,31 @@ impl Meter {
         }
     }
 
+    /// What every one of these sessions is using, measured at most as often as
+    /// it is worth measuring.
+    pub fn measure_all(&mut self, roots: &[i64]) -> HashMap<i64, Usage> {
+        let fresh = self
+            .taken
+            .map(|at| at.elapsed() < FRESH_FOR)
+            .unwrap_or(false);
+        if fresh {
+            return self.cached.clone();
+        }
+        let table = table();
+        let mut out = HashMap::new();
+        for root in roots {
+            out.insert(*root, self.measure(*root, &table));
+        }
+        self.taken = Some(Instant::now());
+        self.cached = out.clone();
+        out
+    }
+
     /// Forget a session, so a machine left running for a week does not keep a
     /// reading for every session it ever had.
     pub fn forget(&mut self, alive: &[i64]) {
         self.last.retain(|pid, _| alive.contains(pid));
+        self.cached.retain(|pid, _| alive.contains(pid));
     }
 }
 
@@ -97,6 +141,21 @@ pub fn descendants(root: i64, table: &[Proc]) -> Vec<Proc> {
         }
     }
     out
+}
+
+/// What one process is really costing in memory, with shared pages divided
+/// between the processes sharing them. Only Linux keeps this, and only for
+/// processes the reader is allowed to look at.
+pub fn proportional(pid: i64) -> Option<u64> {
+    let rollup = std::fs::read_to_string(format!("/proc/{pid}/smaps_rollup")).ok()?;
+    parse_pss(&rollup)
+}
+
+/// The `Pss:` line of a smaps rollup, in bytes.
+pub fn parse_pss(rollup: &str) -> Option<u64> {
+    let line = rollup.lines().find(|l| l.starts_with("Pss:"))?;
+    let kb: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
+    Some(kb * 1024)
 }
 
 /// Every process on the machine, from procfs where there is one.
@@ -230,6 +289,35 @@ mod tests {
         let usage = meter.measure(100, &[proc(100, 1, 50, 0)]);
         // Fifty ticks of a hundred-a-second clock, in one second: half a core.
         assert_eq!(usage.cpu.unwrap().round(), 50.0);
+    }
+
+    #[test]
+    fn reads_the_shared_memory_figure() {
+        let rollup = "\
+Rss:              521800 kB
+Pss:               29216 kB
+Pss_Dirty:         21000 kB
+Shared_Clean:     480000 kB";
+        assert_eq!(parse_pss(rollup), Some(29216 * 1024));
+        assert!(parse_pss("nothing useful").is_none());
+    }
+
+    #[test]
+    fn a_share_of_the_machine_is_not_a_share_of_one_processor() {
+        assert!(cores() >= 1.0);
+    }
+
+    #[test]
+    fn does_not_read_the_machine_once_per_frame() {
+        let mut meter = Meter::default();
+        let first = meter.measure_all(&[std::process::id() as i64]);
+        let again = meter.measure_all(&[std::process::id() as i64]);
+        assert_eq!(
+            first.len(),
+            again.len(),
+            "the second look inside the window returns what the first found"
+        );
+        assert!(meter.taken.is_some());
     }
 
     #[test]

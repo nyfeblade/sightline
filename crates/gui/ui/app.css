@@ -303,6 +303,16 @@ dialog input:focus, dialog select:focus { outline: none; border-color: var(--gol
 dialog menu { display: flex; justify-content: flex-end; gap: 8px; margin: 14px 0 0; padding: 0; }
 dialog menu button { background: transparent; border: 1px solid var(--line); border-radius: 5px; color: var(--body); padding: 6px 14px; }
 
+.swatches { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 0 10px; }
+.swatch {
+  width: 30px; height: 30px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+.swatch.is-on { box-shadow: 0 0 0 2px var(--ground), 0 0 0 3px var(--text); }
+dialog input[type="color"] { padding: 2px; height: 32px; width: 60px; }
+
 .past-list { list-style: none; margin: 10px 0 0; padding: 0; max-height: 52vh; overflow-y: auto; }
 .past-row {
   display: grid;

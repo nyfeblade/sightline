@@ -17,6 +17,7 @@
     <button class="ghost" id="cost" title="Requests, or what the same tokens would cost on the API">
       <span id="spend"></span>
     </button>
+    <button class="ghost" id="theme" title="Change the accent colour">◐</button>
     <button class="ghost" id="resume">Resume…</button>
     <button class="ghost" id="tui" title="Drive it from a terminal instead">Terminal view</button>
     <button class="primary" id="new">New session</button>
@@ -89,6 +90,13 @@
         <button value="go" class="primary">Start</button>
       </menu>
     </form>
+  </dialog>
+
+  <dialog id="colours">
+    <h2>Accent</h2>
+    <div class="swatches" id="swatches"></div>
+    <label>Custom<input type="color" id="custom-accent" /></label>
+    <menu><button id="colours-close" class="ghost">Done</button></menu>
   </dialog>
 
   <dialog id="past">
