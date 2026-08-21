@@ -359,6 +359,17 @@ everything that is not a way of looking at it, `crates/tui` is the terminal view
 `crates/gui` the app; sending a message, answering a prompt or reopening a
 conversation is one implementation with two callers.
 
+## Where it is going
+
+`docs/PLATFORM.md` describes the layers scope could grow — events, lineage,
+verification, briefing, supervision — what already exists, and the rule that
+keeps each one useful on its own. `docs/BUILD.md` is the working spec for each:
+what it does, where it lives, and what would have to be true for it to count as
+finished.
+
+Both are written to be argued with. Everything claimed to exist is checkable in
+this repository; everything else is marked as a claim.
+
 ## Development
 
 ```sh
