@@ -132,25 +132,136 @@ fn show_way_back(session: &str, hint: &str) {
     tmux(&["set-option", "-t", session, "status-right", hint]);
 }
 
+/// The key that always means "back to scope", wherever you are: out of
+/// passthrough, and out of a session shown full-screen. One key with one
+/// meaning, rather than tmux's prefix-then-letter, which is a thing you have to
+/// know tmux to know.
+pub const WAY_BACK: &str = "F12";
+
+/// Whether that key is free. tmux key tables belong to the whole server rather
+/// than to one session, so a key someone has already bound is theirs, and scope
+/// says the tmux way out instead of quietly taking it.
+fn way_back_is_free() -> bool {
+    let Some(table) = tmux(&["list-keys", "-T", "root"]) else {
+        return false;
+    };
+    // `list-keys -T root F12` prints nothing even when F12 is bound, so the
+    // table is read whole and the line looked for here.
+    !table.lines().any(|l| {
+        let mut words = l.split_whitespace();
+        words.any(|w| w == "root") && words.next() == Some(WAY_BACK)
+    })
+}
+
+/// Take the key, if it is free. Returns whether it was taken, which is also
+/// whether it has to be given back.
+fn take_way_back(action: &str) -> bool {
+    if !way_back_is_free() {
+        return false;
+    }
+    // tmux takes the bound command as separate words, not as one string: given
+    // "switch-client -l" in a single argument it looks for a command by that
+    // whole name, fails, and binds nothing at all.
+    let mut args = vec!["bind-key", "-n", WAY_BACK];
+    args.extend(action.split_whitespace());
+    tmux(&args).is_some()
+}
+
+fn release_way_back(taken: bool) {
+    if taken {
+        tmux(&["unbind-key", "-n", WAY_BACK]);
+    }
+}
+
+/// What to tell someone about getting back, which depends on whether scope was
+/// able to give them one key for it.
+fn hint(taken: bool, tmux_way: &str) -> String {
+    if taken {
+        format!(" {WAY_BACK} → back to scope ")
+    } else {
+        format!(" {tmux_way} → back to scope ")
+    }
+}
+
 /// Show a session full-screen. Returns true when scope's own terminal was
 /// handed over and must be taken back afterwards; false when the tmux client
 /// was switched instead, which leaves scope running where it is.
 pub fn attach(session: &str) -> Result<bool, String> {
     if inside_tmux() {
-        show_way_back(session, " ctrl+b L → back to scope ");
+        // scope is a tmux client itself here, so coming back means switching
+        // back to where you were rather than detaching. The key stays bound
+        // while the session is on screen — scope is not the one blocking, so
+        // there is no moment at which to take it back — which is another
+        // reason not to take a key that was already someone's.
+        let taken = take_way_back("switch-client -l");
+        show_way_back(session, &hint(taken, "ctrl+b L"));
         tmux(&["switch-client", "-t", session]).ok_or("tmux switch-client failed")?;
         return Ok(false);
     }
-    show_way_back(session, " ctrl+b d → back to scope ");
+    let taken = take_way_back("detach-client");
+    show_way_back(session, &hint(taken, "ctrl+b d"));
     let status = Command::new("tmux")
         .args(["attach", "-t", session])
         .status()
         .map_err(|e| e.to_string())?;
+    // attach blocks until the client leaves, which is exactly when the key is
+    // no longer needed.
+    release_way_back(taken);
     if status.success() {
         Ok(true)
     } else {
         Err("tmux attach failed".into())
     }
+}
+
+/// A session's screen at a given size, ready to be drawn by something that is
+/// not a terminal.
+///
+/// The size matters: a session draws to whatever it is told the terminal is, so
+/// showing one in a window means telling tmux the window's size, or its own
+/// framing wraps at the wrong column. A detached session has no client to take
+/// a size from, so it has to be set by hand.
+pub fn frame(pane: &str, cols: u16, rows: u16) -> Option<crate::screen::Frame> {
+    let session = pane.split(':').next().unwrap_or(pane);
+    let size = tmux(&[
+        "display-message",
+        "-p",
+        "-t",
+        pane,
+        "#{window_width}x#{window_height}",
+    ])
+    .unwrap_or_default();
+    if size.trim() != format!("{cols}x{rows}") {
+        tmux(&["set-option", "-t", session, "window-size", "manual"]);
+        tmux(&[
+            "resize-window",
+            "-t",
+            session,
+            "-x",
+            &cols.to_string(),
+            "-y",
+            &rows.to_string(),
+        ]);
+    }
+    // -e keeps the colours, which is the whole point; -J stops tmux breaking a
+    // wrapped line into two.
+    let render = tmux(&["capture-pane", "-p", "-e", "-J", "-t", pane])?;
+    let mut frame = crate::screen::frame_from_render(render.as_bytes(), cols, rows);
+    // capture-pane renders the screen but not the caret, which tmux knows
+    // separately.
+    if let Some(pos) = tmux(&[
+        "display-message",
+        "-p",
+        "-t",
+        pane,
+        "#{cursor_y} #{cursor_x}",
+    ]) {
+        let mut n = pos.split_whitespace().filter_map(|v| v.parse().ok());
+        if let (Some(y), Some(x)) = (n.next(), n.next()) {
+            frame.cursor = (y, x);
+        }
+    }
+    Some(frame)
 }
 
 /// What a session's pane currently shows. Used both for the live mirror and
@@ -335,6 +446,15 @@ pub fn new_session_with(cwd: &Path, argv: &[String], opening: &[String]) -> Resu
     tmux(&args).ok_or(format!(
         "tmux could not start the session (is {program} on PATH?)"
     ))?;
+    // tmux reports success for a session whose command it could not run: the
+    // session exists for as long as it takes the shell to fail. Saying
+    // "started" to that is worse than saying nothing, so this waits and looks.
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    if tmux(&["has-session", "-t", &name]).is_none() {
+        return Err(format!(
+            "{program} stopped as soon as it started — is it installed and on PATH?"
+        ));
+    }
     // Give the agent a moment to draw its prompt before typing into it.
     if !opening.is_empty() {
         std::thread::sleep(std::time::Duration::from_millis(1500));

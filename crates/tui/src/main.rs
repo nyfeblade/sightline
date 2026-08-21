@@ -654,6 +654,12 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                             app.say("search cleared");
                         }
                     }
+                    KeyCode::Down if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        app.move_session(1)
+                    }
+                    KeyCode::Up if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        app.move_session(-1)
+                    }
                     KeyCode::Char('j') | KeyCode::Down => app.select_session(1),
                     KeyCode::Char('k') | KeyCode::Up => app.select_session(-1),
                     KeyCode::Tab => app.select_session(1),
@@ -762,7 +768,7 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
             if control::inside_tmux() {
                 // scope stays where it is; only the tmux client moves.
                 match control::attach(&session) {
-                    Ok(_) => app.say(format!("switched to {session} — ctrl+b L comes back")),
+                    Ok(_) => app.say(format!("switched to {session} — F12 comes back")),
                     Err(e) => app.say(e),
                 }
             } else {

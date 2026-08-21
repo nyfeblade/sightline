@@ -285,6 +285,12 @@ fn rename(shared: State<Shared>, id: String, name: String) -> Result<(), String>
     shared.with(|app| app.rename(&id, &name))
 }
 
+/// Put the list in the order it was dragged into.
+#[tauri::command]
+fn reorder(shared: State<Shared>, ids: Vec<String>) {
+    shared.with(|app| app.reorder(ids));
+}
+
 #[tauri::command]
 fn stop(shared: State<Shared>, id: String) -> Result<(), String> {
     shared
@@ -316,7 +322,7 @@ fn main() {
         .manage(Shared(Mutex::new(app)))
         .invoke_handler(tauri::generate_handler![
             readiness, sessions, feed, screen, send, answer, interrupt, start, reopen, past,
-            rename, stop, open_tui
+            rename, reorder, stop, open_tui
         ])
         .run(tauri::generate_context!())
         .expect("scope failed to start");

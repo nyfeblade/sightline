@@ -225,6 +225,28 @@ pub fn forward_key(pane: &str, code: crossterm::event::KeyCode, ctrl: bool) -> R
     }
 }
 
+/// A session's screen at a given size. scope owns the pseudo-console here, so
+/// the size is set on it directly and the screen model is already parsed.
+pub fn frame(pane: &str, cols: u16, rows: u16) -> Option<crate::screen::Frame> {
+    with(pane, |s| {
+        let mut parser = match s.screen.lock() {
+            Ok(p) => p,
+            Err(e) => e.into_inner(),
+        };
+        if parser.screen().size() != (rows, cols) {
+            parser.screen_mut().set_size(rows, cols);
+            let _ = s._master.resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            });
+        }
+        crate::screen::frame_of(parser.screen())
+    })
+    .ok()
+}
+
 /// What a session's screen shows right now, as plain text.
 pub fn capture(pane: &str) -> Option<String> {
     with(pane, |s| {
@@ -394,7 +416,16 @@ fn read_into(mut reader: Box<dyn Read + Send>, screen: Arc<Mutex<vt100::Parser>>
 /// Start a session on a pty scope owns, running whatever agent was asked for,
 /// and type the opening lines into it once it is up.
 pub fn new_session_with(cwd: &Path, argv: &[String], opening: &[String]) -> Result<String, String> {
+    let program = argv.first().cloned().unwrap_or_default();
     let name = spawn(cwd, argv.to_vec())?;
+    // A program that could not run exits immediately, and claiming it started
+    // would leave a session in the list that was never there.
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    if !panes().iter().any(|p| p.session == name) {
+        return Err(format!(
+            "{program} stopped as soon as it started — is it installed and on PATH?"
+        ));
+    }
     if !opening.is_empty() {
         // Give the agent a moment to draw its prompt before typing into it.
         std::thread::sleep(std::time::Duration::from_millis(1500));

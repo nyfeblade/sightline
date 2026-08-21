@@ -10,15 +10,17 @@
 #[cfg(not(windows))]
 pub use crate::tmux::{
     OUTLIVES_SCOPE, WHERE, adopt, attach, attach_hint, available, capture, end_process,
-    forward_key, hosted_count, inside_tmux, kill_session, new_session_with, open_window, pane_for,
-    panes, prune, send_key, send_text, steer_hint, stop_all, unavailable_hint, where_hint,
+    forward_key, frame, hosted_count, inside_tmux, kill_session, new_session_with, open_window,
+    pane_for, panes, prune, send_key, send_text, steer_hint, stop_all, unavailable_hint,
+    where_hint,
 };
 
 #[cfg(windows)]
 pub use crate::host::{
     OUTLIVES_SCOPE, WHERE, adopt, attach, attach_hint, available, capture, end_process,
-    forward_key, hosted_count, inside_tmux, kill_session, new_session_with, open_window, pane_for,
-    panes, prune, send_key, send_text, steer_hint, stop_all, unavailable_hint, where_hint,
+    forward_key, frame, hosted_count, inside_tmux, kill_session, new_session_with, open_window,
+    pane_for, panes, prune, send_key, send_text, steer_hint, stop_all, unavailable_hint,
+    where_hint,
 };
 
 #[derive(Clone, Debug)]
@@ -49,6 +51,10 @@ pub fn next_name_after(existing: &str) -> String {
 pub struct Approval {
     pub question: String,
     pub options: Vec<String>,
+    /// what to type for each option. Claude Code draws a numbered list and
+    /// takes the number; Aider writes `(Y)es/(N)o` and takes the letter. The
+    /// answer is not always the position, so it is carried rather than assumed.
+    pub keys: Vec<String>,
 }
 
 fn strip_box(line: &str) -> String {
@@ -69,6 +75,9 @@ fn is_option(line: &str) -> bool {
 /// an answer. Read off the rendered pane, so it works for every prompt shape
 /// Claude Code draws without knowing anything about its internals.
 pub fn pending_approval(text: &str) -> Option<Approval> {
+    if let Some(a) = letter_prompt(text) {
+        return Some(a);
+    }
     let lines: Vec<&str> = text.lines().collect();
     // The cursor marker is what distinguishes a live choice from transcript
     // text that merely happens to contain a numbered list.
@@ -125,12 +134,81 @@ pub fn pending_approval(text: &str) -> Option<Approval> {
         .or_else(|| above.iter().find(|l| !boilerplate(l)))
         .cloned()
         .unwrap_or_else(|| "waiting for an answer".into());
-    Some(Approval { question, options })
+    let keys = (1..=options.len()).map(|n| n.to_string()).collect();
+    Some(Approval {
+        question,
+        options,
+        keys,
+    })
 }
 
-/// Answer a numbered prompt by choosing option `n`.
+/// Answer a prompt by choosing option `n`, counting from one.
 pub fn answer(pane: &str, n: usize) -> Result<(), String> {
-    send_text(pane, &n.to_string())
+    answer_with(pane, n, None)
+}
+
+/// Answer with whatever that option is actually typed as.
+pub fn answer_with(pane: &str, n: usize, approval: Option<&Approval>) -> Result<(), String> {
+    let key = approval
+        .and_then(|a| a.keys.get(n.saturating_sub(1)).cloned())
+        .unwrap_or_else(|| n.to_string());
+    send_text(pane, &key)
+}
+
+/// A prompt written as letters in brackets — `(Y)es/(N)o [Yes]:` — which is
+/// how several agents ask, Aider among them. The bracketed letter is what it
+/// wants typed.
+fn letter_prompt(text: &str) -> Option<Approval> {
+    // Only the last thing on screen can be what is being waited on.
+    let line = text.lines().rev().find(|l| !l.trim().is_empty())?;
+    let line = line.trim();
+    if !line.ends_with(':') && !line.ends_with("] ") && !line.ends_with(']') {
+        return None;
+    }
+    let mut options = Vec::new();
+    let mut keys = Vec::new();
+    let mut rest = line;
+    while let Some(open) = rest.find('(') {
+        let after = &rest[open + 1..];
+        let Some(close) = after.find(')') else { break };
+        let key = &after[..close];
+        // A single letter in brackets, followed by the rest of the word.
+        if key.chars().count() == 1 && key.chars().all(char::is_alphabetic) {
+            let tail: String = after[close + 1..]
+                .chars()
+                .take_while(|c| c.is_alphabetic() || *c == '\'')
+                .collect();
+            options.push(format!("{key}{tail}"));
+            keys.push(key.to_lowercase());
+        }
+        rest = &after[close + 1..];
+    }
+    if options.len() < 2 {
+        return None;
+    }
+    // The question is everything before the choices begin — and "(recommended)"
+    // is part of a question, not a choice, so the cut is at the first bracket
+    // holding a single letter.
+    let cut = line
+        .char_indices()
+        .find(|(i, c)| {
+            *c == '(' && {
+                let rest: Vec<char> = line[i + 1..].chars().take(2).collect();
+                matches!(rest.as_slice(), [l, ')'] if l.is_alphabetic())
+            }
+        })
+        .map(|(i, _)| i)
+        .unwrap_or(line.len());
+    let question = line[..cut].trim().trim_end_matches(':').trim().to_string();
+    Some(Approval {
+        question: if question.is_empty() {
+            "waiting for an answer".into()
+        } else {
+            question
+        },
+        options,
+        keys,
+    })
 }
 
 /// Whether a command line belongs to Claude Code. A native install runs as
@@ -329,6 +407,46 @@ mod tests {
     fn ignores_a_numbered_list_that_is_not_a_prompt() {
         // No cursor on a numbered line, so nothing is waiting.
         assert!(pending_approval(TRANSCRIPT).is_none());
+    }
+
+    // What Aider actually put on screen, captured from a session running on a
+    // local model.
+    const AIDER: &str = "\
+────────────────────────────────────────────────────────
+You can skip this check with --no-gitignore
+Add .aider* to .gitignore (recommended)? (Y)es/(N)o [Yes]:";
+
+    const AIDER_MANY: &str = "\
+Add calc.py to the chat? (Y)es/(N)o/(A)ll/(S)kip all/(D)on't ask again [Yes]:";
+
+    #[test]
+    fn reads_a_prompt_that_wants_a_letter() {
+        let a = pending_approval(AIDER).expect("aider is waiting on a person");
+        assert_eq!(a.question, "Add .aider* to .gitignore (recommended)?");
+        assert_eq!(a.options, vec!["Yes", "No"]);
+        // The answer is the letter, not the position.
+        assert_eq!(a.keys, vec!["y", "n"]);
+    }
+
+    #[test]
+    fn reads_all_the_letters_offered() {
+        let a = pending_approval(AIDER_MANY).expect("prompt should be seen");
+        assert_eq!(a.options.len(), 5);
+        assert_eq!(a.keys, vec!["y", "n", "a", "s", "d"]);
+        assert_eq!(a.options[4], "Don't");
+    }
+
+    #[test]
+    fn a_numbered_prompt_still_answers_with_its_number() {
+        let a = pending_approval(PERMISSION).expect("permission prompt should be seen");
+        assert_eq!(a.keys, vec!["1", "2", "3"]);
+    }
+
+    #[test]
+    fn ordinary_output_is_not_a_letter_prompt() {
+        assert!(pending_approval("see the (r)eadme for details").is_none());
+        assert!(pending_approval("running tests (3 of 4):").is_none());
+        assert!(pending_approval("").is_none());
     }
 
     #[test]

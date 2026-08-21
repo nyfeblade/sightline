@@ -1669,6 +1669,10 @@ fn draw_help(f: &mut Frame, area: Rect) {
         ("  look", ""),
         ("j / k, ↓ ↑", "select a session"),
         (
+            "ctrl+↑ ↓",
+            "move it up or down — the order is yours and it keeps",
+        ),
+        (
             "1 … 9, 0",
             "feed files stats plan agents mirror tree errors",
         ),
@@ -1702,8 +1706,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
             "a / A",
             "attach full-screen · adopt, or reopen an ended one",
         ),
-        ("", "  ctrl+b then d comes back (ctrl+b L if scope"),
-        ("", "  is itself running inside tmux)"),
+        ("", "  F12 comes back, wherever you are"),
         ("R", "resume any conversation on this machine, however old"),
         ("n / W", "new session · new isolated session on a branch"),
         ("M / X", "merge that branch back · remove the checkout"),

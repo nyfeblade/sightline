@@ -100,6 +100,29 @@ fn data_dir() -> PathBuf {
     base.join("nyfe-scope")
 }
 
+fn order_path() -> PathBuf {
+    data_dir().join("order.json")
+}
+
+/// The order the list was left in. Losing it is a cosmetic problem, so a
+/// missing or unreadable file just means "no preference yet".
+fn load_order() -> Vec<String> {
+    std::fs::read_to_string(order_path())
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+fn save_order(order: &[String]) {
+    let path = order_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(text) = serde_json::to_string_pretty(order) {
+        let _ = std::fs::write(path, text);
+    }
+}
+
 fn names_path() -> PathBuf {
     data_dir().join("names.json")
 }
@@ -392,6 +415,8 @@ pub struct App {
     stop_asked: Option<(String, Instant)>,
     /// names scope keeps for sessions that have none of their own
     names: HashMap<String, String>,
+    /// the order you put the list in, by session id
+    order: Vec<String>,
     /// a session waiting on the name it is about to be given
     pending_new: Option<NewSpec>,
     /// the conversation browser: everything on the machine, resumable
@@ -459,6 +484,7 @@ impl App {
             quit_asked: None,
             stop_asked: None,
             names: load_names(),
+            order: load_order(),
             pending_new: None,
             past: Vec::new(),
             past_open: false,
@@ -938,6 +964,69 @@ impl App {
         Ok(session)
     }
 
+    /// Move the selected session up or down the list, and remember it.
+    pub fn move_session(&mut self, delta: isize) {
+        let Some(id) = self.current().map(|s| s.id.clone()) else {
+            return;
+        };
+        let Some(at) = self.order.iter().position(|o| *o == id) else {
+            return;
+        };
+        // Neighbours in the list, which is not the same as neighbours in the
+        // order: the order remembers sessions that are not on screen.
+        let ids: Vec<String> = self.sessions.iter().map(|s| s.id.clone()).collect();
+        let Some(here) = ids.iter().position(|o| *o == id) else {
+            return;
+        };
+        let there = here as isize + delta;
+        if there < 0 || there >= ids.len() as isize {
+            return;
+        }
+        let Some(swap_at) = self.order.iter().position(|o| *o == ids[there as usize]) else {
+            return;
+        };
+        self.order.swap(at, swap_at);
+        self.save_order();
+        // Move it on screen too, rather than waiting for the next tick: the
+        // cursor has to stay on what was moved, and the refresh keeps the
+        // selection by id, so the list and the order have to agree now.
+        self.sessions.swap(here, there as usize);
+        self.sel = there as usize;
+        let name = self
+            .sessions
+            .get(there as usize)
+            .map(Session::label)
+            .unwrap_or_default();
+        self.say(format!(
+            "moved {name} {}",
+            if delta > 0 { "down" } else { "up" }
+        ));
+    }
+
+    /// Put the list in exactly this order — what a window sends after something
+    /// has been dragged.
+    pub fn reorder(&mut self, ids: Vec<String>) {
+        let mut order: Vec<String> = ids;
+        for id in &self.order {
+            if !order.contains(id) {
+                order.push(id.clone());
+            }
+        }
+        self.order = order;
+        self.save_order();
+    }
+
+    fn save_order(&self) {
+        // Only sessions that still exist, so the file cannot grow without end.
+        let known: Vec<String> = self
+            .order
+            .iter()
+            .filter(|id| self.sessions.iter().any(|s| s.id == **id))
+            .cloned()
+            .collect();
+        save_order(&known);
+    }
+
     /// Remember what to call a session that has no name of its own. Anything
     /// but Claude Code is a program in a terminal as far as scope can tell, so
     /// the name is scope's to keep.
@@ -1101,29 +1190,32 @@ impl App {
         }
         let selected_id = self.sessions.get(self.sel).map(|s| s.id.clone());
         let blocked: Vec<String> = self.approvals.keys().cloned().collect();
-        // Order has to hold still: a list that re-sorts on every tick moves rows
-        // out from under the cursor mid-keystroke. Only a session that is
-        // blocked on a person jumps the queue; everything else stays in the
-        // order it started, like tabs.
-        self.sessions.sort_by(|a, b| {
-            // Three groups, each ordered by when it started: whatever is
-            // blocked on a person, then everything still running, then what has
-            // finished. Within a group nothing moves, so the cursor stays put.
-            let group = |s: &Session| -> u8 {
-                if blocked.contains(&s.id) {
-                    0
-                } else if matches!(s.status(), Status::Ended) {
-                    2
-                } else {
-                    1
-                }
-            };
-            let now = chrono::Utc::now();
-            group(a)
-                .cmp(&group(b))
-                .then(a.started.unwrap_or(now).cmp(&b.started.unwrap_or(now)))
-                .then(a.id.cmp(&b.id))
-        });
+        // The order is yours, not the program's.
+        //
+        // It used to sort by state — blocked first, then running, then
+        // finished — which meant a row moved whenever a session changed what it
+        // was doing, and the list you were reading rearranged itself under your
+        // cursor. A session that needs you is marked and can be jumped to with
+        // `p`; that is enough. Anything new goes to the end and stays where it
+        // is put.
+        let mut fresh: Vec<String> = Vec::new();
+        for s in &self.sessions {
+            if !self.order.contains(&s.id) {
+                fresh.push(s.id.clone());
+            }
+        }
+        if !fresh.is_empty() {
+            self.order.extend(fresh);
+            self.save_order();
+        }
+        let place = |id: &str| {
+            self.order
+                .iter()
+                .position(|o| o == id)
+                .unwrap_or(usize::MAX)
+        };
+        self.sessions.sort_by_key(|s| (place(&s.id), s.id.clone()));
+        let _ = &blocked;
         if let Some(id) = selected_id {
             if let Some(i) = self.sessions.iter().position(|s| s.id == id) {
                 self.sel = i;
@@ -1268,18 +1360,25 @@ impl App {
             self.say(msg);
             return;
         };
+        let asked = self.approvals.get(&id).cloned();
         let outcome = if n == 0 {
             control::send_key(&pane.id, "Escape")
         } else {
-            control::answer(&pane.id, n)
+            // Answer it the way it asked to be answered: a number for a
+            // numbered list, the letter for a prompt written in letters.
+            control::answer_with(&pane.id, n, asked.as_ref())
         };
         match outcome {
             Ok(()) => {
                 self.approvals.remove(&id);
+                let chose = asked
+                    .as_ref()
+                    .and_then(|a| a.options.get(n.saturating_sub(1)).cloned())
+                    .unwrap_or_else(|| n.to_string());
                 self.say(if n == 0 {
                     "declined".into()
                 } else {
-                    format!("answered {n}")
+                    format!("answered {chose}")
                 });
             }
             Err(e) => self.say(e),

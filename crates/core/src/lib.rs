@@ -18,6 +18,7 @@ pub mod host;
 pub mod notify;
 pub mod pricing;
 pub mod registry;
+pub mod screen;
 pub mod session;
 pub mod tail;
 #[cfg(not(windows))]

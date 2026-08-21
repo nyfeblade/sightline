@@ -106,9 +106,10 @@ same actions have direct keys once you know them:
 | `Z` | close everything scope started (each one reopens with `A`) |
 | `L` | launch a whole fleet from a config file |
 
-When you attach, the session's status line shows the way back, so a
-full-screen session is never a one-way door. If scope is itself running inside
-tmux it switches the client instead of nesting, and `ctrl+b L` returns.
+`F12` always means back to scope: out of passthrough, and out of a session shown
+full-screen. The session's own status line says so while you are in it. tmux's
+prefix-then-letter works too, but knowing tmux should not be the price of
+looking at a session, and scope gives the key back when you leave.
 
 Sessions started outside tmux are fully visible but cannot be typed into; they
 are marked, so it is always clear which is which. `A` moves one: it resumes the
