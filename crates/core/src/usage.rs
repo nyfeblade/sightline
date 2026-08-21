@@ -66,13 +66,23 @@ impl Meter {
     pub fn measure(&mut self, root: i64, table: &[Proc]) -> Usage {
         let tree = descendants(root, table);
         let ticks: u64 = tree.iter().map(|p| p.ticks).sum();
-        // Proportional set size where the machine offers it. Resident size
+        // Proportional set size where the machine offers it: resident size
         // summed over a tree counts every shared page once per process, which
         // reported a Claude Code session as using five gigabytes.
-        let memory: u64 = tree
-            .iter()
-            .map(|p| proportional(p.pid).unwrap_or(p.rss))
-            .sum();
+        //
+        // Only Linux keeps that figure. Where it is missing, summing resident
+        // size would be wrong in the same way, so the agent's own resident size
+        // is reported instead — an undercount that is at least the right order,
+        // rather than an overcount that is not.
+        let shared_known = tree.iter().all(|p| proportional(p.pid).is_some());
+        let memory: u64 = if shared_known {
+            tree.iter().filter_map(|p| proportional(p.pid)).sum()
+        } else {
+            tree.iter()
+                .find(|p| p.pid == root)
+                .map(|p| p.rss)
+                .unwrap_or_else(|| tree.iter().map(|p| p.rss).max().unwrap_or(0))
+        };
         let now = Instant::now();
         let cpu = match self.last.insert(root, (ticks, now)) {
             Some((before, at)) => {
@@ -259,8 +269,10 @@ mod tests {
     }
 
     #[test]
-    fn sums_the_whole_tree_not_just_the_agent() {
+    fn counts_the_whole_tree_not_just_the_agent() {
         // claude, the shell it spawned, and the command that shell is running.
+        // Processor time is summed across all of them; memory is its own
+        // question, answered below.
         let table = vec![
             proc(100, 1, 500, 40 * 1024 * 1024),
             proc(101, 100, 200, 8 * 1024 * 1024),
@@ -270,10 +282,26 @@ mod tests {
         let mut meter = Meter::default();
         let first = meter.measure(100, &table);
         assert_eq!(first.processes, 3, "the unrelated process is not ours");
-        assert_eq!(first.memory, 50 * 1024 * 1024);
         assert!(
             first.cpu.is_none(),
             "a rate needs two readings, and one is not two"
+        );
+    }
+
+    #[test]
+    fn without_the_shared_figure_it_undercounts_rather_than_overcounts() {
+        // No procfs, so no proportional set size — a Mac, in other words.
+        let table = vec![
+            proc(100, 1, 0, 400 * 1024 * 1024),
+            proc(101, 100, 0, 380 * 1024 * 1024),
+            proc(102, 101, 0, 370 * 1024 * 1024),
+        ];
+        let mut meter = Meter::default();
+        let usage = meter.measure(100, &table);
+        assert_eq!(
+            usage.memory,
+            400 * 1024 * 1024,
+            "the agent's own, not the sum of a tree sharing the same pages"
         );
     }
 

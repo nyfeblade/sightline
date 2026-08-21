@@ -29,7 +29,9 @@
     "active": true,
     "targets": [
       "appimage",
-      "deb"
+      "deb",
+      "app",
+      "dmg"
     ],
     "category": "Development",
     "shortDescription": "Watch and steer every Claude Code session on your machine",
@@ -38,6 +40,7 @@
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
+      "icons/icon.icns",
       "icons/icon.ico",
       "icons/icon.png"
     ]

@@ -49,6 +49,24 @@ irm https://raw.githubusercontent.com/nyfeblade/nyfe-scope/main/install.ps1 | ie
 Then run `scope`. Linux, macOS and Windows. On Linux and macOS tmux is optional,
 and only needed to steer sessions rather than watch them.
 
+### What runs where
+
+The terminal view runs on all three. Linux and macOS steer sessions through
+tmux, so a session outlives scope; Windows has no tmux, so scope hosts the
+session itself and it ends when scope does.
+
+The desktop app is built and tested on Linux. It compiles for macOS and Windows
+and the bundle knows how to make a `.app`, a `.dmg` and an installer, but no
+release ships them yet and nobody has run it there — so treat those as untested
+rather than supported.
+
+One measurement differs by platform. What a session costs in memory is read from
+proportional set size, which only Linux keeps: pages shared between an agent and
+the processes it spawned are counted once. Elsewhere that figure does not exist,
+and summing resident size would count every shared page once per process — so
+what is reported is the agent's own resident size, which undercounts rather than
+inventing a number several times too large.
+
 ## The session waiting on you
 
 ![approvals](docs/approvals.png)
