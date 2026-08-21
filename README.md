@@ -4,6 +4,10 @@
 
 ![scope](docs/demo.gif)
 
+The same thing as a desktop app, for anyone who would rather click than type:
+
+![the app](docs/app.png)
+
 Run three or four Claude Code sessions at once and the bottleneck is never the
 model — it is the session sitting on a permission prompt in a window you are not
 looking at. scope watches every session on the machine, puts the blocked one at
