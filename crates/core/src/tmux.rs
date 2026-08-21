@@ -260,15 +260,41 @@ pub fn release_frame(pane: &str) {
 /// a size from, so it has to be set by hand.
 pub fn frame(pane: &str, cols: u16, rows: u16) -> Option<crate::screen::Frame> {
     let session = pane.split(':').next().unwrap_or(pane);
-    let size = tmux(&[
+    // One invocation, not three. tmux takes several commands at once, and each
+    // separate call is a process spawn — which is most of what a frame costs
+    // when it is being fetched many times a second.
+    let out = tmux(&[
+        "capture-pane",
+        "-p",
+        "-e",
+        "-t",
+        pane,
+        ";",
         "display-message",
         "-p",
         "-t",
         pane,
-        "#{window_width}x#{window_height}",
-    ])
-    .unwrap_or_default();
-    if size.trim() != format!("{cols}x{rows}") {
+        "#{window_width} #{window_height} #{cursor_y} #{cursor_x}",
+    ])?;
+    // The size line is last, and everything before it is the screen.
+    let (render, size) = out
+        .rsplit_once('\n')
+        .map(|(a, b)| (a, b))
+        .unwrap_or((&out, ""));
+    let mut n = size
+        .split_whitespace()
+        .filter_map(|v| v.parse::<u16>().ok());
+    let (have_cols, have_rows, cursor) = match (n.next(), n.next(), n.next(), n.next()) {
+        (Some(w), Some(h), Some(y), Some(x)) => (w, h, (y, x)),
+        _ => (cols, rows, (0, 0)),
+    };
+    // A session repaints when it feels like it, so its buffer is parsed at the
+    // size it actually is; asking for a different one wraps every line in the
+    // wrong place until it catches up.
+    let mut frame = crate::screen::frame_from_render(render.as_bytes(), have_cols, have_rows);
+    frame.cursor = cursor;
+    if (have_cols, have_rows) != (cols, rows) {
+        // Ask for the size the window wants; the next frame will have it.
         tmux(&["set-option", "-t", session, "window-size", "manual"]);
         tmux(&[
             "resize-window",
@@ -279,41 +305,6 @@ pub fn frame(pane: &str, cols: u16, rows: u16) -> Option<crate::screen::Frame> {
             "-y",
             &rows.to_string(),
         ]);
-    }
-    // Read the size back rather than assuming the one just asked for. A session
-    // repaints when it feels like it, so for a moment its buffer is still laid
-    // out for the old width — and parsing that at the new width wraps every
-    // line in the wrong place, which looks like corruption rather than lag.
-    let (cols, rows) = tmux(&[
-        "display-message",
-        "-p",
-        "-t",
-        pane,
-        "#{window_width} #{window_height}",
-    ])
-    .and_then(|s| {
-        let mut n = s.split_whitespace().filter_map(|v| v.parse().ok());
-        Some((n.next()?, n.next()?))
-    })
-    .unwrap_or((cols, rows));
-    // -e keeps the colours, which is the whole point. -J is deliberately not
-    // used: it joins wrapped lines back together, and the screen model then
-    // wraps them again somewhere else, which lands text on top of other text.
-    let render = tmux(&["capture-pane", "-p", "-e", "-t", pane])?;
-    let mut frame = crate::screen::frame_from_render(render.as_bytes(), cols, rows);
-    // capture-pane renders the screen but not the caret, which tmux knows
-    // separately.
-    if let Some(pos) = tmux(&[
-        "display-message",
-        "-p",
-        "-t",
-        pane,
-        "#{cursor_y} #{cursor_x}",
-    ]) {
-        let mut n = pos.split_whitespace().filter_map(|v| v.parse().ok());
-        if let (Some(y), Some(x)) = (n.next(), n.next()) {
-            frame.cursor = (y, x);
-        }
     }
     Some(frame)
 }

@@ -809,28 +809,17 @@ impl App {
                 }
             }
             Prompt::Broadcast => {
-                let panes: Vec<Pane> = self.steer.values().cloned().collect();
-                let mut ok = 0;
-                for p in &panes {
-                    if control::send_text(&p.id, &text).is_ok() {
-                        ok += 1;
-                    }
-                }
-                self.say(format!("sent to {ok} sessions"));
+                let n = self.broadcast(&text);
+                self.say(format!("sent to {n} sessions"));
             }
             Prompt::Queue => {
                 let Some(id) = input.target.clone() else {
                     return;
                 };
-                if !self.steer.contains_key(&id) {
-                    let msg = self.not_steerable();
-                    self.say(msg);
-                    return;
+                match self.queue_for(&id, &text) {
+                    Ok(n) => self.say(format!("queued — {n} waiting for the next idle moment")),
+                    Err(e) => self.say(e),
                 }
-                let q = self.queues.entry(id).or_default();
-                q.push(text);
-                let n = q.len();
-                self.say(format!("queued — {n} waiting for the next idle moment"));
             }
             Prompt::Isolate => self.isolate(&text),
             Prompt::Merge => {
@@ -1110,6 +1099,32 @@ impl App {
         self.stop_asked = None;
         self.stop_session();
         Ok(())
+    }
+
+    /// Say the same thing to every session scope can reach. Returns how many
+    /// heard it.
+    pub fn broadcast(&mut self, text: &str) -> usize {
+        let panes: Vec<Pane> = self.steer.values().cloned().collect();
+        panes
+            .iter()
+            .filter(|p| control::send_text(&p.id, text).is_ok())
+            .count()
+    }
+
+    /// Hold a message until a session next goes idle. Returns how many are
+    /// waiting for it.
+    pub fn queue_for(&mut self, id: &str, text: &str) -> Result<usize, String> {
+        if !self.steer.contains_key(id) {
+            return Err(self.not_steerable());
+        }
+        let q = self.queues.entry(id.to_string()).or_default();
+        q.push(text.to_string());
+        Ok(q.len())
+    }
+
+    /// What is waiting to be delivered to a session, in order.
+    pub fn queued_for(&self, id: &str) -> Vec<String> {
+        self.queues.get(id).cloned().unwrap_or_default()
     }
 
     /// Type a line into one session and submit it. Every front end sends this

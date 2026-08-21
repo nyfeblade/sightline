@@ -6,6 +6,17 @@ const el = (id) => document.getElementById(id);
 const clear = (node) => {
   while (node.firstChild) node.removeChild(node.firstChild);
 };
+// Wiring that tolerates a button having moved. A single missing element used
+// to throw at load and leave an empty window, which is a silly way to lose
+// everything.
+const on = (id, event, run) => {
+  const node = el(id);
+  if (node) node.addEventListener(event, run);
+};
+const text = (id, value) => {
+  const node = el(id);
+  if (node) node.textContent = value;
+};
 const make = (tag, cls, text) => {
   const node = document.createElement(tag);
   if (cls) node.className = cls;
@@ -15,6 +26,8 @@ const make = (tag, cls, text) => {
 
 let selected = null;
 let pane = "feed";
+let feedFilter = "all";
+let focused = false;
 let liveOnly = false;
 let showCost = false;
 let typing = false;
@@ -66,12 +79,18 @@ function condition(s) {
 const say = (text) => {
   el("note").textContent = text;
 };
+
+// A window that fails silently is a window that lies. Anything thrown lands in
+// the status line rather than leaving half the interface undrawn with no
+// explanation.
+window.addEventListener("error", (e) => say(`${e.message} · ${e.filename}:${e.lineno}`));
+window.addEventListener("unhandledrejection", (e) => say(String(e.reason)));
 const current = () => sessions.find((s) => s.id === selected);
 
 // ── the session list ───────────────────────────────────────────────────────
 function drawAgents() {
   const shown = liveOnly ? sessions.filter((s) => s.live) : sessions;
-  el("agent-count").textContent = `Sessions (${shown.length})`;
+  text("agent-count", `Sessions (${shown.length})`);
   el("filter").classList.toggle("is-on", liveOnly);
   const list = el("agents");
   clear(list);
@@ -144,7 +163,12 @@ function wireDragging() {
 
 // ── panes ──────────────────────────────────────────────────────────────────
 function eventRow(e) {
-  const line = make("div", "row");
+  const line = make("div", "row hit");
+  line.addEventListener("click", () => {
+    el("detail-title").textContent = `${e.tool || e.kind} · ${clock(e.at)}`;
+    el("detail-body").textContent = e.body || e.head;
+    el("detail-text").showModal();
+  });
   line.append(make("span", "at", clock(e.at)));
   const who = e.kind === "prompt" ? "you" : e.kind === "text" ? "claude" : e.kind;
   line.append(make("span", `who ${e.kind}`, who));
@@ -167,8 +191,33 @@ const empty = (text) => make("div", "empty", text);
 // to the bottom while they are reading is worse than not following.
 const keepingUp = (out) => out.scrollHeight - out.scrollTop - out.clientHeight < 40;
 
+// The same five the terminal view offers under `f`.
+const FILTERS = {
+  all: () => true,
+  tools: (e) => e.kind === "tool" || e.kind === "result",
+  bash: (e) => e.tool === "Bash",
+  files: (e) => ["Edit", "Write", "Read", "NotebookEdit"].includes(e.tool),
+  talk: (e) => e.kind === "prompt" || e.kind === "text",
+};
+
+function drawFilters() {
+  const box = el("filters");
+  box.hidden = pane !== "feed";
+  if (box.hidden) return;
+  clear(box);
+  for (const name of Object.keys(FILTERS)) {
+    const chip = make("span", `chip${name === feedFilter ? " is-on" : ""}`, name);
+    chip.addEventListener("click", () => {
+      feedFilter = name;
+      drawFilters();
+      soon(0);
+    });
+    box.append(chip);
+  }
+}
+
 async function drawFeed(id) {
-  const events = await invoke("feed", { id, limit: 250 });
+  const events = (await invoke("feed", { id, limit: 250 })).filter(FILTERS[feedFilter]);
   const out = el("pane");
   const follow = keepingUp(out);
   clear(out);
@@ -320,16 +369,31 @@ function cellSize() {
 // The session's own screen, cell by cell, at the size of this panel — and it
 // takes the keyboard, so this is the session itself rather than a picture of
 // one.
+let lastFrame = [];
 async function drawMirror(id) {
   const out = el("pane");
   const { w, h } = cellSize();
   const cols = Math.max(40, Math.floor((out.clientWidth - 26) / w));
   const rows = Math.max(10, Math.floor((out.clientHeight - 20) / h));
   const frame = await invoke("frame", { id, cols, rows });
-  clear(out);
-  if (!frame) return out.append(empty("scope has no terminal for this session"));
-  const screen = make("div", "screen");
-  for (const line of frame.lines) {
+  if (!frame) {
+    clear(out);
+    lastFrame = [];
+    return out.append(empty("scope has no terminal for this session"));
+  }
+  let screen = out.querySelector(".screen");
+  if (!screen || lastFrame.length !== frame.lines.length) {
+    clear(out);
+    screen = make("div", "screen");
+    out.append(screen);
+    lastFrame = [];
+  }
+  frame.lines.forEach((line, y) => {
+    // A line that has not changed is left alone: the browser then has nothing
+    // to lay out, and typing stops competing with the redraw.
+    const shape = JSON.stringify(line);
+    if (lastFrame[y] === shape && screen.children[y]) return;
+    lastFrame[y] = shape;
     const div = make("div");
     for (const run of line) {
       const span = run.bold ? make("b") : make("span");
@@ -345,9 +409,59 @@ async function drawMirror(id) {
       }
       div.append(span);
     }
-    screen.append(div);
+    if (screen.children[y]) screen.replaceChild(div, screen.children[y]);
+    else screen.append(div);
+  });
+  // The caret belongs to the session, so it is drawn where the session says.
+  if (frame.cursor_visible) {
+    const [cy, cx] = frame.cursor;
+    const row = screen.children[cy];
+    if (row) {
+      const text = row.textContent.padEnd(cx + 1, " ");
+      if (!row.querySelector(".caret")) {
+        const before = make("span", null, text.slice(0, cx));
+        const at = make("span", "caret", text[cx] === " " ? " " : text[cx]);
+        const after = make("span", null, text.slice(cx + 1));
+        const styled = row.cloneNode(true);
+        clear(row);
+        row.append(before, at, after);
+        row.dataset.caret = "1";
+        lastFrame[cy] = null;
+        void styled;
+      }
+    }
   }
-  out.append(screen);
+  while (screen.children.length > frame.lines.length) screen.lastChild.remove();
+}
+
+async function drawFleet() {
+  const [path, text] = await invoke("fleet");
+  const out = el("pane");
+  clear(out);
+  const head = make("div", "line");
+  head.append(make("span", "path", shortPath(path)));
+  const go = make("button", "ghost", "Launch all of it");
+  go.addEventListener("click", async () => say(await invoke("launch_fleet")));
+  head.append(go);
+  out.append(head);
+  if (!text.trim()) {
+    return out.append(
+      empty("no fleet file yet — a JSON array of sessions to start together"),
+    );
+  }
+  let entries = [];
+  try {
+    entries = JSON.parse(text);
+  } catch {
+    return out.append(empty("that file is not a JSON array"));
+  }
+  for (const e of entries) {
+    const line = make("div", "line");
+    line.append(make("span", "path", `${e.cwd || "."}${e.worktree ? ` · ${e.worktree}` : ""}`));
+    line.append(make("span", "num", [e.agent, e.model, e.effort, e.permission_mode].filter(Boolean).join(" · ")));
+    out.append(line);
+    if (e.prompt) out.append(make("div", "empty", `“${e.prompt}”`));
+  }
 }
 
 const painters = {
@@ -360,6 +474,7 @@ const painters = {
   agents: (s) => drawSubagents(s.id),
   stats: (s) => drawStats(s),
   errors: (s) => drawErrors(s.id),
+  fleet: () => drawFleet(),
 };
 
 // ── the selected session, and what can be done to it ───────────────────────
@@ -380,6 +495,7 @@ function drawDetail(s) {
   const box = el("detail");
   clear(box);
   if (!s) return;
+  box.dataset.for = s.id;
   const [, label] = condition(s);
   box.append(make("h3", null, s.name));
   box.append(make("div", "sub", `${label} · ${shortPath(s.cwd)}`));
@@ -414,6 +530,18 @@ function drawDetail(s) {
     box.append(chips);
   }
 
+  invoke("queued", { id: s.id }).then((waiting) => {
+    if (!waiting.length || el("detail").dataset.for !== s.id) return;
+    const group = make("div", "group", "WAITING FOR IT TO GO IDLE");
+    el("detail").insertBefore(group, el("detail").querySelector(".actions"));
+    for (const line of waiting) {
+      const item = make("div", "queued");
+      item.append(make("b", null, "› "));
+      item.append(document.createTextNode(line));
+      el("detail").insertBefore(item, el("detail").querySelector(".actions"));
+    }
+  });
+
   const actions = make("div", "actions");
   if (s.steerable) {
     action(actions, "Window", "ghost", async () => {
@@ -424,7 +552,7 @@ function drawDetail(s) {
       }
     });
     action(actions, "Rename", "ghost", async () => {
-      const name = window.prompt("Call this session:", s.name);
+      const name = await ask("Call this session:", s.name);
       if (!name) return;
       try {
         await invoke("rename", { id: s.id, name });
@@ -434,6 +562,22 @@ function drawDetail(s) {
       }
       draw();
     });
+    action(actions, "Branch", "ghost", async () => {
+      const branch = await ask("Start a session on its own branch, called:");
+      if (!branch) return;
+      say(await invoke("isolate", { id: s.id, branch }));
+      draw();
+    });
+    if (s.branch && s.branch !== "master" && s.branch !== "main") {
+      action(actions, "Merge back", "ghost", async () => {
+        say(await invoke("merge", { id: s.id }));
+        draw();
+      });
+      action(actions, "Discard checkout", "ghost danger", async () => {
+        say(await invoke("discard", { id: s.id }));
+        draw();
+      });
+    }
     action(actions, "Close", "ghost danger", async () => {
       try {
         await invoke("stop", { id: s.id });
@@ -464,8 +608,8 @@ function drawAsk() {
   const bar = el("ask");
   bar.hidden = !waiting;
   if (!waiting) return;
-  el("ask-who").textContent = waiting.name;
-  el("ask-what").textContent = waiting.asking.question;
+  text("ask-who", waiting.name);
+  text("ask-what", waiting.asking.question);
   const answers = el("answers");
   clear(answers);
   waiting.asking.options.forEach((option, i) => {
@@ -507,10 +651,10 @@ async function draw() {
   const out = sessions.reduce((n, x) => n + x.output, 0);
   const spend = sessions.reduce((n, x) => n + x.cost, 0);
   const requests = sessions.reduce((n, x) => n + x.requests, 0);
-  el("spend").textContent = showCost
+  text("spend", showCost
     ? `${tokens(out)} out · ~$${spend.toFixed(2)} if API`
-    : `${tokens(out)} out · ${requests} requests`;
-  el("context").textContent = s ? s.name : "";
+    : `${tokens(out)} out · ${requests} requests`);
+  text("context", s ? s.name : "");
 
   const canType = !!s && s.steerable;
   el("message").disabled = !canType;
@@ -519,6 +663,7 @@ async function draw() {
   drawAgents();
   drawDetail(s);
   drawAsk();
+  drawFilters();
   if (!s) {
     clear(el("pane"));
     el("pane").append(empty("no sessions yet — start one"));
@@ -526,7 +671,7 @@ async function draw() {
 }
 
 // ── the things you can press ───────────────────────────────────────────────
-el("panes").addEventListener("click", (e) => {
+on("panes", "click", (e) => {
   const tab = e.target.closest(".tab");
   if (!tab) return;
   if (pane === "mirror" && tab.dataset.pane !== "mirror" && selected) {
@@ -539,30 +684,21 @@ el("panes").addEventListener("click", (e) => {
   for (const other of el("panes").querySelectorAll(".tab")) {
     other.classList.toggle("is-on", other === tab);
   }
-  clear(el("pane"));
   draw();
-  soon();
+  soon(0);
 });
 
-el("filter").addEventListener("click", () => {
+on("filter", "click", () => {
   liveOnly = !liveOnly;
   draw();
 });
 
-el("cost").addEventListener("click", () => {
+on("cost", "click", () => {
   showCost = !showCost;
   draw();
 });
 
-el("tui").addEventListener("click", async () => {
-  try {
-    say(`terminal view opened in ${await invoke("open_tui")}`);
-  } catch (e) {
-    say(String(e));
-  }
-});
-
-el("composer").addEventListener("submit", async (e) => {
+on("composer", "submit", async (e) => {
   e.preventDefault();
   const box = el("message");
   const text = box.value.trim();
@@ -580,7 +716,7 @@ el("composer").addEventListener("submit", async (e) => {
   }
 });
 
-el("interrupt").addEventListener("click", async () => {
+on("interrupt", "click", async () => {
   if (!selected) return;
   try {
     await invoke("interrupt", { id: selected });
@@ -590,22 +726,31 @@ el("interrupt").addEventListener("click", async () => {
   }
 });
 
-el("new").addEventListener("click", () => {
+on("new", "click", () => {
   el("start-path").value = current()?.cwd || "";
   el("starter").showModal();
 });
 
-el("start-form").addEventListener("submit", async (e) => {
+on("start-form", "submit", async (e) => {
   if (e.submitter && e.submitter.value === "cancel") return;
+  const value = (id) => el(id).value.trim();
   const agent = el("start-agent").value;
-  const model = el("start-model").value.trim();
-  const first = el("start-prompt").value.trim();
-  let line = el("start-path").value.trim() || ".";
+  let line = value("start-path") || ".";
   if (agent && agent !== "claude") line += ` --agent ${agent}`;
-  if (model) line += ` --model ${model}`;
+  if (value("start-model")) line += ` --model ${value("start-model")}`;
+  if (value("start-effort")) line += ` --effort ${value("start-effort")}`;
+  if (value("start-mode")) line += ` --mode ${value("start-mode")}`;
+  const branch = value("start-branch");
+  const first = value("start-prompt");
   if (first) line += ` ${first}`;
   try {
-    say(`started ${await invoke("start", { line, name: el("start-name").value.trim() || null })}`);
+    // A branch means its own checkout, which is a different way to start.
+    if (branch) {
+      const id = current()?.id;
+      say(id ? await invoke("isolate", { id, branch }) : "select a session in that repository first");
+    } else {
+      say(`started ${await invoke("start", { line, name: value("start-name") || null })}`);
+    }
   } catch (err) {
     say(String(err));
   }
@@ -646,45 +791,160 @@ function drawPast() {
   if (!hits.length) list.append(empty("nothing matches that"));
 }
 
-el("resume").addEventListener("click", async () => {
+on("resume", "click", async () => {
   el("past-filter").value = "";
   history = await invoke("past");
   drawPast();
   el("past").showModal();
   el("past-filter").focus();
 });
-el("past-filter").addEventListener("input", drawPast);
-el("past-close").addEventListener("click", () => el("past").close());
+on("past-filter", "input", drawPast);
+on("past-close", "click", () => el("past").close());
 
 // Typing into the session's own screen: click it, and the keyboard belongs to
 // the session until you click away.
-el("pane").addEventListener("click", () => {
+on("pane", "click", () => {
   if (pane !== "mirror") return;
   typing = true;
   el("pane").focus();
   el("pane").classList.add("typing");
   say("typing into the session · click away to stop");
 });
-el("pane").addEventListener("blur", () => {
+on("pane", "blur", () => {
   typing = false;
   el("pane").classList.remove("typing");
 });
-el("pane").addEventListener("keydown", (e) => {
+on("pane", "keydown", (e) => {
   if (!typing || !selected) return;
   e.preventDefault();
   // Send and move on. Waiting for the round trip, and then for a redraw, made
   // every key cost the sum of both — which is what "delayed" was.
   invoke("key", { id: selected, key: e.key, ctrl: e.ctrlKey }).catch((err) => say(String(err)));
-  soon();
+  // The session redraws a few milliseconds after the key lands, so look twice:
+  // once almost immediately, once after it has had time to paint.
+  soon(10);
+  soon(45);
 });
+
+on("search", "keydown", async (e) => {
+  if (e.key !== "Enter") return;
+  const text = el("search").value.trim();
+  if (!text) return;
+  const hits = await invoke("search", { text });
+  el("hits-title").textContent = `${hits.length} matches for “${text}”`;
+  const list = el("hits-list");
+  clear(list);
+  for (const hit of hits) {
+    const row = make("li", "past-row");
+    row.append(make("span", "when", clock(hit.at)));
+    row.append(make("span", "title", hit.head));
+    row.append(make("span", "folder", hit.session));
+    row.addEventListener("click", () => {
+      el("hits").close();
+      selected = hit.id;
+      pane = "feed";
+      for (const tab of el("panes").querySelectorAll(".tab")) {
+        tab.classList.toggle("is-on", tab.dataset.pane === "feed");
+      }
+      draw();
+      soon(0);
+    });
+    list.append(row);
+  }
+  if (!hits.length) list.append(empty("nothing said that anywhere"));
+  el("hits").showModal();
+});
+on("hits-close", "click", () => el("hits").close());
+
+// The one thing that cannot make progress without you, wherever it is.
+on("waiting", "click", () => {
+  const order = sessions.map((s) => s.id);
+  const from = order.indexOf(selected);
+  const next = sessions
+    .slice(from + 1)
+    .concat(sessions.slice(0, from + 1))
+    .find((s) => s.asking);
+  if (!next) return say("nothing is waiting on you");
+  selected = next.id;
+  draw();
+  soon(0);
+});
+
+on("queue", "click", async () => {
+  const box = el("message");
+  const text = box.value.trim();
+  if (!text || !selected) return;
+  try {
+    const n = await invoke("queue", { id: selected, text });
+    box.value = "";
+    say(`queued — ${n} waiting for the next idle moment`);
+  } catch (e) {
+    say(String(e));
+  }
+  draw();
+});
+
+// Fill the window with the session. A terminal cannot do this without losing
+// everything else; here it is one key, and one key back.
+function toggleFocus() {
+  focused = !focused;
+  document.body.classList.toggle("focused", focused);
+  if (focused && pane !== "mirror") {
+    pane = "mirror";
+    for (const tab of el("panes").querySelectorAll(".tab")) {
+      tab.classList.toggle("is-on", tab.dataset.pane === "mirror");
+    }
+  }
+  soon(0);
+}
+on("focus", "click", toggleFocus);
 
 // y and n answer whatever is waiting, as they do in the terminal view.
 document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && focused) return toggleFocus();
   if (typing || e.target.matches("input, select, textarea")) return;
   const answers = el("answers");
-  if (e.key === "y" && answers.children[0]) answers.children[0].click();
-  if (e.key === "n" && answers.children[1]) answers.children[1].click();
+  if (e.key === "y" && answers.children[0]) return answers.children[0].click();
+  if (e.key === "n" && answers.children[1]) return answers.children[1].click();
+  if (e.key === "/") {
+    e.preventDefault();
+    return el("search").focus();
+  }
+  if (e.key === "f") return toggleFocus();
+  if (e.key === "n") return el("new").click();
+  if (e.key === "r") return el("resume").click();
+  if (e.key === "Escape" && selected) return el("interrupt").click();
+  // The panes, left to right, as the numbers do in the terminal view.
+  const tabs = [...el("panes").querySelectorAll(".tab")];
+  const n = Number(e.key);
+  if (n >= 1 && n <= tabs.length) tabs[n - 1].click();
 });
+
+// A question with a text answer. `prompt()` is blocked in a webview, and a
+// dialog can look like the rest of this instead of like 1998.
+function ask(title, value = "") {
+  return new Promise((resolve) => {
+    el("asking-title").textContent = title;
+    const box = el("asking-input");
+    box.value = value;
+    const done = (answer) => {
+      el("asking").close();
+      el("asking-ok").onclick = null;
+      el("asking-cancel").onclick = null;
+      box.onkeydown = null;
+      resolve(answer);
+    };
+    el("asking-ok").onclick = () => done(box.value.trim());
+    el("asking-cancel").onclick = () => done(null);
+    box.onkeydown = (e) => {
+      if (e.key === "Enter") done(box.value.trim());
+      if (e.key === "Escape") done(null);
+    };
+    el("asking").showModal();
+    box.focus();
+    box.select();
+  });
+}
 
 // ── the accent ────────────────────────────────────────────────────────────
 // A session lets you pick its colours; so does this. The accent is the only
@@ -716,30 +976,92 @@ function drawSwatches() {
   }
 }
 
-el("theme").addEventListener("click", () => {
+let notifyOn = true;
+function drawMenu() {
+  const grid = el("menu-grid");
+  clear(grid);
+  const item = (label, note, run) => {
+    const button = make("button");
+    button.append(document.createTextNode(label));
+    button.append(make("small", null, note));
+    button.addEventListener("click", async () => {
+      el("menu").close();
+      await run();
+      draw();
+    });
+    grid.append(button);
+  };
+  item("Broadcast…", "say one thing to every session", async () => {
+    const text = await ask("Send to every session scope can reach:");
+    if (text) say(`sent to ${await invoke("broadcast", { text })} sessions`);
+  });
+  item("Launch the fleet", "start everything the fleet file describes", async () => {
+    say(await invoke("launch_fleet"));
+  });
+  item("Tidy up", "close sessions whose process has exited", async () => {
+    const closed = await invoke("prune");
+    say(closed.length ? `closed ${closed.join(", ")}` : "nothing to tidy up");
+  });
+  item("Close everything", "every session scope started", async () => {
+    const closed = await invoke("close_all");
+    say(`closed ${closed.length} — each reopens from Resume`);
+  });
+  item(notifyOn ? "Notifications on" : "Notifications off", "when a session needs you", async () => {
+    notifyOn = await invoke("notifications", { on: !notifyOn });
+    say(notifyOn ? "notifications on" : "notifications off");
+  });
+  item("Look again", "rescan now rather than at the next beat", async () => {
+    await invoke("rescan");
+    say("rescanned");
+  });
+  item("Terminal view", "drive all of this from a terminal", async () => {
+    say(`opened in ${await invoke("open_tui")}`);
+  });
+  item("Keys", "what the keyboard does here", async () => {
+    el("detail-title").textContent = "Keys";
+    el("detail-body").textContent = [
+      "1 … 9      the panes, left to right",
+      "n          new session",
+      "/          search every session",
+      "r          resume a conversation",
+      "f          fill the window with the session",
+      "y / n      accept or decline what is being asked",
+      "enter      send the message you have typed",
+      "escape     interrupt the selected session",
+      "click the session's screen to type straight into it",
+      "drag a session in the list to move it",
+    ].join("\n");
+    el("detail-text").showModal();
+  });
+}
+
+on("more", "click", () => {
+  drawMenu();
   drawSwatches();
   useAccent(localStorage.getItem("accent") || ACCENTS[0]);
-  el("colours").showModal();
+  el("menu").showModal();
 });
-el("custom-accent").addEventListener("input", (e) => useAccent(e.target.value));
-el("colours-close").addEventListener("click", () => el("colours").close());
+on("custom-accent", "input", (e) => useAccent(e.target.value));
+on("menu-close", "click", () => el("menu").close());
+on("detail-close", "click", () => el("detail-text").close());
 useAccent(localStorage.getItem("accent") || ACCENTS[0]);
 
-el("hint").textContent = "y accept · n decline · drag to reorder · click the session to type into it";
+el("hint").textContent = "1…9 panes · n new · / search · f fill · y accept · ⋯ for the rest";
 wireDragging();
 
 // Two rhythms. Everything around the edges — the list, the counts, the detail —
 // changes slowly and is redrawn slowly. The pane in the middle is whatever you
 // are actually watching, and when that is a session's own screen it has to keep
 // up with the session.
-let paneSoon = null;
-function soon() {
-  if (paneSoon) return;
-  paneSoon = setTimeout(async () => {
-    paneSoon = null;
+const pending = new Set();
+function soon(delay = 12) {
+  if (pending.has(delay)) return;
+  pending.add(delay);
+  setTimeout(async () => {
+    pending.delete(delay);
     const s = current();
     if (s) await painters[pane](s);
-  }, 16);
+  }, delay);
 }
 
 async function paneTick() {
@@ -751,7 +1073,7 @@ async function paneTick() {
       say(String(e));
     }
   }
-  setTimeout(paneTick, pane === "mirror" ? (typing ? 90 : 160) : 500);
+  setTimeout(paneTick, pane === "mirror" ? (typing ? 55 : 140) : 500);
 }
 
 draw();

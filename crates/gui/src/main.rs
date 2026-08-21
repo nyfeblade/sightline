@@ -492,6 +492,133 @@ fn frame(shared: State<Shared>, id: String, cols: u16, rows: u16) -> Option<scre
     control::frame(&pane, cols, rows)
 }
 
+#[derive(Serialize)]
+struct HitDto {
+    id: String,
+    session: String,
+    at: String,
+    head: String,
+}
+
+/// Every mention of this across every session scope is watching — the same
+/// search the terminal view does with `/`.
+#[tauri::command]
+fn search(shared: State<Shared>, text: String) -> Vec<HitDto> {
+    shared.raw(|app| {
+        app.run_search(&text);
+        app.hits
+            .iter()
+            .filter_map(|(si, ei)| {
+                let s = app.sessions.get(*si)?;
+                let e = s.events.get(*ei)?;
+                Some(HitDto {
+                    id: s.id.clone(),
+                    session: s.label(),
+                    at: e.ts.map(|t| t.to_rfc3339()).unwrap_or_default(),
+                    head: e.head.clone(),
+                })
+            })
+            .take(300)
+            .collect()
+    })
+}
+
+/// Messages held for a session until it next goes idle.
+#[tauri::command]
+fn queued(shared: State<Shared>, id: String) -> Vec<String> {
+    shared.raw(|app| app.queued_for(&id))
+}
+
+#[tauri::command]
+fn queue(shared: State<Shared>, id: String, text: String) -> Result<usize, String> {
+    shared.raw(|app| app.queue_for(&id, &text))
+}
+
+/// Say the same thing to every session scope can reach.
+#[tauri::command]
+fn broadcast(shared: State<Shared>, text: String) -> usize {
+    shared.raw(|app| app.broadcast(&text))
+}
+
+/// Start a session on a branch of its own, in its own checkout.
+#[tauri::command]
+fn isolate(shared: State<Shared>, id: String, branch: String) -> String {
+    shared
+        .on(&id, |app| {
+            app.isolate(&branch);
+            app.note.clone()
+        })
+        .unwrap_or_else(|| "no such session".into())
+}
+
+/// Merge an isolated session's branch back, or throw its checkout away.
+#[tauri::command]
+fn merge(shared: State<Shared>, id: String) -> String {
+    shared
+        .on(&id, |app| {
+            app.merge_isolated();
+            app.note.clone()
+        })
+        .unwrap_or_else(|| "no such session".into())
+}
+
+#[tauri::command]
+fn discard(shared: State<Shared>, id: String) -> String {
+    shared
+        .on(&id, |app| {
+            app.discard_isolated();
+            app.note.clone()
+        })
+        .unwrap_or_else(|| "no such session".into())
+}
+
+/// Start everything the fleet file describes.
+#[tauri::command]
+fn launch_fleet(shared: State<Shared>) -> String {
+    bootstrap::ensure_backend().ok();
+    shared.raw(|app| {
+        app.launch_fleet();
+        app.note.clone()
+    })
+}
+
+/// Where the fleet file is, and what it says.
+#[tauri::command]
+fn fleet() -> (String, String) {
+    let path = core_app::fleet_path();
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    (path.to_string_lossy().into_owned(), text)
+}
+
+/// Close everything scope started, or just what has already finished.
+#[tauri::command]
+fn close_all() -> Vec<String> {
+    control::stop_all()
+}
+
+#[tauri::command]
+fn prune() -> Vec<String> {
+    control::prune()
+}
+
+/// Desktop notifications, on or off; returns where it landed.
+#[tauri::command]
+fn notifications(shared: State<Shared>, on: bool) -> bool {
+    shared.raw(|app| {
+        app.notify_on = on;
+        app.notify_on
+    })
+}
+
+/// Look again now, rather than at the next beat.
+#[tauri::command]
+fn rescan(shared: State<Shared>) {
+    shared.raw(|app| {
+        app.discover();
+        app.refresh();
+    });
+}
+
 /// Send one key press to a session, so its own screen can be typed into.
 /// Browsers name keys their own way; this is the translation, and anything
 /// without a terminal meaning is dropped rather than guessed at.
@@ -694,7 +821,20 @@ fn main() {
             release_frame,
             key,
             window,
-            tree
+            tree,
+            search,
+            queued,
+            queue,
+            broadcast,
+            isolate,
+            merge,
+            discard,
+            launch_fleet,
+            fleet,
+            close_all,
+            prune,
+            notifications,
+            rescan
         ])
         .build(tauri::generate_context!())
         .expect("scope failed to start")

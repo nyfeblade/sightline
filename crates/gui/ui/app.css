@@ -177,7 +177,12 @@ main {
 }
 /* Prose stops being readable long before it stops fitting. A terminal is
    exempt: it is exactly as wide as it is. */
-.pane > .row, .pane > .card, .pane > .line, .pane > .end { max-width: 132ch; }
+/* Centred rather than left-hugging: a reading column pinned to one edge of a
+   wide window leaves a hole beside it. */
+.pane > .row, .pane > .card, .pane > .line, .pane > .end {
+  max-width: 132ch;
+  margin-inline: auto;
+}
 
 .row { display: flex; gap: 10px; padding: 1px 0; align-items: baseline; }
 .at { color: var(--faint); flex: none; }
@@ -249,7 +254,7 @@ main {
 .bar-line i { display: block; height: 100%; background: var(--gold); }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .chip { border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; color: var(--muted); font-size: .9em; }
-.actions { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 14px; margin-top: auto; }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 14px; }
 /* A button that wraps its own label reads as broken, so they take the width
    they need and share what is left. */
 .actions button { flex: 1 1 auto; white-space: nowrap; padding: 5px 9px; }
@@ -328,3 +333,65 @@ dialog input[type="color"] { padding: 2px; height: 32px; width: 60px; }
 .past-row .title { color: var(--body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .past-row .open { color: var(--good); }
 .past-row .folder { color: var(--faint); font-size: .9em; }
+
+/* ── search, menus, focus ───────────────────────────────────────────────── */
+.search {
+  background: var(--ground);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  padding: 5px 10px;
+  width: clamp(140px, 22vw, 320px);
+}
+.search:focus { outline: none; border-color: var(--gold-dim); }
+@media (max-width: 1020px) { .search { display: none; } }
+
+.filters { padding: 6px 12px 0; }
+.filters .chip { cursor: pointer; }
+.filters .chip.is-on { border-color: var(--gold-dim); color: var(--gold); }
+
+/* Fill the window with the session. A terminal cannot do this without losing
+   everything else; here it is one key, and one key back. */
+body.focused .rail,
+body.focused .tabs .tab:not(.is-on),
+body.focused .composer .ghost { display: none; }
+body.focused main { grid-template-columns: minmax(0, 1fr); }
+
+.caret { background: var(--gold); color: var(--ground); }
+.screen { position: relative; }
+
+.menu-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding-bottom: 4px; }
+.menu-grid button {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--body);
+  padding: 8px 10px;
+  text-align: left;
+}
+.menu-grid button:hover { border-color: var(--gold-dim); color: var(--text); }
+.menu-grid small { display: block; color: var(--faint); }
+
+dialog pre {
+  background: var(--ground);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--body);
+  margin: 0;
+  max-height: 56vh;
+  overflow: auto;
+  padding: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+label.inline { display: flex; align-items: center; gap: 10px; }
+
+.queued { color: var(--muted); font-size: .92em; padding: 2px 0; }
+.queued b { color: var(--gold); font-weight: 400; }
+
+/* The detail rail earns its width: facts, then what is queued, then what can
+   be done. Nothing is pushed to the bottom to leave a hole in the middle. */
+.actions { margin-top: 12px; }
+.row.hit { cursor: pointer; }
+.row.hit:hover { background: var(--raised); }

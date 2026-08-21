@@ -11,15 +11,15 @@
        without you. -->
   <header class="bar">
     <span class="mark">SCOPE</span>
-    <span class="version" id="version">v0.3.0</span>
     <span class="counts" id="counts"></span>
     <span class="grow"></span>
+    <input id="search" class="search" spellcheck="false" autocomplete="off"
+           placeholder="Search every session…  /" />
     <button class="ghost" id="cost" title="Requests, or what the same tokens would cost on the API">
       <span id="spend"></span>
     </button>
-    <button class="ghost" id="theme" title="Change the accent colour">◐</button>
     <button class="ghost" id="resume">Resume…</button>
-    <button class="ghost" id="tui" title="Drive it from a terminal instead">Terminal view</button>
+    <button class="ghost" id="more" title="Everything else">⋯</button>
     <button class="primary" id="new">New session</button>
   </header>
 
@@ -27,7 +27,10 @@
     <aside class="rail" id="rail">
       <div class="rail-head">
         <span id="agent-count">Sessions</span>
-        <button class="icon" id="filter" title="Show only sessions with a process">live</button>
+        <span>
+          <button class="icon" id="filter" title="Only sessions with a process">live</button>
+          <button class="icon" id="waiting" title="Go to the next session waiting on you">waiting</button>
+        </span>
       </div>
       <ol class="agents" id="agents"></ol>
     </aside>
@@ -43,12 +46,17 @@
         <button class="tab" data-pane="agents">Subagents</button>
         <button class="tab" data-pane="stats">Stats</button>
         <button class="tab" data-pane="errors">Errors</button>
+        <button class="tab" data-pane="fleet">Fleet</button>
+        <span class="grow"></span>
         <span class="context" id="context"></span>
+        <button class="icon" id="focus" title="Fill the window with this session (f)">⤢</button>
       </nav>
+      <div class="chips filters" id="filters" hidden></div>
       <div class="pane" id="pane" tabindex="0"></div>
       <form class="composer" id="composer">
         <input id="message" spellcheck="false" autocomplete="off"
                placeholder="Message this session…" />
+        <button class="ghost" id="queue" type="button" title="Hold it until this session is idle">Queue</button>
         <button class="ghost" id="interrupt" type="button" title="Escape">Interrupt</button>
         <button class="primary send" type="submit">Send</button>
       </form>
@@ -84,6 +92,9 @@
         </select>
       </label>
       <label>Model<input id="start-model" spellcheck="false" placeholder="whatever it defaults to" /></label>
+      <label>Effort<input id="start-effort" spellcheck="false" placeholder="low · medium · high" /></label>
+      <label>Mode<input id="start-mode" spellcheck="false" placeholder="plan · auto" /></label>
+      <label>Branch<input id="start-branch" spellcheck="false" placeholder="its own worktree, if named" /></label>
       <label>First message<input id="start-prompt" spellcheck="false" placeholder="optional" /></label>
       <menu>
         <button value="cancel">Cancel</button>
@@ -92,18 +103,41 @@
     </form>
   </dialog>
 
-  <dialog id="colours">
-    <h2>Accent</h2>
-    <div class="swatches" id="swatches"></div>
-    <label>Custom<input type="color" id="custom-accent" /></label>
-    <menu><button id="colours-close" class="ghost">Done</button></menu>
-  </dialog>
-
   <dialog id="past">
     <h2>Resume a conversation</h2>
     <input id="past-filter" spellcheck="false" autocomplete="off" placeholder="Filter by name or folder…" />
     <ol class="past-list" id="past-list"></ol>
     <menu><button id="past-close" class="ghost">Close</button></menu>
+  </dialog>
+
+  <dialog id="hits">
+    <h2 id="hits-title">Matches</h2>
+    <ol class="past-list" id="hits-list"></ol>
+    <menu><button id="hits-close" class="ghost">Close</button></menu>
+  </dialog>
+
+  <dialog id="menu">
+    <h2>Everything else</h2>
+    <div class="menu-grid" id="menu-grid"></div>
+    <div class="group">ACCENT</div>
+    <div class="swatches" id="swatches"></div>
+    <label class="inline">Custom<input type="color" id="custom-accent" /></label>
+    <menu><button id="menu-close" class="ghost">Close</button></menu>
+  </dialog>
+
+  <dialog id="detail-text">
+    <h2 id="detail-title"></h2>
+    <pre id="detail-body"></pre>
+    <menu><button id="detail-close" class="ghost">Close</button></menu>
+  </dialog>
+
+  <dialog id="asking">
+    <h2 id="asking-title"></h2>
+    <input id="asking-input" spellcheck="false" autocomplete="off" />
+    <menu>
+      <button id="asking-cancel" class="ghost">Cancel</button>
+      <button id="asking-ok" class="primary">OK</button>
+    </menu>
   </dialog>
 
   <script src="app.js"></script>
