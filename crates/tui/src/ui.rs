@@ -1442,7 +1442,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     }
     // Deliberately short: everything else is one keypress away behind the
     // actions menu and the help sheet.
-    let keys = "  j/k session · s send · enter actions · 1…9 panes · / search · ? help";
+    let keys = "  j/k session · n new · s send · enter actions · 1…9 panes · / search · ? help";
     let state = format!(
         "{} · {} · {} ",
         app.view.label(),

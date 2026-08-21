@@ -319,37 +319,28 @@ pub fn kill_session(session: &str) -> Result<(), String> {
 }
 
 /// Start a session with explicit Claude Code options.
-pub fn new_session_with(
-    cwd: &Path,
-    model: Option<&str>,
-    effort: Option<&str>,
-    permission_mode: Option<&str>,
-    prompt: Option<&str>,
-) -> Result<String, String> {
+/// Start a session in its own tmux session, running whatever agent was asked
+/// for, and type the opening lines into it once it is up.
+pub fn new_session_with(cwd: &Path, argv: &[String], opening: &[String]) -> Result<String, String> {
     if !available() {
         return Err("tmux is not installed".into());
     }
-    let name = next_name();
-    let mut cmd = vec!["claude".to_string()];
-    if let Some(m) = model {
-        cmd.push("--model".into());
-        cmd.push(m.into());
-    }
-    if let Some(e) = effort {
-        cmd.push("--effort".into());
-        cmd.push(e.into());
-    }
-    if let Some(p) = permission_mode {
-        cmd.push("--permission-mode".into());
-        cmd.push(p.into());
-    }
+    let program = argv.first().cloned().unwrap_or_default();
+    let name = crate::control::next_name_after(
+        &tmux(&["list-sessions", "-F", "#{session_name}"]).unwrap_or_default(),
+    );
     let cwd = cwd.to_string_lossy().to_string();
     let mut args: Vec<&str> = vec!["new-session", "-d", "-s", &name, "-c", &cwd, "--"];
-    args.extend(cmd.iter().map(String::as_str));
-    tmux(&args).ok_or("tmux could not start the session (is claude on PATH?)")?;
-    if let Some(p) = prompt {
+    args.extend(argv.iter().map(String::as_str));
+    tmux(&args).ok_or(format!(
+        "tmux could not start the session (is {program} on PATH?)"
+    ))?;
+    // Give the agent a moment to draw its prompt before typing into it.
+    if !opening.is_empty() {
         std::thread::sleep(std::time::Duration::from_millis(1500));
-        send_text(&format!("{name}:0.0"), p)?;
+        for line in opening {
+            send_text(&format!("{name}:0.0"), line)?;
+        }
     }
     Ok(name)
 }

@@ -134,12 +134,36 @@ moment, not a minute.
 ### Starting one
 
 `n` takes a folder and, after it, anything you would have put on the command
-line: `~/api --model opus --effort high fix the failing tests`. Whatever is left
+line: `~/api --model opus --effort high fix the failing tests`, plus `--agent`
+to run something other than Claude Code and `--name` to skip being asked. Whatever is left
 after the flags is the first thing the session is asked, unquoted, because
 typing a message is the common case. `W` does the same on a fresh branch in its
 own worktree.
 
+### Other agents
+
+Claude Code is what scope grew around, and everything it knows about a session's
+insides — the feed, files, cost, subagents, plans — comes from the transcript
+and registry that only Claude Code writes. What generalises is the part that made
+steering work at all: a session is a program in a terminal, and a terminal can be
+read and typed into.
+
+So `--agent` starts something else — `codex`, `gemini`, `aider`, or any command
+you name — and it is a session like any other: watched on screen, typed into,
+interrupted, given its own worktree, named, closed, reopened in a window. Only
+the panes that read a transcript are missing, and it says so rather than showing
+you empty ones.
+
+```
+~/api --agent codex --name refactor fix the auth tests
+```
+
 ### Naming and closing
+
+`n` starts a session from anywhere — it is not something you reach through a
+session you already have — and asks what to call it before it starts, because
+naming it at birth is one line typed into it and naming it later is a second
+command. `enter` skips.
 
 `F2` renames the selected session. A running one is asked to rename itself —
 `/rename` is a real command, so its own header, the registry and the transcript

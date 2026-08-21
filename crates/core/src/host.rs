@@ -391,29 +391,16 @@ fn read_into(mut reader: Box<dyn Read + Send>, screen: Arc<Mutex<vt100::Parser>>
 }
 
 /// Start a session with explicit Claude Code options.
-pub fn new_session_with(
-    cwd: &Path,
-    model: Option<&str>,
-    effort: Option<&str>,
-    permission_mode: Option<&str>,
-    prompt: Option<&str>,
-) -> Result<String, String> {
-    let mut argv = vec!["claude".to_string()];
-    for (flag, value) in [
-        ("--model", model),
-        ("--effort", effort),
-        ("--permission-mode", permission_mode),
-    ] {
-        if let Some(v) = value {
-            argv.push(flag.into());
-            argv.push(v.into());
-        }
-    }
-    let name = spawn(cwd, argv)?;
-    if let Some(p) = prompt {
-        // Give Claude Code a moment to draw its prompt before typing into it.
+/// Start a session on a pty scope owns, running whatever agent was asked for,
+/// and type the opening lines into it once it is up.
+pub fn new_session_with(cwd: &Path, argv: &[String], opening: &[String]) -> Result<String, String> {
+    let name = spawn(cwd, argv.to_vec())?;
+    if !opening.is_empty() {
+        // Give the agent a moment to draw its prompt before typing into it.
         std::thread::sleep(std::time::Duration::from_millis(1500));
-        send_text(&name, p)?;
+        for line in opening {
+            send_text(&name, line)?;
+        }
     }
     Ok(name)
 }

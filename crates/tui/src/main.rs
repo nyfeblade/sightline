@@ -19,9 +19,11 @@ const USAGE: &str = "\
 nyfe scope — live view of what Claude Code is doing
 
 usage: scope [options]
-       scope new [path] [--model M] [--effort E] [--permission-mode P]
-                 [--prompt T] [--worktree BRANCH]
-                               start a Claude Code session and exit
+       scope new [path] [--agent A] [--name N] [--model M] [--effort E]
+                 [--permission-mode P] [--prompt T] [--worktree BRANCH]
+                               start a session and exit; --agent picks which
+                               agent to run (claude, codex, gemini, aider, or
+                               any command), default claude
        scope send <who> <text> type a line into a running session and submit it
        scope adopt <who>        (re)open a conversation in tmux so it can be steered
        scope prune              close scope sessions whose process has exited
@@ -268,14 +270,24 @@ fn main() -> Result<()> {
             }
             None => path,
         };
-        let name = control::new_session_with(
-            std::path::Path::new(&path),
-            opt("--model").as_deref(),
-            opt("--effort").as_deref(),
-            opt("--permission-mode").as_deref(),
-            opt("--prompt").as_deref(),
-        )
-        .map_err(|e| anyhow::anyhow!(e))?;
+        let spec = app::NewSpec {
+            path,
+            agent: opt("--agent"),
+            name: opt("--name"),
+            model: opt("--model"),
+            effort: opt("--effort"),
+            mode: opt("--permission-mode"),
+            prompt: opt("--prompt"),
+        };
+        // Starting a session is the same act however it is asked for, so the
+        // command line goes through the engine rather than round it.
+        let mut app = App::new(
+            app::default_root(),
+            app::default_sessions_dir(),
+            Duration::from_secs(3600),
+            true,
+        );
+        let name = app.start_session(&spec).map_err(|e| anyhow::anyhow!(e))?;
         println!("started {name} — {}", control::attach_hint(&name));
         return Ok(());
     }

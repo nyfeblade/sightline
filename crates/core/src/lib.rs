@@ -4,6 +4,7 @@
 //! ask the same questions and call the same actions, so behaviour cannot drift
 //! between them. Anything that would have to be written twice belongs here.
 
+pub mod agents;
 pub mod app;
 pub mod bootstrap;
 pub mod control;

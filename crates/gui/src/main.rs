@@ -228,20 +228,17 @@ fn interrupt(shared: State<Shared>, id: String) -> Result<(), String> {
         .unwrap_or_else(|| Err("no such session".into()))
 }
 
+/// Start a session. `line` is the same thing the terminal view accepts — a
+/// folder and any flags — and `name` is what to call it, which the app asks
+/// for in a field rather than a second prompt.
 #[tauri::command]
-fn start(shared: State<Shared>, line: String) -> Result<String, String> {
+fn start(shared: State<Shared>, line: String, name: Option<String>) -> Result<String, String> {
     bootstrap::ensure_backend()?;
-    let spec = core_app::parse_new(&line);
-    let path = std::path::PathBuf::from(core_app::expand(&spec.path));
-    let name = control::new_session_with(
-        &path,
-        spec.model.as_deref(),
-        spec.effort.as_deref(),
-        spec.mode.as_deref(),
-        spec.prompt.as_deref(),
-    )?;
-    shared.with(|app| app.discover());
-    Ok(name)
+    let mut spec = core_app::parse_new(&line);
+    if let Some(n) = name.filter(|n| !n.trim().is_empty()) {
+        spec.name = Some(n);
+    }
+    shared.with(|app| app.start_session(&spec))
 }
 
 /// Bring a conversation somewhere scope can steer it — the one it is showing,

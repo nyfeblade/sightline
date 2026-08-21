@@ -1,5 +1,6 @@
 //! Discovery, refresh, and view state.
 
+use crate::agents;
 use crate::control::{self, Approval, Pane};
 use crate::event::{Ev, Filter};
 use crate::git;
@@ -26,6 +27,8 @@ pub enum Prompt {
     Discard,
     StopAll,
     Rename,
+    /// what to call the session about to start
+    NameIt,
     Adopt,
 }
 
@@ -79,10 +82,45 @@ impl Regions {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct NewSpec {
     pub path: String,
+    /// which agent to run; Claude Code when nothing says otherwise
+    pub agent: Option<String>,
+    /// what to call the session
+    pub name: Option<String>,
     pub model: Option<String>,
     pub effort: Option<String>,
     pub mode: Option<String>,
     pub prompt: Option<String>,
+}
+
+/// Where scope keeps what it knows between runs.
+fn data_dir() -> PathBuf {
+    let base = std::env::var("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| home().join(".local").join("share"));
+    base.join("nyfe-scope")
+}
+
+fn names_path() -> PathBuf {
+    data_dir().join("names.json")
+}
+
+/// Names for sessions that have none of their own, by the tmux session they
+/// run in — which is what identifies one of these for as long as it lives.
+fn load_names() -> HashMap<String, String> {
+    std::fs::read_to_string(names_path())
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+fn save_names(names: &HashMap<String, String>) {
+    let path = names_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(text) = serde_json::to_string_pretty(names) {
+        let _ = std::fs::write(path, text);
+    }
 }
 
 /// Append the record Claude Code writes when a conversation is renamed. Its
@@ -129,6 +167,8 @@ pub fn parse_new(text: &str) -> NewSpec {
             break;
         }
         let field = match word {
+            "--agent" | "-a" => Some(&mut spec.agent),
+            "--name" | "-n" => Some(&mut spec.name),
             "--model" | "-m" => Some(&mut spec.model),
             "--effort" | "-e" => Some(&mut spec.effort),
             "--mode" | "--permission-mode" | "-p" => Some(&mut spec.mode),
@@ -350,6 +390,10 @@ pub struct App {
     quit_asked: Option<Instant>,
     /// which session was asked about stopping, and when
     stop_asked: Option<(String, Instant)>,
+    /// names scope keeps for sessions that have none of their own
+    names: HashMap<String, String>,
+    /// a session waiting on the name it is about to be given
+    pending_new: Option<NewSpec>,
     /// the conversation browser: everything on the machine, resumable
     pub past: Vec<Past>,
     pub past_open: bool,
@@ -414,6 +458,8 @@ impl App {
             view_before: None,
             quit_asked: None,
             stop_asked: None,
+            names: load_names(),
+            pending_new: None,
             past: Vec::new(),
             past_open: false,
             past_sel: 0,
@@ -557,10 +603,19 @@ impl App {
         }
         let claimed: Vec<String> = self.steer.values().map(|p| p.id.clone()).collect();
         for p in panes {
-            if !p.cmd.starts_with("claude") || claimed.contains(&p.id) {
+            // Something scope started is a session whatever it is running:
+            // an agent it has an entry for, or a command someone named itself.
+            let ours = agents::is_agent(&p.cmd) || p.session.starts_with("scope-");
+            if !ours || claimed.contains(&p.id) {
                 continue;
             }
-            let session = Session::from_pane(&p);
+            let mut session = Session::from_pane(&p);
+            // A session with no transcript is whatever scope has been told to
+            // call it, since nothing else will ever name it.
+            if let Some(name) = self.names.get(&p.session) {
+                session.title = name.clone();
+                session.titled = true;
+            }
             self.steer.insert(session.id.clone(), p);
             self.sessions.push(session);
         }
@@ -641,7 +696,8 @@ impl App {
             },
             Prompt::Broadcast => format!("send to all {} steerable", self.steer.len()),
             Prompt::NewSession => {
-                "new session · path [--model m] [--effort e] [--mode p] [first message]".into()
+                "new session · path [--agent a] [--model m] [--effort e] [--mode p] [first message]"
+                    .into()
             }
             Prompt::Queue => match self.current() {
                 Some(s) => format!("queue for {} (sends when idle)", s.label()),
@@ -675,6 +731,7 @@ impl App {
                 Some(s) => format!("rename {}", s.label()),
                 None => return,
             },
+            Prompt::NameIt => "name it (enter to skip)".into(),
             Prompt::Discard => match self.isolation() {
                 Some(i) => format!("remove the {} worktree? type yes", i.branch),
                 None => {
@@ -785,6 +842,22 @@ impl App {
                     self.say(e);
                 }
             }
+            Prompt::NameIt => {
+                let Some(mut spec) = self.pending_new.take() else {
+                    return;
+                };
+                let name = text.trim();
+                if !name.is_empty() {
+                    spec.name = Some(name.to_string());
+                }
+                match self.start_session(&spec) {
+                    Ok(session) => {
+                        let called = spec.name.unwrap_or(session.clone());
+                        self.say(format!("started {called} — it will appear here shortly"))
+                    }
+                    Err(e) => self.say(e),
+                }
+            }
             Prompt::Discard => {
                 if text.eq_ignore_ascii_case("yes") || text.eq_ignore_ascii_case("y") {
                     self.discard_isolated();
@@ -803,18 +876,16 @@ impl App {
                     return;
                 }
                 let spec = parse_new(&text);
-                let path = PathBuf::from(expand(&spec.path));
-                match control::new_session_with(
-                    &path,
-                    spec.model.as_deref(),
-                    spec.effort.as_deref(),
-                    spec.mode.as_deref(),
-                    spec.prompt.as_deref(),
-                ) {
-                    Ok(name) => {
-                        self.say(format!("started {name} — it will appear here shortly"));
-                        self.discover();
-                    }
+                // Nothing said what to call it, so ask before starting: naming
+                // it at birth is one line typed into it, naming it later is a
+                // second command.
+                if spec.name.is_none() {
+                    self.pending_new = Some(spec);
+                    self.open_input(Prompt::NameIt);
+                    return;
+                }
+                match self.start_session(&spec) {
+                    Ok(name) => self.say(format!("started {name} — it will appear here shortly")),
                     Err(e) => self.say(e),
                 }
             }
@@ -827,6 +898,52 @@ impl App {
         if matches!(kind, Prompt::Send | Prompt::Queue | Prompt::Broadcast) {
             self.open_input(kind);
         }
+    }
+
+    /// Start a session, and give it the name it was asked for.
+    ///
+    /// Claude Code is asked to name itself, because it has a name of its own
+    /// that its header, the registry and the transcript all share. An agent
+    /// with no such idea gets the name scope keeps for it.
+    pub fn start_session(&mut self, spec: &NewSpec) -> Result<String, String> {
+        let chosen = spec.agent.as_deref().unwrap_or(agents::CLAUDE.id);
+        let known = agents::find(chosen);
+        let agent = known.unwrap_or(agents::CLAUDE);
+        let argv = match known {
+            Some(a) => agents::command(
+                a,
+                spec.model.as_deref(),
+                spec.effort.as_deref(),
+                spec.mode.as_deref(),
+            ),
+            // Not an agent scope knows: run it as typed, which is how anything
+            // else local gets to be a session too.
+            None => agents::custom_command(chosen),
+        };
+        let names_itself = known.map(|a| a.transcripts).unwrap_or(false);
+        let mut opening = Vec::new();
+        if let (Some(name), true) = (&spec.name, names_itself) {
+            opening.push(format!("/rename {name}"));
+        }
+        if let Some(p) = &spec.prompt {
+            opening.push(p.clone());
+        }
+        let path = PathBuf::from(expand(&spec.path));
+        let session = control::new_session_with(&path, &argv, &opening)?;
+        if let (Some(name), false) = (&spec.name, names_itself) {
+            self.name_pane(&session, name);
+        }
+        let _ = agent;
+        self.discover();
+        Ok(session)
+    }
+
+    /// Remember what to call a session that has no name of its own. Anything
+    /// but Claude Code is a program in a terminal as far as scope can tell, so
+    /// the name is scope's to keep.
+    pub fn name_pane(&mut self, session: &str, name: &str) {
+        self.names.insert(session.to_string(), name.to_string());
+        save_names(&self.names);
     }
 
     /// Give a session a name of your own.
@@ -846,7 +963,14 @@ impl App {
         }
         let name = crate::event::clip(name, 80);
         if let Some(p) = self.pane_of(id).cloned() {
-            control::send_text(&p.id, &format!("/rename {name}"))?;
+            if agents::of_command(&p.cmd)
+                .map(|a| a.transcripts)
+                .unwrap_or(false)
+            {
+                control::send_text(&p.id, &format!("/rename {name}"))?;
+            } else {
+                self.name_pane(&p.session, &name);
+            }
             self.say(format!("renamed to {name}"));
         } else {
             let Some(path) = self
@@ -1653,13 +1777,16 @@ impl App {
             return;
         };
         match git::create_worktree(&repo, branch) {
-            Ok(dir) => match control::new_session_with(&dir, None, None, None, None) {
-                Ok(name) => {
-                    self.say(format!("{name} on branch {branch} in {}", dir.display()));
-                    self.discover();
+            Ok(dir) => {
+                let spec = NewSpec {
+                    path: dir.to_string_lossy().into_owned(),
+                    ..Default::default()
+                };
+                match self.start_session(&spec) {
+                    Ok(name) => self.say(format!("{name} on branch {branch} in {}", dir.display())),
+                    Err(e) => self.say(e),
                 }
-                Err(e) => self.say(e),
-            },
+            }
             Err(e) => self.say(e),
         }
     }
@@ -1824,13 +1951,16 @@ impl App {
                     }
                 }
             }
-            match control::new_session_with(
-                PathBuf::from(cwd).as_path(),
-                g("model").as_deref(),
-                g("effort").as_deref(),
-                g("permission_mode").as_deref(),
-                g("prompt").as_deref(),
-            ) {
+            let spec = NewSpec {
+                path: cwd,
+                agent: g("agent"),
+                name: g("name"),
+                model: g("model"),
+                effort: g("effort"),
+                mode: g("permission_mode"),
+                prompt: g("prompt"),
+            };
+            match self.start_session(&spec) {
                 Ok(_) => started += 1,
                 Err(e) => self.say(e),
             }
@@ -2089,6 +2219,17 @@ pub fn default_sessions_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_an_agent_and_a_name_off_the_line() {
+        let spec = parse_new("~/api --agent codex --name refactor fix the auth tests");
+        assert_eq!(spec.agent.as_deref(), Some("codex"));
+        assert_eq!(spec.name.as_deref(), Some("refactor"));
+        assert_eq!(spec.prompt.as_deref(), Some("fix the auth tests"));
+        // Nothing said, so it is Claude Code and scope asks for a name.
+        let plain = parse_new("~/api");
+        assert!(plain.agent.is_none() && plain.name.is_none());
+    }
 
     #[test]
     fn reads_a_new_session_line() {
