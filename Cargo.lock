@@ -2334,7 +2334,7 @@ dependencies = [
 
 [[package]]
 name = "nyfe-scope"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3321,7 +3321,7 @@ dependencies = [
 
 [[package]]
 name = "scope-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "crossterm",
@@ -3333,7 +3333,7 @@ dependencies = [
 
 [[package]]
 name = "scope-gui"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "crossterm",
