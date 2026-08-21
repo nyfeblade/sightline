@@ -16,6 +16,10 @@ path = "src/main.rs"
 custom-protocol = ["tauri/custom-protocol"]
 
 [build-dependencies]
+# The Windows icon is compiled into the binary by a resource compiler that only
+# exists on a Windows host (or with llvm-rc installed), so cross-checking this
+# crate from Linux needs one. `cargo check --target x86_64-pc-windows-msvc
+# -p scope-core -p nyfe-scope` checks everything that does not.
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
