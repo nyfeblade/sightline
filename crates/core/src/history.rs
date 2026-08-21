@@ -20,6 +20,8 @@ const HEAD: usize = 64 * 1024;
 #[derive(Clone, Debug)]
 pub struct Past {
     pub id: String,
+    /// the transcript itself
+    pub path: std::path::PathBuf,
     /// where the conversation was held
     pub cwd: String,
     /// the title Claude Code gave it, else how it opened
@@ -119,6 +121,7 @@ fn describe(path: &Path, modified: SystemTime, bytes: u64) -> Option<Past> {
     }
     Some(Past {
         id,
+        path: path.to_path_buf(),
         cwd,
         title: match (chosen.is_empty(), title.is_empty()) {
             (false, _) => chosen,

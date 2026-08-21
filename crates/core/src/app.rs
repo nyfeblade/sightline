@@ -1,6 +1,6 @@
 //! Discovery, refresh, and view state.
 
-use crate::agents;
+use crate::agent;
 use crate::control::{self, Approval, Pane};
 use crate::event::{Ev, Filter};
 use crate::git;
@@ -631,7 +631,7 @@ impl App {
         for p in panes {
             // Something scope started is a session whatever it is running:
             // an agent it has an entry for, or a command someone named itself.
-            let ours = agents::is_agent(&p.cmd) || p.session.starts_with("scope-");
+            let ours = agent::is_agent(&p.cmd) || p.session.starts_with("scope-");
             if !ours || claimed.contains(&p.id) {
                 continue;
             }
@@ -921,34 +921,37 @@ impl App {
     /// that its header, the registry and the transcript all share. An agent
     /// with no such idea gets the name scope keeps for it.
     pub fn start_session(&mut self, spec: &NewSpec) -> Result<String, String> {
-        let chosen = spec.agent.as_deref().unwrap_or(agents::CLAUDE.id);
-        let known = agents::find(chosen);
-        let agent = known.unwrap_or(agents::CLAUDE);
-        let argv = match known {
-            Some(a) => agents::command(
-                a,
-                spec.model.as_deref(),
-                spec.effort.as_deref(),
-                spec.mode.as_deref(),
-            ),
+        let chosen = spec.agent.as_deref().unwrap_or("claude");
+        let known = agent::find(chosen);
+        let argv = match &known {
+            Some(a) => a.command(agent::Options {
+                model: spec.model.as_deref(),
+                effort: spec.effort.as_deref(),
+                mode: spec.mode.as_deref(),
+            }),
             // Not an agent scope knows: run it as typed, which is how anything
             // else local gets to be a session too.
-            None => agents::custom_command(chosen),
+            None => agent::custom_command(chosen),
         };
-        let names_itself = known.map(|a| a.transcripts).unwrap_or(false);
+        // How a session gets a name is the agent's business: Claude Code
+        // renames itself when told, and an agent with no such idea gets the
+        // name scope keeps for it.
+        let renames_itself = match known.as_ref().map(|a| a.naming()) {
+            Some(agent::Naming::Command(command)) => Some(command),
+            _ => None,
+        };
         let mut opening = Vec::new();
-        if let (Some(name), true) = (&spec.name, names_itself) {
-            opening.push(format!("/rename {name}"));
+        if let (Some(name), Some(command)) = (&spec.name, renames_itself) {
+            opening.push(format!("{command} {name}"));
         }
         if let Some(p) = &spec.prompt {
             opening.push(p.clone());
         }
         let path = PathBuf::from(expand(&spec.path));
         let session = control::new_session_with(&path, &argv, &opening)?;
-        if let (Some(name), false) = (&spec.name, names_itself) {
+        if let (Some(name), None) = (&spec.name, renames_itself) {
             self.name_pane(&session, name);
         }
-        let _ = agent;
         self.discover();
         Ok(session)
     }
@@ -1041,13 +1044,12 @@ impl App {
         }
         let name = crate::event::clip(name, 80);
         if let Some(p) = self.pane_of(id).cloned() {
-            if agents::of_command(&p.cmd)
-                .map(|a| a.transcripts)
-                .unwrap_or(false)
-            {
-                control::send_text(&p.id, &format!("/rename {name}"))?;
-            } else {
-                self.name_pane(&p.session, &name);
+            // How a session gets a name is the agent's business.
+            match agent::of_command(&p.cmd).map(|a| a.naming()) {
+                Some(agent::Naming::Command(command)) => {
+                    control::send_text(&p.id, &format!("{command} {name}"))?;
+                }
+                _ => self.name_pane(&p.session, &name),
             }
             self.say(format!("renamed to {name}"));
         } else {
