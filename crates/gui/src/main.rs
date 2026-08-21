@@ -578,6 +578,9 @@ fn main() {
     // Whatever holds sessions is started before the window is drawn, so the
     // first thing anyone clicks does not have to wait for it.
     let _ = bootstrap::ensure_backend();
+    // The same key, for the same reason: a session opened from the window has
+    // to have a way back to it.
+    let way_back = control::hold_way_back();
     let app = App::new(
         core_app::default_root(),
         core_app::default_sessions_dir(),
@@ -611,6 +614,11 @@ fn main() {
             window,
             tree
         ])
-        .run(tauri::generate_context!())
-        .expect("scope failed to start");
+        .build(tauri::generate_context!())
+        .expect("scope failed to start")
+        .run(move |_app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                control::drop_way_back(way_back);
+            }
+        });
 }

@@ -354,6 +354,9 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    // One key that always means "back to scope", held for as long as scope is
+    // here to come back to.
+    let way_back = control::hold_way_back();
     let mut term = ratatui::init();
     if mouse {
         let _ = crossterm::execute!(std::io::stdout(), EnableMouseCapture);
@@ -363,6 +366,7 @@ fn main() -> Result<()> {
         let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
     }
     ratatui::restore();
+    control::drop_way_back(way_back);
     result
 }
 

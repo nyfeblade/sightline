@@ -133,12 +133,30 @@ fn show_way_back(session: &str, hint: &str) {
 }
 
 /// The key that always means "back to scope", wherever you are: out of
-/// passthrough, and out of a session shown full-screen. One key with one
-/// meaning, rather than tmux's prefix-then-letter, which is a thing you have to
-/// know tmux to know.
-pub const WAY_BACK: &str = "F12";
+/// passthrough, and out of a session shown full-screen or in its own window.
+/// One key with one meaning, rather than tmux's prefix-then-letter, which is a
+/// thing you have to know tmux to know.
+/// A desktop or a terminal can take a key before tmux ever sees it — F12 is a
+/// drop-down console in more than one setup — so it can be named.
+pub fn way_back() -> String {
+    std::env::var("SCOPE_WAY_BACK")
+        .ok()
+        .filter(|k| !k.trim().is_empty())
+        .unwrap_or_else(|| "F12".into())
+}
 
-/// Whether that key is free. tmux key tables belong to the whole server rather
+/// What it should do depends on how you got to the session, and tmux can work
+/// that out itself: a client that has a previous session came from scope and
+/// switches back to it, and a client that was made by attaching has nowhere to
+/// switch to, so it detaches.
+const WAY_BACK_ACTION: [&str; 4] = [
+    "if-shell",
+    "-F",
+    "#{client_last_session}",
+    "switch-client -l",
+];
+
+/// Whether the key is free. tmux key tables belong to the whole server rather
 /// than to one session, so a key someone has already bound is theirs, and scope
 /// says the tmux way out instead of quietly taking it.
 fn way_back_is_free() -> bool {
@@ -147,37 +165,57 @@ fn way_back_is_free() -> bool {
     };
     // `list-keys -T root F12` prints nothing even when F12 is bound, so the
     // table is read whole and the line looked for here.
+    let key = way_back();
     !table.lines().any(|l| {
         let mut words = l.split_whitespace();
-        words.any(|w| w == "root") && words.next() == Some(WAY_BACK)
+        words.any(|w| w == "root") && words.next() == Some(key.as_str())
     })
 }
 
-/// Take the key, if it is free. Returns whether it was taken, which is also
-/// whether it has to be given back.
-fn take_way_back(action: &str) -> bool {
-    if !way_back_is_free() {
+/// Take the key for as long as scope is running.
+///
+/// It used to be taken for the length of one attach, which meant the key worked
+/// from `a` and from nowhere else — while the hint scope had written on the
+/// session's status line stayed there, promising a key that was no longer
+/// bound. Returns whether it was taken, which is also whether to promise it.
+pub fn hold_way_back() -> bool {
+    if !available() || !way_back_is_free() {
         return false;
     }
-    // tmux takes the bound command as separate words, not as one string: given
-    // "switch-client -l" in a single argument it looks for a command by that
-    // whole name, fails, and binds nothing at all.
-    let mut args = vec!["bind-key", "-n", WAY_BACK];
-    args.extend(action.split_whitespace());
+    let key = way_back();
+    let mut args = vec!["bind-key", "-n", key.as_str()];
+    args.extend(WAY_BACK_ACTION);
+    args.push("detach-client");
     tmux(&args).is_some()
 }
 
-fn release_way_back(taken: bool) {
-    if taken {
-        tmux(&["unbind-key", "-n", WAY_BACK]);
+/// Give it back.
+pub fn drop_way_back(held: bool) {
+    if held {
+        tmux(&["unbind-key", "-n", &way_back()]);
     }
+}
+
+/// Whether scope currently holds it, for anything that wants to say so.
+pub fn holds_way_back() -> bool {
+    tmux(&["list-keys", "-T", "root"])
+        .map(|table| {
+            let key = way_back();
+            table.lines().any(|l| {
+                let mut words = l.split_whitespace();
+                words.any(|w| w == "root")
+                    && words.next() == Some(key.as_str())
+                    && l.contains("client_last_session")
+            })
+        })
+        .unwrap_or(false)
 }
 
 /// What to tell someone about getting back, which depends on whether scope was
 /// able to give them one key for it.
 fn hint(taken: bool, tmux_way: &str) -> String {
     if taken {
-        format!(" {WAY_BACK} → back to scope ")
+        format!(" {} → back to scope ", way_back())
     } else {
         format!(" {tmux_way} → back to scope ")
     }
@@ -187,26 +225,17 @@ fn hint(taken: bool, tmux_way: &str) -> String {
 /// handed over and must be taken back afterwards; false when the tmux client
 /// was switched instead, which leaves scope running where it is.
 pub fn attach(session: &str) -> Result<bool, String> {
+    let held = holds_way_back();
     if inside_tmux() {
-        // scope is a tmux client itself here, so coming back means switching
-        // back to where you were rather than detaching. The key stays bound
-        // while the session is on screen — scope is not the one blocking, so
-        // there is no moment at which to take it back — which is another
-        // reason not to take a key that was already someone's.
-        let taken = take_way_back("switch-client -l");
-        show_way_back(session, &hint(taken, "ctrl+b L"));
+        show_way_back(session, &hint(held, "ctrl+b L"));
         tmux(&["switch-client", "-t", session]).ok_or("tmux switch-client failed")?;
         return Ok(false);
     }
-    let taken = take_way_back("detach-client");
-    show_way_back(session, &hint(taken, "ctrl+b d"));
+    show_way_back(session, &hint(held, "ctrl+b d"));
     let status = Command::new("tmux")
         .args(["attach", "-t", session])
         .status()
         .map_err(|e| e.to_string())?;
-    // attach blocks until the client leaves, which is exactly when the key is
-    // no longer needed.
-    release_way_back(taken);
     if status.success() {
         Ok(true)
     } else {
@@ -536,6 +565,9 @@ pub fn end_process(pid: i64) -> bool {
 /// Open a session in a new terminal window, attached to its tmux session, so
 /// it can be watched without giving up the scope view.
 pub fn open_window(session: &str) -> Result<String, String> {
+    // A window opened this way is a client like any other, so it gets the same
+    // way back — and is told the truth about which one.
+    show_way_back(session, &hint(holds_way_back(), "ctrl+b d"));
     crate::control::open_terminal_with(&format!("tmux attach -t {session}"))
 }
 

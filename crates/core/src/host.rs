@@ -511,6 +511,14 @@ pub const OUTLIVES_SCOPE: bool = false;
 /// What to call the place scope steers sessions from, in a sentence.
 pub const WHERE: &str = "scope";
 
+/// There is no multiplexer to take a key from here: scope is the terminal, and
+/// leaving a session is leaving the pane it is drawn in.
+pub fn hold_way_back() -> bool {
+    false
+}
+
+pub fn drop_way_back(_held: bool) {}
+
 /// How to look at a session. scope is its terminal, so the way to see it is
 /// scope's own mirror.
 pub fn attach_hint(_session: &str) -> String {

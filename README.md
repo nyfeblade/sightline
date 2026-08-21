@@ -106,10 +106,16 @@ same actions have direct keys once you know them:
 | `Z` | close everything scope started (each one reopens with `A`) |
 | `L` | launch a whole fleet from a config file |
 
-`F12` always means back to scope: out of passthrough, and out of a session shown
-full-screen. The session's own status line says so while you are in it. tmux's
-prefix-then-letter works too, but knowing tmux should not be the price of
-looking at a session, and scope gives the key back when you leave.
+`F12` always means back to scope: out of passthrough, out of a session shown
+full-screen, and out of one opened in its own window. The session's own status
+line says so while you are in it. tmux's prefix-then-letter still works, but
+knowing tmux should not be the price of looking at a session.
+
+The key is held for as long as scope is running and given back when it exits,
+and it is only taken when nothing else has it — tmux key tables belong to the
+whole server, so a key you have already bound stays yours and scope tells you
+the tmux way instead. If something outside tmux eats F12 first, which a
+drop-down terminal often does, name another one: `SCOPE_WAY_BACK=F9 scope`.
 
 Sessions started outside tmux are fully visible but cannot be typed into; they
 are marked, so it is always clear which is which. `A` moves one: it resumes the
