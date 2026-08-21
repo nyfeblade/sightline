@@ -214,6 +214,14 @@ pub fn attach(session: &str) -> Result<bool, String> {
     }
 }
 
+/// Stop holding a session at the window's size. A session pinned to whatever
+/// the app was showing it at would stay that shape long after the app closed,
+/// so the size goes back to being tmux's business.
+pub fn release_frame(pane: &str) {
+    let session = pane.split(':').next().unwrap_or(pane);
+    tmux(&["set-option", "-t", session, "window-size", "latest"]);
+}
+
 /// A session's screen at a given size, ready to be drawn by something that is
 /// not a terminal.
 ///
@@ -243,9 +251,26 @@ pub fn frame(pane: &str, cols: u16, rows: u16) -> Option<crate::screen::Frame> {
             &rows.to_string(),
         ]);
     }
-    // -e keeps the colours, which is the whole point; -J stops tmux breaking a
-    // wrapped line into two.
-    let render = tmux(&["capture-pane", "-p", "-e", "-J", "-t", pane])?;
+    // Read the size back rather than assuming the one just asked for. A session
+    // repaints when it feels like it, so for a moment its buffer is still laid
+    // out for the old width — and parsing that at the new width wraps every
+    // line in the wrong place, which looks like corruption rather than lag.
+    let (cols, rows) = tmux(&[
+        "display-message",
+        "-p",
+        "-t",
+        pane,
+        "#{window_width} #{window_height}",
+    ])
+    .and_then(|s| {
+        let mut n = s.split_whitespace().filter_map(|v| v.parse().ok());
+        Some((n.next()?, n.next()?))
+    })
+    .unwrap_or((cols, rows));
+    // -e keeps the colours, which is the whole point. -J is deliberately not
+    // used: it joins wrapped lines back together, and the screen model then
+    // wraps them again somewhere else, which lands text on top of other text.
+    let render = tmux(&["capture-pane", "-p", "-e", "-t", pane])?;
     let mut frame = crate::screen::frame_from_render(render.as_bytes(), cols, rows);
     // capture-pane renders the screen but not the caret, which tmux knows
     // separately.

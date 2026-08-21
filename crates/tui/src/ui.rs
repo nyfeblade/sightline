@@ -194,11 +194,22 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Constraint::Length(1),
     ])
     .areas(area);
+    // The session list takes a share of the window rather than a fixed number of
+    // columns: 42 of them is half of a laptop terminal and a sliver of a large
+    // display. The bounds are what a session row needs to be readable at all,
+    // and the point past which more width only buys whitespace.
+    let list_width = (body.width / 4)
+        .clamp(30, 56)
+        .min(body.width.saturating_sub(24));
     let [left, right] =
-        Layout::horizontal([Constraint::Length(42), Constraint::Min(20)]).areas(body);
-    // On a short window the detail card gives up rows so the session list keeps
-    // enough of them to be useful.
-    let card_rows = if body.height >= 26 { 10 } else { 6 };
+        Layout::horizontal([Constraint::Length(list_width), Constraint::Min(20)]).areas(body);
+    // The detail card gives up rows on a short window so the session list keeps
+    // enough to be useful, and takes more when there is room to spare.
+    let card_rows = match body.height {
+        h if h >= 48 => 13,
+        h if h >= 26 => 10,
+        _ => 6,
+    };
     let [list, card] =
         Layout::vertical([Constraint::Min(4), Constraint::Length(card_rows)]).areas(left);
 

@@ -23,3 +23,4 @@ pub mod session;
 pub mod tail;
 #[cfg(not(windows))]
 pub mod tmux;
+pub mod usage;

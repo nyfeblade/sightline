@@ -5,13 +5,13 @@
 
 use scope_core::app::App;
 use scope_core::session::Status;
-use scope_core::{app as core_app, bootstrap, control, history};
+use scope_core::{app as core_app, bootstrap, control, history, screen, usage};
 use serde::Serialize;
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::State;
 
-struct Shared(Mutex<App>);
+struct Shared(Mutex<App>, Mutex<usage::Meter>);
 
 impl Shared {
     /// Every command starts by catching up, exactly as the terminal view's tick
@@ -74,6 +74,12 @@ struct SessionDto {
     requests: u64,
     cost: f64,
     errors: usize,
+    /// share of one processor, once there have been two readings to compare
+    cpu: Option<f64>,
+    /// resident bytes across the session's whole process tree
+    memory: u64,
+    /// the tools it has reached for, most used first
+    tools: Vec<String>,
     steerable: bool,
     live: bool,
     /// the question it is blocked on, if any
@@ -137,12 +143,32 @@ fn readiness() -> ReadinessDto {
 
 #[tauri::command]
 fn sessions(shared: State<Shared>) -> Vec<SessionDto> {
+    let table = usage::table();
+    let mut meter = match shared.1.lock() {
+        Ok(m) => m,
+        Err(e) => e.into_inner(),
+    };
     shared.with(|app| {
         app.sessions
             .iter()
             .map(|s| {
                 let (state, tool) = state_of(s);
                 let pane = app.pane_of(&s.id).map(|p| p.session.clone());
+                // What it is costing the machine, measured from its process
+                // tree; nothing writes that down.
+                let pid = s
+                    .live
+                    .as_ref()
+                    .map(|l| l.pid)
+                    .or_else(|| app.pane_of(&s.id).map(|p| p.pid))
+                    .unwrap_or(0);
+                let used = if pid > 0 {
+                    meter.measure(pid, &table)
+                } else {
+                    usage::Usage::default()
+                };
+                let mut tools: Vec<(&String, &usize)> = s.tools.iter().collect();
+                tools.sort_by(|a, b| b.1.cmp(a.1));
                 SessionDto {
                     id: s.id.clone(),
                     name: s.label(),
@@ -158,6 +184,9 @@ fn sessions(shared: State<Shared>) -> Vec<SessionDto> {
                     requests: s.totals.requests as u64,
                     cost: s.totals.cost,
                     errors: s.errors,
+                    cpu: used.cpu,
+                    memory: used.memory,
+                    tools: tools.into_iter().take(6).map(|(n, _)| n.clone()).collect(),
                     steerable: pane.is_some(),
                     live: s.live.is_some() || s.in_pane,
                     asking: app.approvals.get(&s.id).map(|a| AskDto {
@@ -193,6 +222,139 @@ fn feed(shared: State<Shared>, id: String, limit: usize) -> Vec<EventDto> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[derive(Serialize)]
+struct FileDto {
+    path: String,
+    reads: usize,
+    writes: usize,
+    edits: usize,
+    added: usize,
+    removed: usize,
+}
+
+#[derive(Serialize)]
+struct TodoDto {
+    text: String,
+    state: String,
+}
+
+#[derive(Serialize)]
+struct AgentRunDto {
+    kind: String,
+    description: String,
+    model: String,
+    state: String,
+}
+
+/// Every file the session touched, most recently changed first.
+#[tauri::command]
+fn files(shared: State<Shared>, id: String) -> Vec<FileDto> {
+    shared
+        .on(&id, |app| {
+            let Some(s) = app.sessions.get(app.sel) else {
+                return Vec::new();
+            };
+            let mut out: Vec<FileDto> = s
+                .files
+                .iter()
+                .map(|(path, t)| FileDto {
+                    path: path.clone(),
+                    reads: t.reads,
+                    writes: t.writes,
+                    edits: t.edits,
+                    added: t.added,
+                    removed: t.removed,
+                })
+                .collect();
+            out.sort_by(|a, b| (b.edits + b.writes).cmp(&(a.edits + a.writes)));
+            out
+        })
+        .unwrap_or_default()
+}
+
+/// Its current plan, from the last time it wrote one.
+#[tauri::command]
+fn plan(shared: State<Shared>, id: String) -> Vec<TodoDto> {
+    shared
+        .on(&id, |app| {
+            app.sessions
+                .get(app.sel)
+                .map(|s| {
+                    s.todos
+                        .iter()
+                        .map(|t| TodoDto {
+                            text: t.text.clone(),
+                            state: t.status.clone(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+        .unwrap_or_default()
+}
+
+/// The subagents it has launched.
+#[tauri::command]
+fn agents(shared: State<Shared>, id: String) -> Vec<AgentRunDto> {
+    shared
+        .on(&id, |app| {
+            app.sessions
+                .get(app.sel)
+                .map(|s| {
+                    s.agents
+                        .iter()
+                        .map(|a| AgentRunDto {
+                            kind: a.kind.clone(),
+                            description: a.description.clone(),
+                            model: a.model.clone(),
+                            state: a.status.clone(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+        .unwrap_or_default()
+}
+
+/// What went wrong, newest last.
+#[tauri::command]
+fn errors(shared: State<Shared>, id: String) -> Vec<EventDto> {
+    shared
+        .on(&id, |app| {
+            let Some(s) = app.sessions.get(app.sel) else {
+                return Vec::new();
+            };
+            s.events
+                .iter()
+                .filter(|e| !e.ok)
+                .map(|e| EventDto {
+                    at: e.ts.map(|t| t.to_rfc3339()).unwrap_or_default(),
+                    kind: format!("{:?}", e.kind).to_lowercase(),
+                    tool: e.tool.clone(),
+                    head: e.head.clone(),
+                    body: e.body.clone(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// A session's screen, drawn as cells rather than handed over as a terminal.
+#[tauri::command]
+fn frame(shared: State<Shared>, id: String, cols: u16, rows: u16) -> Option<screen::Frame> {
+    let pane = shared.with(|app| app.pane_of(&id).map(|p| p.id.clone()))?;
+    control::frame(&pane, cols, rows)
+}
+
+/// Stop holding a session at the window's size, when the window stops showing
+/// it.
+#[tauri::command]
+fn release_frame(shared: State<Shared>, id: String) {
+    if let Some(pane) = shared.with(|app| app.pane_of(&id).map(|p| p.id.clone())) {
+        control::release_frame(&pane);
+    }
 }
 
 /// What a session's terminal is showing, as plain text.
@@ -319,10 +481,28 @@ fn main() {
         false,
     );
     tauri::Builder::default()
-        .manage(Shared(Mutex::new(app)))
+        .manage(Shared(Mutex::new(app), Mutex::new(usage::Meter::default())))
         .invoke_handler(tauri::generate_handler![
-            readiness, sessions, feed, screen, send, answer, interrupt, start, reopen, past,
-            rename, reorder, stop, open_tui
+            readiness,
+            sessions,
+            feed,
+            screen,
+            send,
+            answer,
+            interrupt,
+            start,
+            reopen,
+            past,
+            rename,
+            reorder,
+            stop,
+            open_tui,
+            files,
+            plan,
+            agents,
+            errors,
+            frame,
+            release_frame
         ])
         .run(tauri::generate_context!())
         .expect("scope failed to start");

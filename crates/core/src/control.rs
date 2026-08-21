@@ -11,16 +11,16 @@
 pub use crate::tmux::{
     OUTLIVES_SCOPE, WHERE, adopt, attach, attach_hint, available, capture, end_process,
     forward_key, frame, hosted_count, inside_tmux, kill_session, new_session_with, open_window,
-    pane_for, panes, prune, send_key, send_text, steer_hint, stop_all, unavailable_hint,
-    where_hint,
+    pane_for, panes, prune, release_frame, send_key, send_text, steer_hint, stop_all,
+    unavailable_hint, where_hint,
 };
 
 #[cfg(windows)]
 pub use crate::host::{
     OUTLIVES_SCOPE, WHERE, adopt, attach, attach_hint, available, capture, end_process,
     forward_key, frame, hosted_count, inside_tmux, kill_session, new_session_with, open_window,
-    pane_for, panes, prune, send_key, send_text, steer_hint, stop_all, unavailable_hint,
-    where_hint,
+    pane_for, panes, prune, release_frame, send_key, send_text, steer_hint, stop_all,
+    unavailable_hint, where_hint,
 };
 
 #[derive(Clone, Debug)]

@@ -225,6 +225,9 @@ pub fn forward_key(pane: &str, code: crossterm::event::KeyCode, ctrl: bool) -> R
     }
 }
 
+/// scope owns the pseudo-console here, so there is nothing to hand back.
+pub fn release_frame(_pane: &str) {}
+
 /// A session's screen at a given size. scope owns the pseudo-console here, so
 /// the size is set on it directly and the screen model is already parsed.
 pub fn frame(pane: &str, cols: u16, rows: u16) -> Option<crate::screen::Frame> {

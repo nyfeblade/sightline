@@ -1,25 +1,339 @@
-/* Placeholder styling only — the design replaces this. Brand colours so the
-   shell is not jarring while it stands in. */
-:root { --midnight: #0b1220; --gold: #c08542; --text: #e8ecf4; --muted: #8792a8; }
-* { box-sizing: border-box; }
-body {
-  margin: 0; background: var(--midnight); color: var(--text);
-  font: 13px/1.5 ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
+/* Built to the design: near-black ground, one amber accent, monospace
+   throughout, thin borders and small radii. Nothing here is decoration for its
+   own sake — every colour means a state. */
+:root {
+  --ground: #0c0d10;
+  --panel: #111318;
+  --raised: #161920;
+  --line: #21252e;
+  --line-soft: #191d24;
+  --gold: #d99a4e;
+  --gold-dim: #8a6634;
+  --text: #e6e9ef;
+  --body: #b3bac6;
+  --muted: #6f7887;
+  --good: #6fbf73;
+  --warn: #d99a4e;
+  --bad: #d3675a;
+  --info: #6aa3c8;
+
+  /* The sixteen a terminal draws with, so a session's own colours are ours. */
+  --ansi-0: #14171c; --ansi-1: #d3675a; --ansi-2: #6fbf73; --ansi-3: #d99a4e;
+  --ansi-4: #6aa3c8; --ansi-5: #a98bc7; --ansi-6: #63b0ab; --ansi-7: #b3bac6;
+  --ansi-8: #4a515e; --ansi-9: #e57f70; --ansi-10: #86d68a; --ansi-11: #eab469;
+  --ansi-12: #86bde2; --ansi-13: #c0a5dc; --ansi-14: #7fcac5; --ansi-15: #f0f3f8;
 }
-header { display: flex; gap: 12px; align-items: baseline; padding: 12px 16px;
-  border-bottom: 1px solid #1b2436; }
-.mark { color: var(--gold); font-weight: 700; letter-spacing: .12em; }
-.version, #summary { color: var(--muted); }
-main { display: grid; grid-template-columns: 320px 1fr; gap: 16px; padding: 16px; }
-section { border: 1px solid #1b2436; border-radius: 8px; padding: 12px; }
-.row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0;
-  border-bottom: 1px solid #141d2e; }
-.row:last-child { border-bottom: 0; }
-.name { color: var(--text); }
-.meta, .detail { color: var(--muted); }
-.miss { color: #c45d4e; }
-.ok { color: #7fb069; }
-footer { display: flex; gap: 12px; align-items: center; padding: 12px 16px;
-  border-top: 1px solid #1b2436; color: var(--muted); }
-button { background: transparent; color: var(--gold); border: 1px solid var(--gold);
-  border-radius: 6px; padding: 6px 12px; font: inherit; cursor: pointer; }
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  background: var(--ground);
+  color: var(--text);
+  /* Type grows with the window rather than staying at laptop size on a large
+     display, and stops growing before it turns into a poster. */
+  font-family: ui-monospace, "JetBrains Mono", "SF Mono", "DejaVu Sans Mono", Menlo, monospace;
+  font-size: clamp(12px, 0.62vw + 7px, 17px);
+  line-height: 1.55;
+  display: grid;
+  grid-template-rows: auto 1fr auto auto;
+}
+
+.grow { flex: 1; }
+
+/* ── the bar across the top ─────────────────────────────────────────────── */
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.mark { color: var(--gold); font-weight: 700; letter-spacing: .16em; }
+.version, .summary, .spend { color: var(--muted); }
+/* Counts belong on one line; wrapped onto three they read as three facts. */
+.summary, .spend { white-space: nowrap; }
+.summary { border-left: 1px solid var(--line); padding-left: 14px; }
+@media (max-width: 1150px) { .spend { display: none; } }
+@media (max-width: 880px) { .summary { display: none; } }
+
+.tabs { display: flex; align-items: center; gap: 2px; }
+.tab {
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font: inherit;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+.tab:hover { color: var(--body); }
+.tab.is-on { color: var(--text); border-bottom-color: var(--gold); }
+
+.icon {
+  background: none;
+  border: 0;
+  color: var(--muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px 6px;
+}
+.icon:hover { color: var(--gold); }
+.icon.small { font-size: 12px; }
+
+.primary {
+  background: transparent;
+  border: 1px solid var(--gold);
+  border-radius: 6px;
+  color: var(--gold);
+  font: inherit;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+.primary:hover { background: rgba(217, 154, 78, .12); }
+
+/* ── three columns ──────────────────────────────────────────────────────── */
+main {
+  display: grid;
+  /* Rails take a share of the window between sensible bounds: fixed pixels are
+     half the screen on a small window and a sliver on a large one. */
+  grid-template-columns:
+    clamp(200px, 17vw, 340px)
+    minmax(0, 1fr)
+    clamp(180px, 14vw, 300px);
+  gap: 10px;
+  padding: 10px;
+  min-height: 0;
+}
+
+/* Below this there is no room for three columns, so the meters fold away and
+   the list narrows to what a name needs. */
+@media (max-width: 900px) {
+  main { grid-template-columns: minmax(150px, 26vw) minmax(0, 1fr); }
+  .rail.right { display: none; }
+}
+
+.rail, .middle {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.rail { padding: 10px; overflow-y: auto; }
+.rail.right { gap: 4px; }
+
+.rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--muted);
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line-soft);
+  margin-bottom: 6px;
+}
+
+/* ── the agents ─────────────────────────────────────────────────────────── */
+.agents { list-style: none; margin: 0; padding: 0; }
+.agent {
+  border-left: 2px solid transparent;
+  padding: 8px 8px 9px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.agent:hover { background: var(--raised); }
+.agent.is-on { background: var(--raised); border-left-color: var(--gold); }
+.agent.dragging { opacity: .4; }
+.agent.over { box-shadow: inset 0 2px 0 var(--gold); }
+
+.agent-top { display: flex; justify-content: space-between; gap: 8px; }
+.agent-name { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-age { color: var(--muted); flex: none; }
+.agent-state { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
+.dot.needs { background: var(--warn); box-shadow: 0 0 8px rgba(217,154,78,.6); }
+.dot.working { background: var(--good); }
+.dot.idle { background: var(--muted); }
+.dot.ended { background: var(--ansi-8); }
+.dot.erroring { background: var(--bad); }
+.state-text { color: var(--body); font-size: 11.5px; }
+.state-text.needs { color: var(--warn); }
+.state-text.erroring { color: var(--bad); }
+
+.agent-foot { display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; color: var(--muted); font-size: 11.5px; }
+.agent-where { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-ctx { flex: none; }
+
+/* ── the middle ─────────────────────────────────────────────────────────── */
+.panes {
+  padding: 4px 10px 0;
+  border-bottom: 1px solid var(--line-soft);
+  gap: 0;
+}
+.context { color: var(--muted); margin-left: auto; padding: 0 4px 0 18px; white-space: nowrap; }
+@media (max-width: 780px) { .context { display: none; } }
+
+.pane {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 12px;
+}
+
+/* Prose stops being readable long before it stops fitting, so the feed keeps a
+   column rather than running the full width of a large display. The mirror is
+   exempt: a terminal is exactly as wide as it is. */
+.pane > .row,
+.pane > .card,
+.pane > .line,
+.pane > .end {
+  max-width: 140ch;
+}
+.pane::-webkit-scrollbar, .rail::-webkit-scrollbar { width: 9px; }
+.pane::-webkit-scrollbar-thumb, .rail::-webkit-scrollbar-thumb {
+  background: var(--line); border-radius: 6px;
+}
+
+.row { display: flex; gap: 10px; padding: 2px 0; align-items: baseline; }
+.at { color: var(--muted); flex: none; }
+.tag { flex: none; width: 62px; }
+.tag.prompt { color: var(--gold); }
+.tag.text { color: var(--info); }
+.tag.tool { color: var(--good); }
+.tag.result { color: var(--body); }
+.tag.system { color: var(--muted); }
+.said { color: var(--body); overflow-wrap: anywhere; }
+
+.card {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--raised);
+  margin: 8px 0;
+  overflow: hidden;
+}
+.card.pending { border-color: var(--gold-dim); box-shadow: 0 0 0 1px rgba(217,154,78,.15); }
+.card.failed { border-color: var(--bad); }
+.card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--body);
+}
+.card.pending .card-head { color: var(--gold); }
+.card-id { color: var(--muted); }
+.card-body { padding: 8px 10px; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--body); }
+
+.end { text-align: center; color: var(--ansi-8); padding: 14px 0 4px; letter-spacing: .1em; }
+.empty { color: var(--muted); padding: 18px 2px; }
+
+/* files, plan, agents, errors */
+.line { display: flex; gap: 12px; padding: 4px 0; border-bottom: 1px solid var(--line-soft); }
+.line:last-child { border-bottom: 0; }
+.line .path { color: var(--body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.line .num { color: var(--muted); flex: none; }
+.added { color: var(--good); }
+.removed { color: var(--bad); }
+.todo.done .what { color: var(--muted); text-decoration: line-through; }
+.todo.doing .what { color: var(--gold); }
+
+/* the session's own screen, drawn cell by cell */
+.screen {
+  font: inherit;
+  line-height: 1.25;
+  white-space: pre;
+  color: var(--body);
+}
+.screen b { font-weight: 700; }
+.caret { background: var(--gold); color: var(--ground); }
+
+/* ── meters ─────────────────────────────────────────────────────────────── */
+.meter { padding: 10px; background: var(--raised); border: 1px solid var(--line-soft); border-radius: 6px; }
+.meter-label { color: var(--muted); font-size: 11.5px; }
+.meter-label.spaced { padding: 10px 2px 6px; }
+.meter-value { color: var(--text); font-size: 18px; padding: 2px 0 6px; }
+.track { height: 5px; background: var(--line-soft); border-radius: 3px; overflow: hidden; }
+.track i { display: block; height: 100%; width: 0; background: var(--gold); transition: width .3s ease; }
+.sub { color: var(--muted); font-size: 11.5px; padding-top: 4px; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.chip { border: 1px solid var(--line); border-radius: 4px; padding: 2px 7px; color: var(--body); font-size: 11.5px; }
+
+/* ── what is waiting on you ─────────────────────────────────────────────── */
+.ask[hidden] { display: none; }
+.ask {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 10px 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--gold-dim);
+  border-radius: 8px;
+  background: rgba(217, 154, 78, .07);
+}
+.ask .warn { color: var(--gold); }
+.ask b { color: var(--gold); font-weight: 400; }
+.answers { display: flex; gap: 8px; }
+.answer {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--body);
+  font: inherit;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+.answer:hover { border-color: var(--gold-dim); color: var(--text); }
+.answer.first { background: var(--gold); border-color: var(--gold); color: #171308; }
+.answer .key { opacity: .7; padding-right: 6px; }
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 7px 16px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+}
+#note { color: var(--body); }
+
+/* ── starting one ───────────────────────────────────────────────────────── */
+dialog {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 18px 20px;
+  min-width: 420px;
+}
+dialog::backdrop { background: rgba(6, 7, 9, .6); }
+dialog h2 { font-size: 13px; font-weight: 400; color: var(--gold); margin: 0 0 12px; letter-spacing: .08em; }
+dialog label { display: grid; grid-template-columns: 110px 1fr; align-items: center; gap: 10px; padding: 4px 0; color: var(--muted); }
+dialog input, dialog select {
+  background: var(--ground);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--text);
+  font: inherit;
+  padding: 6px 8px;
+}
+dialog input:focus, dialog select:focus { outline: 1px solid var(--gold-dim); }
+dialog menu { display: flex; justify-content: flex-end; gap: 8px; margin: 14px 0 0; padding: 0; }
+dialog menu button {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--body);
+  font: inherit;
+  padding: 6px 14px;
+  cursor: pointer;
+}
