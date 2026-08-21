@@ -278,7 +278,17 @@ mod tests {
             "the worktree is a full checkout"
         );
         assert!(is_worktree(&tree), "and it reads as a linked worktree");
-        assert_eq!(main_repo(&tree).as_deref(), Some(repo.as_path()));
+        // git answers with the real path, and a temporary directory is rarely
+        // its real path: macOS puts /var behind a link to /private/var, and
+        // Windows hands back the short form of a long name. Both sides are
+        // resolved before they are compared.
+        let real =
+            |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        assert_eq!(
+            main_repo(&tree).as_deref().map(real),
+            Some(real(&repo)),
+            "the worktree points back at the repository it came from"
+        );
 
         std::fs::write(tree.join("b.txt"), "two\n").unwrap();
         run(&tree, &["add", "."]);
