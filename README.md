@@ -38,7 +38,7 @@ scripts/appimage.sh            # builds dist/ironsight-<version>-x86_64.AppImage
 ```
 
 Clicking it opens the app. The same file is also the terminal view —
-`./ironsight-0.4.0-x86_64.AppImage --tui` runs it in the shell you started it from,
+`./ironsight-0.4.1-x86_64.AppImage --tui` runs it in the shell you started it from,
 and any other argument goes there too, so `--once` and `doctor` work from it as
 well. `scripts/desktop-entry.sh` puts it in your application menu instead, if you
 would rather run it from a checkout. The app needs webkit2gtk on the host, which
@@ -367,7 +367,10 @@ keeps each one useful on its own. `docs/BUILD.md` is the working spec for each:
 what it does, where it lives, and what would have to be true for it to count as
 finished.
 
-Both are written to be argued with. Everything claimed to exist is checkable in
+`docs/STATE.md` is the shorter, more perishable one: what works today, what is
+built but not yet wired, and what would trip someone up if nobody said so.
+
+Both of the first two are written to be argued with. Everything claimed to exist is checkable in
 this repository; everything else is marked as a claim.
 
 ## Development
