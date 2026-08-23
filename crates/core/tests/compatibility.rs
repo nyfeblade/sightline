@@ -106,6 +106,44 @@ fn a_permission_prompt_is_still_recognisable_on_screen() {
     assert_eq!(asking.keys, vec!["1", "2", "3"], "answered by number");
 }
 
+/// Detecting a prompt is half the job; the other half is that choosing an
+/// option sends the keystroke that option is answered by. If the mapping from
+/// "the second choice" to what gets typed ever broke, detection would still
+/// pass and a person answering from one place would silently pick the wrong
+/// thing — which is the failure that matters most, because it acts.
+#[test]
+fn answering_a_prompt_sends_what_that_option_is_answered_by() {
+    use ironsight_core::control::{keystroke_for, pending_approval};
+
+    // Claude Code: a numbered list, answered by the number.
+    let numbered = read("claude-permission-screen.txt");
+    let claude = pending_approval(&numbered).expect("a numbered prompt");
+    assert_eq!(
+        keystroke_for(&claude, 1),
+        "1",
+        "the first option is answered by typing 1"
+    );
+    assert_eq!(
+        keystroke_for(&claude, 2),
+        "2",
+        "and the second by 2 — not by its position drifting"
+    );
+
+    // Aider: letters in brackets, answered by the letter, not its position.
+    let letters = read("aider-permission-screen.txt");
+    let aider = pending_approval(&letters).expect("a letter prompt");
+    let first_key = aider.keys.first().cloned().unwrap_or_default();
+    assert_eq!(
+        keystroke_for(&aider, 1),
+        first_key,
+        "the first option sends its own letter, whatever position it is in"
+    );
+    assert!(
+        first_key.chars().all(|c| c.is_ascii_lowercase()),
+        "and a letter prompt is answered by a letter, not a number: {first_key:?}"
+    );
+}
+
 #[test]
 fn aider_still_asks_in_letters_and_answers_to_them() {
     let screen = read("aider-permission-screen.txt");
@@ -152,4 +190,83 @@ fn aider_still_records_what_it_did_and_what_it_cost() {
             .any(|l| matches!(l, Line::Cost { message, .. } if (*message - 0.0021).abs() < 1e-9)),
         "and so is the cost"
     );
+}
+
+/// The event stream is a promise to whatever consumes it, and everything it
+/// carries is derived from records Claude Code writes. A change to those
+/// records would otherwise reach a consumer as an event that silently stopped
+/// arriving — a foreman that never hears about a failed tool call, a cost that
+/// stays at zero — so the stream is pinned to the same fixture the reader is.
+#[test]
+fn the_stream_still_carries_what_a_transcript_says() {
+    use ironsight_core::bus::Kind;
+    use ironsight_core::stream::{Snapshot, Watcher};
+    use std::time::Instant;
+
+    let mut session = ironsight_core::session::Session::open(fixture("claude-transcript.jsonl"));
+    let mut watcher = Watcher::new();
+    let now = Instant::now();
+
+    // First look: the session is known, and nothing it has already done is
+    // replayed. This is the property that stops a consumer connecting to a busy
+    // machine and being handed a day of history.
+    watcher.poll(now, &[Snapshot::of(&session)]);
+
+    // Now it does everything the transcript records.
+    session.backfill();
+    let events = watcher.poll(now, &[Snapshot::of(&session)]);
+    let kinds: Vec<&str> = events.iter().map(|e| e.kind.name()).collect();
+
+    assert!(
+        kinds.contains(&"toolCalled"),
+        "a tool call no longer reaches the stream — the transcript's tool_use \
+         block has moved, and a foreman would see a session doing nothing: {kinds:?}"
+    );
+    assert!(
+        kinds.contains(&"costSpent"),
+        "spend no longer reaches the stream — the usage block has moved, and \
+         every cost ceiling built on this would read zero: {kinds:?}"
+    );
+
+    let tool = events
+        .iter()
+        .find_map(|e| match &e.kind {
+            Kind::ToolCalled { tool, summary } => Some((tool.clone(), summary.clone())),
+            _ => None,
+        })
+        .expect("the call is in the stream");
+    assert_eq!(tool.0, "Bash", "the tool is named, not merely counted");
+    assert!(
+        tool.1.contains("cargo test"),
+        "and the command it ran survives into the summary rather than being \
+         reduced to the tool's name: {}",
+        tool.1
+    );
+
+    let spent = events
+        .iter()
+        .find_map(|e| match &e.kind {
+            Kind::CostSpent { output, estimate } => Some((*output, *estimate)),
+            _ => None,
+        })
+        .expect("spend is in the stream");
+    assert_eq!(
+        spent.0, 240,
+        "output tokens are reported as the amount spent since the last look"
+    );
+    assert!(spent.1 > 0.0, "and priced, so the model id is still known");
+
+    // Every event is legible to something that was not compiled against this
+    // version, which is the entire point of publishing them.
+    for ev in &events {
+        assert_eq!(ev.version, 1, "the stream is still speaking version 1");
+        let line = ev.line();
+        let back: ironsight_core::bus::Event =
+            serde_json::from_str(&line).expect("an event on the wire parses back");
+        assert_eq!(&back, ev, "what a consumer reads is what was published");
+        assert!(
+            line.contains("\"session\":") && line.contains("\"agent\":"),
+            "every event says which session and which agent it came from: {line}"
+        );
+    }
 }

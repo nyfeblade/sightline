@@ -7,23 +7,214 @@
 //! backends offer the same functions under the same names, and the rest of
 //! Ironsight is written against these rather than against either one.
 
-#[cfg(not(windows))]
-pub use crate::tmux::{
-    OUTLIVES_SCOPE, WHERE, adopt, attach, attach_hint, available, capture, drop_way_back,
-    end_process, forward_key, frame, hold_way_back, hosted_count, inside_tmux, kill_session,
-    new_session_with, open_window, pane_for, panes, prune, release_frame, send_key, send_text,
-    steer_hint, stop_all, unavailable_hint, where_hint,
-};
+/// Where sessions live.
+///
+/// This used to be settled at compile time — tmux on Unix, Ironsight's own
+/// pseudo-terminals on Windows — which made "self-contained" a thing you could
+/// only have by not having tmux. It is now one decision, made once at startup
+/// and asked for by name.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Backend {
+    /// tmux holds them. Outlives Ironsight, and needs tmux installed.
+    Tmux,
+    /// This process holds them. Nothing else to install, and they end when it
+    /// does — which is why it is not the default anywhere a person is watching.
+    Hosted,
+    /// A daemon of Ironsight's own holds them. Nothing else to install, and they
+    /// outlive every window.
+    Daemon,
+}
 
-#[cfg(windows)]
-pub use crate::host::{
-    OUTLIVES_SCOPE, WHERE, adopt, attach, attach_hint, available, capture, drop_way_back,
-    end_process, forward_key, frame, hold_way_back, hosted_count, inside_tmux, kill_session,
-    new_session_with, open_window, pane_for, panes, prune, release_frame, send_key, send_text,
-    steer_hint, stop_all, unavailable_hint, where_hint,
-};
+impl Backend {
+    pub fn name(self) -> &'static str {
+        match self {
+            Backend::Tmux => "tmux",
+            Backend::Hosted => "in-process",
+            Backend::Daemon => "daemon",
+        }
+    }
+}
 
-#[derive(Clone, Debug)]
+static CHOSEN: std::sync::OnceLock<Backend> = std::sync::OnceLock::new();
+
+/// Which backend this run is using. Decided once; asking again is free.
+pub fn backend() -> Backend {
+    *CHOSEN.get_or_init(choose)
+}
+
+/// Pick one, for a person who has said nothing about it.
+///
+/// tmux still wins by default where it exists. It is what any sessions already
+/// running are in, and switching underneath them would make a fleet vanish from
+/// the list. `IRONSIGHT_BACKEND=daemon` opts in; when the daemon has been lived
+/// with, that becomes the default and this comment is the thing to delete.
+fn choose() -> Backend {
+    let asked = std::env::var("IRONSIGHT_BACKEND").ok();
+    #[cfg(windows)]
+    let has_tmux = false;
+    #[cfg(not(windows))]
+    let has_tmux = crate::tmux::available();
+    chosen_from(asked.as_deref(), has_tmux, cfg!(windows))
+}
+
+/// The rule, separated from the world so it can be checked.
+///
+/// Reading the environment and deciding are two different jobs, and only one of
+/// them has anything worth getting wrong.
+fn chosen_from(asked: Option<&str>, has_tmux: bool, windows: bool) -> Backend {
+    if let Some(asked) = asked {
+        match asked.trim().to_lowercase().as_str() {
+            "daemon" | "self" | "ironsight" => return Backend::Daemon,
+            "hosted" | "process" => return Backend::Hosted,
+            // Asking for tmux where there is none would leave every session
+            // unreachable, so it is honoured only if it can be.
+            "tmux" if has_tmux => return Backend::Tmux,
+            _ => {}
+        }
+    }
+    if windows {
+        return Backend::Hosted;
+    }
+    if has_tmux {
+        Backend::Tmux
+    } else {
+        Backend::Daemon
+    }
+}
+
+/// Call the same function on whichever backend is in charge.
+macro_rules! on_backend {
+    ($name:ident ( $($arg:expr),* )) => {{
+        #[cfg(windows)]
+        {
+            crate::host::$name($($arg),*)
+        }
+        #[cfg(not(windows))]
+        {
+            match backend() {
+                Backend::Tmux => crate::tmux::$name($($arg),*),
+                Backend::Hosted => crate::host::$name($($arg),*),
+                Backend::Daemon => crate::daemon::backend::$name($($arg),*),
+            }
+        }
+    }};
+}
+
+/// Whether sessions survive Ironsight exiting.
+pub fn outlives_ironsight() -> bool {
+    on_backend!(outlives_ironsight())
+}
+
+/// What holds them, for saying so to a person.
+pub fn where_backend() -> &'static str {
+    on_backend!(where_name())
+}
+
+pub fn available() -> bool {
+    on_backend!(available())
+}
+
+pub fn panes() -> Vec<Pane> {
+    on_backend!(panes())
+}
+
+pub fn pane_for(pid: i64, cwd: &str, panes: &[Pane]) -> Option<Pane> {
+    on_backend!(pane_for(pid, cwd, panes))
+}
+
+pub fn send_text(pane: &str, text: &str) -> Result<(), String> {
+    on_backend!(send_text(pane, text))
+}
+
+pub fn send_key(pane: &str, key: &str) -> Result<(), String> {
+    on_backend!(send_key(pane, key))
+}
+
+pub fn forward_key(pane: &str, code: crossterm::event::KeyCode, ctrl: bool) -> Result<(), String> {
+    on_backend!(forward_key(pane, code, ctrl))
+}
+
+pub fn inside_tmux() -> bool {
+    on_backend!(inside_tmux())
+}
+
+pub fn hold_way_back() -> bool {
+    on_backend!(hold_way_back())
+}
+
+pub fn drop_way_back(held: bool) {
+    on_backend!(drop_way_back(held))
+}
+
+pub fn attach(session: &str) -> Result<bool, String> {
+    on_backend!(attach(session))
+}
+
+pub fn release_frame(pane: &str) {
+    on_backend!(release_frame(pane))
+}
+
+pub fn frame(pane: &str, cols: u16, rows: u16) -> Option<crate::screen::Frame> {
+    on_backend!(frame(pane, cols, rows))
+}
+
+pub fn capture(pane: &str) -> Option<String> {
+    on_backend!(capture(pane))
+}
+
+pub fn prune() -> Vec<String> {
+    on_backend!(prune())
+}
+
+pub fn kill_session(session: &str) -> Result<(), String> {
+    on_backend!(kill_session(session))
+}
+
+pub fn new_session_with(
+    cwd: &std::path::Path,
+    argv: &[String],
+    opening: &[String],
+) -> Result<String, String> {
+    on_backend!(new_session_with(cwd, argv, opening))
+}
+
+pub fn adopt(cwd: &std::path::Path, session_id: &str) -> Result<String, String> {
+    on_backend!(adopt(cwd, session_id))
+}
+
+pub fn end_process(pid: i64) -> bool {
+    on_backend!(end_process(pid))
+}
+
+pub fn open_window(session: &str) -> Result<String, String> {
+    on_backend!(open_window(session))
+}
+
+pub fn stop_all() -> Vec<String> {
+    on_backend!(stop_all())
+}
+
+pub fn attach_hint(session: &str) -> String {
+    on_backend!(attach_hint(session))
+}
+
+pub fn steer_hint(name: &str) -> String {
+    on_backend!(steer_hint(name))
+}
+
+pub fn unavailable_hint() -> &'static str {
+    on_backend!(unavailable_hint())
+}
+
+pub fn where_hint(session: &str) -> String {
+    on_backend!(where_hint(session))
+}
+
+pub fn hosted_count() -> usize {
+    on_backend!(hosted_count())
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Pane {
     pub id: String,
     pub pid: i64,
@@ -162,11 +353,26 @@ pub fn answer(pane: &str, n: usize) -> Result<(), String> {
     answer_with(pane, n, None)
 }
 
+/// What choosing option `n` of a prompt actually types.
+///
+/// A numbered prompt is answered by the number; a letter prompt by the letter
+/// at that position. Pulled out of `answer_with` so the mapping can be tested
+/// without a live pane — it is the part that, if it broke, would answer the
+/// wrong thing while everything still looked fine.
+pub fn keystroke_for(approval: &Approval, n: usize) -> String {
+    approval
+        .keys
+        .get(n.saturating_sub(1))
+        .cloned()
+        .unwrap_or_else(|| n.to_string())
+}
+
 /// Answer with whatever that option is actually typed as.
 pub fn answer_with(pane: &str, n: usize, approval: Option<&Approval>) -> Result<(), String> {
-    let key = approval
-        .and_then(|a| a.keys.get(n.saturating_sub(1)).cloned())
-        .unwrap_or_else(|| n.to_string());
+    let key = match approval {
+        Some(a) => keystroke_for(a, n),
+        None => n.to_string(),
+    };
     send_text(pane, &key)
 }
 
@@ -315,6 +521,57 @@ pub fn adopted_ids(panes: &[Pane]) -> std::collections::HashSet<String> {
             rest.split_whitespace().next().map(str::to_string)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod backend_choice {
+    use super::*;
+
+    #[test]
+    fn tmux_is_the_default_where_it_exists() {
+        // Not because it is better, but because any sessions already running
+        // are in it: switching underneath them would empty the list.
+        assert_eq!(chosen_from(None, true, false), Backend::Tmux);
+    }
+
+    #[test]
+    fn without_tmux_it_holds_them_itself() {
+        assert_eq!(chosen_from(None, false, false), Backend::Daemon);
+    }
+
+    #[test]
+    fn windows_has_no_choice_to_make() {
+        assert_eq!(chosen_from(None, false, true), Backend::Hosted);
+        assert_eq!(
+            chosen_from(Some("tmux"), false, true),
+            Backend::Hosted,
+            "and asking for something that is not there does not conjure it"
+        );
+    }
+
+    #[test]
+    fn asking_is_honoured() {
+        for word in ["daemon", "self", "ironsight", "DAEMON", " daemon "] {
+            assert_eq!(
+                chosen_from(Some(word), true, false),
+                Backend::Daemon,
+                "{word}"
+            );
+        }
+        assert_eq!(chosen_from(Some("hosted"), true, false), Backend::Hosted);
+    }
+
+    #[test]
+    fn asking_for_tmux_without_tmux_is_refused_rather_than_obeyed() {
+        // Obeying would leave every session unreachable and nothing said.
+        assert_eq!(chosen_from(Some("tmux"), false, false), Backend::Daemon);
+    }
+
+    #[test]
+    fn nonsense_falls_back_rather_than_failing() {
+        assert_eq!(chosen_from(Some("banana"), true, false), Backend::Tmux);
+        assert_eq!(chosen_from(Some(""), false, false), Backend::Daemon);
+    }
 }
 
 #[cfg(test)]

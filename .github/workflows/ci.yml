@@ -35,6 +35,11 @@ jobs:
       # pty test really starts a session and types into it.
       - name: test
         run: cargo test --release
+      # The window's highlighter is JavaScript, so it is not covered by the
+      # line above. Its round-trip check is the one that matters: colouring
+      # must never change the code being read.
+      - name: test (window)
+        run: node crates/gui/ui/tokenize.test.mjs
       - name: lint
         run: cargo clippy --release --all-targets
         continue-on-error: true

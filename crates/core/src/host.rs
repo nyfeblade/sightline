@@ -130,6 +130,15 @@ fn with<T>(name: &str, f: impl FnOnce(&mut Hosted) -> T) -> Result<T, String> {
     }
 }
 
+/// Type raw bytes into a session.
+///
+/// Public because the daemon takes bytes over the wire: text, a named key and a
+/// forwarded key press all become bytes on the client, so the table that says
+/// what a key is lives in one place.
+pub fn write_bytes(name: &str, bytes: &[u8]) -> Result<(), String> {
+    write(name, bytes)
+}
+
 fn write(name: &str, bytes: &[u8]) -> Result<(), String> {
     with(name, |s| {
         s.writer
@@ -157,7 +166,7 @@ pub fn send_key(pane: &str, key: &str) -> Result<(), String> {
 }
 
 /// The bytes a terminal sends for the key names Ironsight uses.
-fn named_key(key: &str) -> Option<Vec<u8>> {
+pub fn named_key(key: &str) -> Option<Vec<u8>> {
     let one = |b: u8| Some(vec![b]);
     match key {
         "Escape" => one(0x1b),
@@ -193,7 +202,11 @@ fn control_byte(c: char) -> Option<u8> {
 }
 
 /// The bytes for one key press, as a terminal would send them.
-fn key_bytes(code: crossterm::event::KeyCode, ctrl: bool) -> Option<Vec<u8>> {
+///
+/// Public because a client of the daemon does this translation itself and sends
+/// the bytes: the alternative is teaching the wire format about every key, and
+/// then having two tables that must agree.
+pub fn key_bytes(code: crossterm::event::KeyCode, ctrl: bool) -> Option<Vec<u8>> {
     use crossterm::event::KeyCode as K;
     let seq = |s: &str| Some(s.as_bytes().to_vec());
     match code {
@@ -546,6 +559,16 @@ pub fn hosted_count() -> usize {
     panes().len()
 }
 
+/// The two facts about a backend, as functions, so one dispatcher can ask every
+/// backend the same question.
+pub fn outlives_ironsight() -> bool {
+    OUTLIVES_SCOPE
+}
+
+pub fn where_name() -> &'static str {
+    WHERE
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -675,7 +698,11 @@ mod tests {
         std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
 
         fn until(name: &str, want: &str) -> String {
-            let deadline = Instant::now() + Duration::from_secs(5);
+            // Generous rather than tight: this starts a real process on a real
+            // pseudo-terminal, and the bound exists so a hang fails instead of
+            // hanging — not to assert how fast the machine is. Five seconds was
+            // enough until the machine was busy, which is when it mattered.
+            let deadline = Instant::now() + Duration::from_secs(30);
             loop {
                 let text = capture(name).unwrap_or_default();
                 if text.contains(want) {

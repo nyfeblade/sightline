@@ -73,7 +73,7 @@ pub fn assess(p: &Probes) -> Vec<Check> {
             ok: p.multiplexer,
             weight: Weight::Required,
             detail: if p.multiplexer {
-                "sessions are held by tmux, so they outlive scope".into()
+                "sessions are held by tmux, so they outlive Ironsight".into()
             } else {
                 "sessions can be watched but not started or typed into".into()
             },
@@ -82,6 +82,22 @@ pub fn assess(p: &Probes) -> Vec<Check> {
             } else {
                 Some(install_line(p.package_manager, "tmux"))
             },
+        });
+    } else {
+        // Held by Ironsight itself — its own process, or the daemon. Nothing to
+        // install; say which, so `doctor` accounts for every backend rather
+        // than falling silent for the two it did not used to know about.
+        let daemon = crate::control::backend() == crate::control::Backend::Daemon;
+        out.push(Check {
+            name: "sessions",
+            ok: true,
+            weight: Weight::Required,
+            detail: if daemon {
+                "held by an Ironsight daemon, so they outlive every window".into()
+            } else {
+                "held by this process — they end when it does".into()
+            },
+            fix: None,
         });
     }
 
@@ -181,7 +197,11 @@ pub fn probe(transcript_root: &Path) -> Probes {
     Probes {
         claude: on_path("claude"),
         multiplexer: crate::control::available(),
-        hosts_own_sessions: !crate::control::OUTLIVES_SCOPE,
+        // True whenever tmux is not the backend — the hosted process and the
+        // daemon both hold sessions themselves. Deriving this from "do they
+        // outlive us" was wrong for the daemon, which outlives us like tmux
+        // does but is not tmux, so `doctor` announced tmux for a daemon user.
+        hosts_own_sessions: crate::control::backend() != crate::control::Backend::Tmux,
         transcripts,
         terminal: std::env::var("TERMINAL")
             .ok()
@@ -201,22 +221,31 @@ pub fn probe(transcript_root: &Path) -> Probes {
 /// the first session does not pay for it, and that a dock launch with nothing
 /// else running still has somewhere to put a session.
 pub fn ensure_backend() -> Result<(), String> {
-    if !crate::control::OUTLIVES_SCOPE {
-        return Ok(());
-    }
-    if !crate::control::available() {
-        return Err("tmux is not installed".into());
-    }
-    let started = Command::new("tmux")
-        .arg("start-server")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map_err(|e| e.to_string())?;
-    if started.success() {
-        Ok(())
-    } else {
-        Err("tmux would not start a server".into())
+    use crate::control::Backend;
+    match crate::control::backend() {
+        // Nothing to start: this process is the backend, and it is running.
+        Backend::Hosted => Ok(()),
+        // Start the daemon now, so the first session does not wait for it and a
+        // dock launch with nothing else running still has somewhere to put a
+        // session. This used to run `tmux start-server` regardless of backend,
+        // which failed for a daemon user who had no tmux at all.
+        Backend::Daemon => crate::daemon::ensure_running(),
+        Backend::Tmux => {
+            if !crate::control::available() {
+                return Err("tmux is not installed".into());
+            }
+            let started = Command::new("tmux")
+                .arg("start-server")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map_err(|e| e.to_string())?;
+            if started.success() {
+                Ok(())
+            } else {
+                Err("tmux would not start a server".into())
+            }
+        }
     }
 }
 

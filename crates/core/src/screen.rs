@@ -10,11 +10,11 @@
 //! `var(--ansi-3)` — because those sixteen are a theme, and the interface should
 //! be allowed to have its own rather than being handed a terminal's.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// A stretch of one line with a single style, which is what a window wants to
 /// draw. Cells are per character; runs are per span of identical ones.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Run {
     pub text: String,
     /// CSS colour, or None for whatever the interface uses as its foreground
@@ -40,7 +40,7 @@ impl Run {
 }
 
 /// One rendering of a session's screen.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Frame {
     pub cols: u16,
     pub rows: u16,
@@ -48,6 +48,13 @@ pub struct Frame {
     pub cursor: (u16, u16),
     pub cursor_visible: bool,
     pub lines: Vec<Vec<Run>>,
+    /// Terminals attached to this session other than Ironsight.
+    ///
+    /// It decides who owns the size. A session nobody is sitting in can be
+    /// reshaped to fit a window; one that a person is watching in their own
+    /// terminal cannot, because the two would pull it between two widths and
+    /// every line would wrap in the wrong place in both.
+    pub attached: usize,
 }
 
 /// The six-by-six-by-six colour cube and the greys above it, which is what an
@@ -133,6 +140,9 @@ pub fn frame_of(screen: &vt100::Screen) -> Frame {
         cursor: screen.cursor_position(),
         cursor_visible: !screen.hide_cursor(),
         lines,
+        // Filled in by whoever knows: only the backend can say who else is
+        // looking at this session.
+        attached: 0,
     }
 }
 

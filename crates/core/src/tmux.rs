@@ -243,6 +243,45 @@ pub fn attach(session: &str) -> Result<bool, String> {
     }
 }
 
+/// What tmux answered about a pane: the size it really is, where its caret is,
+/// and how many terminals are watching it.
+#[derive(Debug, PartialEq, Eq)]
+struct Measured {
+    cols: u16,
+    rows: u16,
+    cursor: (u16, u16),
+    attached: usize,
+}
+
+impl Measured {
+    /// Read the line `display-message` prints. Falls back to the size asked for
+    /// when tmux says something unexpected, because a frame at a guessed size
+    /// is better than no frame — but never falls back on `attached`, which
+    /// defaults to "someone is there" so an unreadable answer cannot cause a
+    /// resize nobody asked for.
+    fn read(line: &str, want_cols: u16, want_rows: u16) -> Option<Self> {
+        let mut n = line.split_whitespace().map(|v| v.parse::<usize>().ok());
+        match (n.next(), n.next(), n.next(), n.next(), n.next()) {
+            (Some(Some(w)), Some(Some(h)), Some(Some(y)), Some(Some(x)), attached) => {
+                Some(Measured {
+                    cols: w as u16,
+                    rows: h as u16,
+                    cursor: (y as u16, x as u16),
+                    // An older tmux without this format leaves it absent, and
+                    // an absent answer is treated as "someone is watching".
+                    attached: attached.flatten().unwrap_or(1),
+                })
+            }
+            _ => Some(Measured {
+                cols: want_cols,
+                rows: want_rows,
+                cursor: (0, 0),
+                attached: 1,
+            }),
+        }
+    }
+}
+
 /// Stop holding a session at the window's size. A session pinned to whatever
 /// the app was showing it at would stay that shape long after the app closed,
 /// so the size goes back to being tmux's business.
@@ -274,26 +313,36 @@ pub fn frame(pane: &str, cols: u16, rows: u16) -> Option<crate::screen::Frame> {
         "-p",
         "-t",
         pane,
-        "#{window_width} #{window_height} #{cursor_y} #{cursor_x}",
+        // The last of these is how many terminals are attached to this session.
+        // It costs nothing to ask for here and decides whether the size is
+        // ours to take.
+        "#{window_width} #{window_height} #{cursor_y} #{cursor_x} #{session_attached}",
     ])?;
     // The size line is last, and everything before it is the screen.
     let (render, size) = out
         .rsplit_once('\n')
         .map(|(a, b)| (a, b))
         .unwrap_or((&out, ""));
-    let mut n = size
-        .split_whitespace()
-        .filter_map(|v| v.parse::<u16>().ok());
-    let (have_cols, have_rows, cursor) = match (n.next(), n.next(), n.next(), n.next()) {
-        (Some(w), Some(h), Some(y), Some(x)) => (w, h, (y, x)),
-        _ => (cols, rows, (0, 0)),
+    let Some(measured) = Measured::read(size, cols, rows) else {
+        return None;
     };
     // A session repaints when it feels like it, so its buffer is parsed at the
     // size it actually is; asking for a different one wraps every line in the
     // wrong place until it catches up.
-    let mut frame = crate::screen::frame_from_render(render.as_bytes(), have_cols, have_rows);
-    frame.cursor = cursor;
-    if (have_cols, have_rows) != (cols, rows) {
+    let mut frame =
+        crate::screen::frame_from_render(render.as_bytes(), measured.cols, measured.rows);
+    frame.cursor = measured.cursor;
+    frame.attached = measured.attached;
+
+    // Whose size is it?
+    //
+    // A session nobody is sitting in has no opinion, so the window's shape wins
+    // and the session is reshaped to fit. A session someone is attached to in
+    // their own terminal already has a shape, and taking it would pull the
+    // session between two widths — every line wrapping in the wrong place, in
+    // their terminal as well as in this window. So it is shown as it is, and
+    // the panel scrolls if that does not fit.
+    if measured.attached == 0 && (measured.cols, measured.rows) != (cols, rows) {
         // Ask for the size the window wants; the next frame will have it.
         tmux(&["set-option", "-t", session, "window-size", "manual"]);
         tmux(&[
@@ -608,6 +657,16 @@ pub fn where_hint(session: &str) -> String {
 /// Sessions that would end if Ironsight exited now. tmux holds its own, so none.
 pub fn hosted_count() -> usize {
     0
+}
+
+/// The two facts about a backend, as functions, so one dispatcher can ask every
+/// backend the same question.
+pub fn outlives_ironsight() -> bool {
+    OUTLIVES_SCOPE
+}
+
+pub fn where_name() -> &'static str {
+    WHERE
 }
 
 #[cfg(test)]

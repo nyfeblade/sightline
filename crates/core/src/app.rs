@@ -8,6 +8,7 @@ use crate::history::{self, Past};
 use crate::notify;
 use crate::registry;
 use crate::session::{Session, Status};
+use crate::{bus, gateway, stream, work};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
@@ -92,14 +93,26 @@ pub struct NewSpec {
     pub prompt: Option<String>,
 }
 
-/// Where Ironsight keeps what it knows between runs.
+/// Where Ironsight keeps what it knows between runs: the order you chose, the
+/// names you gave, the event journal and the task store.
 ///
 /// State written under the old name is moved across on first use rather than
 /// abandoned: a rename should cost nobody the names and order they chose.
-fn data_dir() -> PathBuf {
+///
+/// Overridable outright, because a test that writes here is a test that
+/// corrupts your working state, and because a supervisor running its own fleet
+/// may want a directory of its own.
+pub fn data_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("IRONSIGHT_DATA_DIR") {
+        if !dir.is_empty() {
+            return PathBuf::from(dir);
+        }
+    }
     let base = std::env::var("XDG_DATA_HOME")
+        .ok()
+        .filter(|d| !d.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|_| home().join(".local").join("share"));
+        .unwrap_or_else(|| home().join(".local").join("share"));
     let dir = base.join("ironsight");
     let former = base.join("nyfe-scope");
     if !dir.exists() && former.is_dir() {
@@ -453,6 +466,20 @@ pub struct App {
     prev_status: HashMap<String, String>,
     prev_errors: HashMap<String, usize>,
     last_probe: Instant,
+    /// the event stream: what Ironsight has seen, offered to anything that asks
+    pub bus: bus::Bus,
+    /// what each session was asked to do, and which session asked it
+    pub work: work::Store,
+    watcher: stream::Watcher,
+    /// kept alive for as long as the socket should exist
+    gateway: Option<gateway::Gateway>,
+    /// held for as long as this process is the one journalling
+    publisher_lock: Option<bus::PublisherLock>,
+    /// the commit at each session's head, refreshed on its own slower clock
+    heads: HashMap<String, stream::Commit>,
+    /// the journal-loss figure last surfaced, so it is said when it changes
+    journal_warned: u64,
+    last_head_scan: Instant,
 }
 
 impl App {
@@ -513,6 +540,14 @@ impl App {
             prev_status: HashMap::new(),
             prev_errors: HashMap::new(),
             last_probe: Instant::now() - Duration::from_secs(10),
+            bus: bus::Bus::new(),
+            work: work::Store::new(),
+            watcher: stream::Watcher::new(),
+            gateway: None,
+            publisher_lock: None,
+            heads: HashMap::new(),
+            journal_warned: 0,
+            last_head_scan: Instant::now() - Duration::from_secs(60),
         };
         app.discover();
         app.refresh();
@@ -748,12 +783,16 @@ impl App {
             },
             Prompt::Adopt => match self.current() {
                 Some(s) if s.live.is_none() && !s.in_pane => {
-                    format!("reopen {} in {}? type yes", s.label(), control::WHERE)
+                    format!(
+                        "reopen {} in {}? type yes",
+                        s.label(),
+                        control::where_backend()
+                    )
                 }
                 Some(s) => format!(
                     "move {} into {} and close the original window? type yes",
                     s.label(),
-                    control::WHERE
+                    control::where_backend()
                 ),
                 None => return,
             },
@@ -1259,15 +1298,15 @@ impl App {
             return;
         }
         self.last_probe = Instant::now();
-        let targets: Vec<(String, String, String)> = self
+        let targets: Vec<(String, String, String, String)> = self
             .sessions
             .iter()
             .filter_map(|s| {
                 let p = self.steer.get(&s.id)?;
-                Some((s.id.clone(), p.id.clone(), s.label()))
+                Some((s.id.clone(), p.id.clone(), s.label(), self.agent_of(&s.id)))
             })
             .collect();
-        for (id, pane, label) in targets {
+        for (id, pane, label, agent) in targets {
             let Some(text) = control::capture(&pane) else {
                 continue;
             };
@@ -1278,6 +1317,15 @@ impl App {
                     let fresh = self.approvals.get(&id) != Some(&a);
                     if fresh {
                         self.notify(&format!("{label} needs a decision"), &a.question);
+                        let ev = bus::Event::new(
+                            &id,
+                            &agent,
+                            bus::Kind::PermissionAsked {
+                                question: a.question.clone(),
+                                options: a.options.clone(),
+                            },
+                        );
+                        self.publish(ev);
                     }
                     self.approvals.insert(id, a);
                 }
@@ -1288,6 +1336,7 @@ impl App {
         }
         self.watch_transitions();
         self.drain_queues();
+        self.pump_stream();
     }
 
     /// Notify on the two moments worth interrupting someone for: a session
@@ -1349,6 +1398,242 @@ impl App {
         }
     }
 
+    /// Load what is written down between runs: the assignments and the lineage.
+    ///
+    /// Safe for anything to call. It reads and writes one file and takes
+    /// nothing exclusively, which is what a short command like `assign` needs
+    /// while an Ironsight is running beside it.
+    ///
+    /// Deliberately not part of `new`. Constructing an App should not touch the
+    /// real state directory — a test watching a fixture would otherwise write
+    /// into your working store.
+    pub fn with_state(&mut self) {
+        self.work = work::Store::load(work::path_in(&data_dir()));
+    }
+
+    /// Take ownership of the stream as well: a journal that outlives a restart,
+    /// and a socket anything can read.
+    ///
+    /// Only one process may publish at a time, and the socket is what settles
+    /// it. Two publishers sharing a journal would each number events from their
+    /// own counter, and `--since` — the promise that lets a consumer restart
+    /// without a gap — would quietly stop meaning anything.
+    ///
+    /// So finding the socket already held is not a failure: it means another
+    /// Ironsight is publishing. This one keeps its state and its in-process
+    /// stream, writes nothing to the shared journal, and says so by returning
+    /// false.
+    pub fn with_stream(&mut self) -> Result<bool, String> {
+        let dir = data_dir();
+        self.with_state();
+
+        // The lock decides who journals, on every platform. The socket used to
+        // decide it on Unix and there was nothing deciding it on Windows, where
+        // two processes then numbered events from separate counters and
+        // `--since` stopped meaning anything. Now the socket is just the Unix
+        // transport, opened by whoever already holds the lock.
+        let lock = match bus::PublisherLock::acquire(dir.join("publisher.lock")) {
+            Ok(lock) => lock,
+            // Someone else is publishing. Keep our own in-process stream, write
+            // nothing to the shared journal, and say so.
+            Err(_) => {
+                self.bus = bus::Bus::new();
+                return Ok(false);
+            }
+        };
+
+        let journal = bus::Journal::open(dir.join("events.jsonl")).map_err(|e| e.to_string())?;
+        self.bus = bus::Bus::new().with_journal(journal);
+        self.publisher_lock = Some(lock);
+
+        match gateway::serve(dir.join("events.sock"), self.bus.subscribe()) {
+            Ok(gw) => self.gateway = Some(gw),
+            // No Unix socket on this platform. The stream is still journalled
+            // and still readable through `ironsight events`; only the socket is
+            // absent, and the lock has already guaranteed we are the one writer.
+            Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {}
+            Err(e) => return Err(e.to_string()),
+        }
+        Ok(true)
+    }
+
+    /// How many consumers are attached to the socket, when there is one.
+    pub fn consumers(&self) -> Option<usize> {
+        self.gateway.as_ref().map(|g| g.clients())
+    }
+
+    /// Which agent this session is, as opposed to what it is called.
+    ///
+    /// The pane's command line is the only honest answer for a session Ironsight
+    /// started — `--agent aider` and `--agent claude` look identical from the
+    /// transcript, and the session's own name says nothing about what is
+    /// running. Without a pane, it is whatever wrote the transcript being read,
+    /// which is Claude Code.
+    fn agent_of(&self, id: &str) -> String {
+        self.steer
+            .get(id)
+            .and_then(|p| agent::of_command(&p.cmd))
+            .map(|a| a.id().to_string())
+            .unwrap_or_else(|| "claude".into())
+    }
+
+    /// Stamp an event with the lineage the work store knows, then publish it.
+    /// Every event leaves through here, so lineage cannot be forgotten at one
+    /// emission point and remembered at another.
+    pub fn publish(&mut self, ev: bus::Event) -> u64 {
+        let parent = self.work.parent_of(&ev.session).map(str::to_string);
+        let task = self.work.task_for(&ev.session).map(|t| t.id.clone());
+        self.bus.publish(ev.with_lineage(parent, task))
+    }
+
+    /// Give a session an assignment, and say so on the stream.
+    pub fn assign(&mut self, session: &str, assignment: &str) -> String {
+        let id = self.work.assign(session, assignment);
+        self.work.flush();
+        id
+    }
+
+    /// Record that one session started another, so the list becomes a tree.
+    pub fn record_lineage(&mut self, child: &str, parent: &str) {
+        self.work.record_lineage(child, parent);
+        self.work.flush();
+    }
+
+    /// Cost per session with everything each one started added to it.
+    pub fn rolled_up(&self) -> HashMap<String, work::Cost> {
+        let own: HashMap<String, work::Cost> = self
+            .sessions
+            .iter()
+            .map(|s| {
+                (
+                    s.id.clone(),
+                    work::Cost {
+                        output: s.totals.output,
+                        estimate: s.totals.cost,
+                    },
+                )
+            })
+            .collect();
+        self.work.rollup(&own)
+    }
+
+    /// The session list as the shape of the work rather than a flat list:
+    /// each session with how deep it sits under whoever started it.
+    pub fn shaped(&self) -> Vec<(String, usize)> {
+        let known: Vec<String> = self.sessions.iter().map(|s| s.id.clone()).collect();
+        self.work.ordered(&known)
+    }
+
+    /// Move work filed against a pane onto the session now running in it.
+    ///
+    /// A session assigned something the moment it was started is filed under
+    /// its pane, because that is all it had. This is where it takes ownership
+    /// of that record, and it is why an assignment given at `ironsight new
+    /// --task` is still attached to the session an hour later.
+    fn adopt_pane_records(&mut self) {
+        // The handoff window: a session started with an assignment has this
+        // long to write its first transcript and claim its pane record before
+        // that record is treated as debris. Minutes, because that is how long
+        // the real handoff takes; longer only widens the window in which a
+        // reused pane id could inherit the wrong assignment.
+        const HANDOFF_SECS: i64 = 300;
+
+        let pairs: Vec<(String, String)> = self
+            .sessions
+            .iter()
+            .filter(|s| !s.placeholder)
+            .filter_map(|s| {
+                let pane = self.steer.get(&s.id)?;
+                Some((format!("pane:{}", pane.id), s.id.clone()))
+            })
+            .filter(|(from, to)| from != to && self.work.knows(from))
+            .collect();
+        for (from, to) in pairs {
+            // A record older than the handoff belongs to a session that never
+            // arrived; adopting it onto whatever is in the pane now would move
+            // someone else's assignment onto an unrelated session.
+            if self.work.stale_pane_record(&from, HANDOFF_SECS) {
+                self.work.forget_pane_record(&from);
+            } else {
+                self.work.rekey(&from, &to);
+            }
+        }
+    }
+
+    /// New commits, on a slower clock than everything else: one git call per
+    /// live session, and only for sessions that have somewhere to look.
+    fn scan_heads(&mut self) {
+        if self.last_head_scan.elapsed() < Duration::from_secs(15) {
+            return;
+        }
+        self.last_head_scan = Instant::now();
+        let targets: Vec<(String, String)> = self
+            .sessions
+            .iter()
+            .filter(|s| !s.cwd.is_empty() && !matches!(s.status(), Status::Ended))
+            .map(|s| (s.id.clone(), s.cwd.clone()))
+            .collect();
+        for (id, cwd) in targets {
+            if let Some((sha, message, branch)) = git::head(std::path::Path::new(&cwd)) {
+                self.heads.insert(
+                    id,
+                    stream::Commit {
+                        sha,
+                        message,
+                        branch,
+                    },
+                );
+            }
+        }
+    }
+
+    /// Publish everything that has changed since the last look.
+    fn pump_stream(&mut self) {
+        // An assignment may have been made from the command line since the last
+        // tick, and an event stamped with lineage this process has not heard
+        // about is an event that is quietly wrong.
+        self.work.reload_if_stale();
+        self.adopt_pane_records();
+        self.scan_heads();
+        // The watcher is lent out for the duration: the snapshots borrow the
+        // sessions, and it cannot be borrowed from self at the same time.
+        let mut watcher = std::mem::take(&mut self.watcher);
+        let now = Instant::now();
+        let events = {
+            let snaps: Vec<stream::Snapshot<'_>> = self
+                .sessions
+                .iter()
+                .map(|s| {
+                    stream::Snapshot::of(s)
+                        .with_agent(self.agent_of(&s.id))
+                        .with_head(self.heads.get(&s.id).cloned())
+                })
+                .collect();
+            watcher.poll(now, &snaps)
+        };
+        self.watcher = watcher;
+        for ev in events {
+            // A session that starts working is working on its assignment; every
+            // other state a task can reach is claimed by an agent or proved by
+            // a check, and neither is this tick's to decide.
+            if matches!(ev.kind, bus::Kind::SessionWorking { .. }) {
+                self.work.advance(&ev.session, work::State::Working);
+            }
+            self.publish(ev);
+        }
+        // A journal that has started dropping writes — a full disk — is worth
+        // saying once, not on every tick. The events still reached the window;
+        // it is the durable record that is losing them.
+        let lost = self.bus.journal_dropped();
+        if lost > self.journal_warned {
+            self.say(format!(
+                "the event journal could not write {lost} event(s) — is the disk full?"
+            ));
+            self.journal_warned = lost;
+        }
+        self.work.flush();
+    }
+
     pub fn notify(&mut self, title: &str, body: &str) {
         self.say(format!("{title} — {body}"));
         if self.notify_on {
@@ -1400,6 +1685,23 @@ impl App {
                     .as_ref()
                     .and_then(|a| a.options.get(n.saturating_sub(1)).cloned())
                     .unwrap_or_else(|| n.to_string());
+                // Who answered is part of the record. Nothing but a person can
+                // answer today; when a policy can, this is where it says so,
+                // and the human can read afterwards what was decided for them.
+                let agent = self.agent_of(&id);
+                let ev = bus::Event::new(
+                    &id,
+                    &agent,
+                    bus::Kind::PermissionAnswered {
+                        option: if n == 0 {
+                            "declined".into()
+                        } else {
+                            chose.clone()
+                        },
+                        by: bus::By::Human,
+                    },
+                );
+                self.publish(ev);
                 self.say(if n == 0 {
                     "declined".into()
                 } else {
@@ -1477,11 +1779,11 @@ impl App {
                         (true, true, true) => {
                             format!(
                                 "{name} moved into {} — reopened in a new window",
-                                control::WHERE
+                                control::where_backend()
                             )
                         }
                         (true, true, false) => {
-                            format!("{name} moved into {} — {attach}", control::WHERE)
+                            format!("{name} moved into {} — {attach}", control::where_backend())
                         }
                         (true, false, _) => {
                             format!("resumed as {name} — close the old window yourself")

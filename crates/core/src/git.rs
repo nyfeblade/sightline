@@ -84,6 +84,23 @@ pub fn diff(cwd: &Path, path: &str) -> Option<String> {
     })
 }
 
+/// The commit at HEAD: what it is, what it says, and where it sits. Used to
+/// notice that a session has committed something, which is one of the few
+/// signals of progress that cannot be claimed without being true.
+pub fn head(cwd: &Path) -> Option<(String, String, String)> {
+    let line = git(cwd, &["log", "-1", "--format=%H%x1f%s"])?;
+    let mut parts = line.trim().splitn(2, '\x1f');
+    let sha = parts.next()?.to_string();
+    if sha.is_empty() {
+        return None;
+    }
+    let message = parts.next().unwrap_or("").to_string();
+    let branch = git(cwd, &["rev-parse", "--abbrev-ref", "HEAD"])?
+        .trim()
+        .to_string();
+    Some((sha, message, branch))
+}
+
 pub fn repo_root(cwd: &Path) -> Option<std::path::PathBuf> {
     let out = git(cwd, &["rev-parse", "--show-toplevel"])?;
     let trimmed = out.trim();
@@ -93,16 +110,11 @@ pub fn repo_root(cwd: &Path) -> Option<std::path::PathBuf> {
 /// Where isolated checkouts live. Kept out of the repository so a worktree
 /// never shows up as untracked noise in the original.
 pub fn worktree_root(repo: &Path) -> std::path::PathBuf {
-    let base = std::env::var("XDG_DATA_HOME")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| crate::app::home().join(".local").join("share"));
     let name = repo
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "repo".into());
-    base.join("ironsight").join("worktrees").join(name)
+    crate::app::data_dir().join("worktrees").join(name)
 }
 
 /// Branch names are used as directory names, so keep them to safe characters.
@@ -314,6 +326,35 @@ mod tests {
 
         remove_worktree(&repo, &tree.to_string_lossy()).expect("worktree should be removable");
         assert!(!tree.exists());
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn reads_the_commit_at_head() {
+        let repo = scratch("head");
+        let (sha, message, branch) = head(&repo).expect("a repository with a commit has a head");
+        assert_eq!(sha.len(), 40, "a full object name");
+        assert_eq!(message, "first");
+        assert_eq!(branch, "main");
+
+        std::fs::write(repo.join("a.txt"), "two\n").unwrap();
+        run(&repo, &["add", "."]);
+        commit(&repo, "second");
+        let (next, message, _) = head(&repo).unwrap();
+        assert_ne!(
+            next, sha,
+            "committing moves it, which is how a commit is seen"
+        );
+        assert_eq!(message, "second");
+
+        let empty = std::env::temp_dir().join("ironsight-git-test-nothing");
+        let _ = std::fs::remove_dir_all(&empty);
+        std::fs::create_dir_all(&empty).unwrap();
+        assert!(
+            head(&empty).is_none(),
+            "a directory that is not a repository has no head"
+        );
+        let _ = std::fs::remove_dir_all(&empty);
         let _ = std::fs::remove_dir_all(&repo);
     }
 

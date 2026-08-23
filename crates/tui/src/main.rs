@@ -1,6 +1,6 @@
 //! Ironsight — watch every Claude Code session on this machine, live.
 
-use ironsight_core::{app, bootstrap, control, git, session};
+use ironsight_core::{app, bootstrap, bus, checks, control, gateway, git, session, work};
 
 mod ui;
 
@@ -21,6 +21,7 @@ Ironsight — live view of what Claude Code is doing
 usage: Ironsight [options]
        ironsight new [path] [--agent A] [--name N] [--model M] [--effort E]
                  [--permission-mode P] [--prompt T] [--worktree BRANCH]
+                 [--task WHAT] [--parent WHO]
                                start a session and exit; --agent picks which
                                agent to run (claude, codex, gemini, aider, or
                                any command), default claude
@@ -28,9 +29,36 @@ usage: Ironsight [options]
        ironsight adopt <who>        (re)open a conversation in tmux so it can be steered
        ironsight prune              close Ironsight sessions whose process has exited
        ironsight doctor             check everything Ironsight needs is installed
+       ironsight serve              hold sessions in a process of Ironsight's own,
+                                so they outlive every window. Started for you
+                                when it is needed; run it yourself to watch it
+       ironsight attach <who>       hand this terminal to a session Ironsight holds
+                                — the way out when the window is the problem
        ironsight stop [who|--all]   stop one session, or everything Ironsight started
        ironsight waiting            list sessions blocked on a prompt
        ironsight approve <who> [n]  answer a blocked session (default option 1)
+       ironsight events [--since N] [--json]
+                               follow everything happening on this machine;
+                               attaches to a running Ironsight if there is one,
+                               and watches the machine itself if there is not
+       ironsight tasks              what each session was asked to do
+       ironsight assign <who> <text>
+                               give a session an assignment
+       ironsight note <task> <text> append what was learned to a task
+       ironsight refute <task> <command>
+                               name something that would show this work is
+                               wrong. The command must fail; if it succeeds the
+                               claim is refused. Without one, work can be
+                               checked but never verified
+       ironsight claim <who>        say a session's work is finished; the checks decide
+       ironsight check <who>        run this project's checks now and report
+       ironsight trust [path]       approve a project's checks, having read them.
+                               Nothing runs from a .ironsight/checks.toml until
+                               you have, and it asks again if the file changes
+       ironsight foreman [--every N]
+                               watch for claimed work and refuse what does not
+                               pass its checks. Never writes code, never
+                               restarts anything, never guesses
 
 options:
   --since <dur>   include sessions touched within this window (default 24h)
@@ -61,6 +89,325 @@ fn parse_since(s: &str) -> Option<Duration> {
         .map(|n| Duration::from_secs(n * mult))
 }
 
+fn report(o: &checks::Outcome) {
+    let mark = match &o.state {
+        checks::State::Passed => "ok  ".to_string(),
+        checks::State::Failed { .. } => "FAIL".to_string(),
+        checks::State::Unknown { .. } => "??  ".to_string(),
+    };
+    let why = match &o.state {
+        checks::State::Passed => String::new(),
+        checks::State::Failed { first } => format!(" · {first}"),
+        checks::State::Unknown { why } => format!(" · {why}"),
+    };
+    println!("{mark} {:<10} {:>6}ms{why}", o.name, o.ms);
+}
+
+/// Run a session's project checks, and — when asked — record what they decided.
+///
+/// The recording is the whole point. A task reaches `Verified` here and nowhere
+/// else, and a claim that fails goes back to `Working` with the first failure
+/// attached, which is the message the agent that claimed it will read.
+fn verify(app: &mut App, id: &str, record: bool) -> Result<Vec<checks::Outcome>, String> {
+    let session = app
+        .sessions
+        .iter()
+        .find(|s| s.id == id)
+        .ok_or_else(|| format!("no session {id}"))?;
+    let cwd = session.cwd.clone();
+    if cwd.is_empty() {
+        return Err("that session has no directory to run anything in".into());
+    }
+    let cwd = std::path::PathBuf::from(&cwd);
+    let (root, suite) = checks::Suite::find(&cwd)?.ok_or_else(|| {
+        format!(
+            "{} has no {} — a project has to say what finished means",
+            cwd.display(),
+            checks::FILE
+        )
+    })?;
+    let mut env = std::collections::HashMap::new();
+    if let Some(tree) = git::status(&cwd) {
+        env.insert("BRANCH".to_string(), tree.branch);
+    }
+    // Nothing runs until these exact commands have been approved. A checks
+    // file arrives with a repository, and cloning something should not run
+    // whatever its author felt like running.
+    if !checks::trusted(&root, &suite) {
+        return Err(checks::untrusted_hint(&root, &suite));
+    }
+    let outcomes = suite.run(&root, &env);
+    if !record {
+        return Ok(outcomes);
+    }
+
+    let Some(task) = app.work.task_for(id).map(|t| t.id.clone()) else {
+        return Ok(outcomes);
+    };
+    let short = &id[..id.len().min(8)];
+    if checks::Suite::verified(&outcomes) {
+        let names: Vec<&str> = outcomes.iter().map(|o| o.name.as_str()).collect();
+        for o in &outcomes {
+            let ev = bus::Event::new(
+                id,
+                "foreman",
+                bus::Kind::ChecksPassed {
+                    suite: o.name.clone(),
+                    ms: o.ms,
+                },
+            );
+            app.publish(ev);
+        }
+        // The checks passing is a floor, never a finish.
+        //
+        // A suite can only say that the failures it is able to express did not
+        // happen. Writing "verified" on the strength of that manufactures
+        // confidence in work nobody has tried to break, which is worse than
+        // saying nothing — so this stops at `Checked`, and what carries a task
+        // past it is an attempt to show it is wrong that failed.
+        let _ = app.work.set_state(&task, work::State::Checked);
+        let _ = app
+            .work
+            .note(&task, &format!("checks passed: {}", names.join(", ")));
+        let refutations = app
+            .work
+            .get(&task)
+            .map(|t| t.refutes.clone())
+            .unwrap_or_default();
+        if refutations.is_empty() {
+            println!(
+                "{task} checked · {short} · {} passed. Not verified: nothing says what \
+                 wrong would look like (ironsight refute {task} <command>)",
+                names.join(", ")
+            );
+            app.work.flush();
+            return Ok(outcomes);
+        }
+        let proven: Vec<String> = app
+            .work
+            .get(&task)
+            .map(|t| t.proven.clone())
+            .unwrap_or_default();
+        let mut stood = 0;
+        let mut unproven: Vec<String> = Vec::new();
+        for command in &refutations {
+            let (verdict, ms) = checks::refute(command, &root, &env);
+            match verdict {
+                checks::Verdict::Stands => {
+                    // Standing is only evidence if this refutation has ever
+                    // been seen to catch anything. One that cannot fire stands
+                    // for ever and proves nothing.
+                    if proven.iter().any(|p| p == command) {
+                        stood += 1;
+                        println!("ok   refutation {ms:>6}ms · did not fire · {command}");
+                    } else {
+                        unproven.push(command.clone());
+                        println!(
+                            "??   refutation {ms:>6}ms · did not fire, and never has · {command}"
+                        );
+                    }
+                }
+                checks::Verdict::Refuted { how } => {
+                    // It caught something. That is bad news for the claim and
+                    // good news for the refutation: it is now a demonstrated
+                    // instrument, and standing later will mean something.
+                    app.work.proved(&task, command);
+                    let why = format!("refuted: {how} succeeded, and it was written to fail");
+                    let _ = app.work.set_state(&task, work::State::Working);
+                    let _ = app.work.note(&task, &why);
+                    println!("{task} refused · {short} · {why}");
+                    let ev = bus::Event::new(
+                        id,
+                        "foreman",
+                        bus::Kind::ChecksFailed {
+                            suite: "refutation".into(),
+                            first: how,
+                        },
+                    );
+                    app.publish(ev);
+                    app.work.flush();
+                    return Ok(outcomes);
+                }
+                checks::Verdict::Unrunnable { why } => {
+                    // Neither evidence for nor against. It stays checked, and
+                    // says why it got no further.
+                    let note = format!("could not run a refutation · {command} · {why}");
+                    let _ = app.work.note(&task, &note);
+                    println!("??   refutation {:>6}ms · {note}", ms);
+                }
+            }
+        }
+        if stood == refutations.len() {
+            let _ = app.work.set_state(&task, work::State::Verified);
+            let _ = app.work.note(
+                &task,
+                &format!("verified: {stood} demonstrated refutation(s) tried, none fired"),
+            );
+            println!("{task} verified · {short} · {stood} attempt(s) to break it failed");
+        } else if !unproven.is_empty() {
+            let note = format!(
+                "not verified: {} refutation(s) have never caught anything, so their \
+                 standing is not evidence — {}",
+                unproven.len(),
+                unproven.join(", ")
+            );
+            let _ = app.work.note(&task, &note);
+            println!("{task} checked · {short} · {note}");
+        } else {
+            println!(
+                "{task} checked · {short} · not verified: {} of {} refutations could not be run",
+                refutations.len() - stood,
+                refutations.len()
+            );
+        }
+    } else {
+        let refusal = checks::Suite::refusal(&outcomes).unwrap_or_else(|| "not verified".into());
+        // Back to working, not blocked: there is nothing to wait for, only
+        // something to fix.
+        let _ = app.work.set_state(&task, work::State::Working);
+        let _ = app.work.note(&task, &refusal);
+        println!("{task} refused · {short} · {refusal}");
+        for o in &outcomes {
+            if let checks::State::Failed { first } = &o.state {
+                let ev = bus::Event::new(
+                    id,
+                    "foreman",
+                    bus::Kind::ChecksFailed {
+                        suite: o.name.clone(),
+                        first: first.clone(),
+                    },
+                );
+                app.publish(ev);
+            }
+        }
+    }
+    app.work.flush();
+    Ok(outcomes)
+}
+
+/// Hand this terminal to a session, until the way-back key is pressed.
+///
+/// The screen is redrawn from the session's own, and every key goes straight to
+/// it. This is a poll rather than a stream — the daemon answers questions, it
+/// does not push — which costs a frame of latency and buys a protocol nobody
+/// has to debug at the moment a fleet is wedged.
+fn attach_to(pane: &str, name: &str) -> Result<()> {
+    use crossterm::{cursor, execute, style, terminal};
+    use std::io::Write;
+
+    let mut out = std::io::stdout();
+    terminal::enable_raw_mode()?;
+    execute!(out, terminal::EnterAlternateScreen, cursor::Hide)?;
+    restore_terminal_however_this_ends();
+
+    let result = (|| -> Result<()> {
+        let mut last: Vec<Vec<ironsight_core::screen::Run>> = Vec::new();
+        loop {
+            let (cols, rows) = terminal::size()?;
+            if let Some(frame) = control::frame(pane, cols, rows.saturating_sub(1)) {
+                // Only the lines that changed, or attaching to a busy session
+                // flickers the whole screen thirty times a second.
+                for (y, line) in frame.lines.iter().enumerate() {
+                    if last.get(y) == Some(line) {
+                        continue;
+                    }
+                    execute!(
+                        out,
+                        cursor::MoveTo(0, y as u16),
+                        terminal::Clear(terminal::ClearType::UntilNewLine)
+                    )?;
+                    for run in line {
+                        let mut style = style::ContentStyle::new();
+                        if let Some(c) = run.fg.as_deref().and_then(colour) {
+                            style.foreground_color = Some(c);
+                        }
+                        if let Some(c) = run.bg.as_deref().and_then(colour) {
+                            style.background_color = Some(c);
+                        }
+                        if run.bold {
+                            style.attributes.set(style::Attribute::Bold);
+                        }
+                        if run.underline {
+                            style.attributes.set(style::Attribute::Underlined);
+                        }
+                        if run.inverse {
+                            style.attributes.set(style::Attribute::Reverse);
+                        }
+                        execute!(out, style::PrintStyledContent(style.apply(&run.text)))?;
+                    }
+                }
+                last = frame.lines.clone();
+                let (cy, cx) = frame.cursor;
+                execute!(
+                    out,
+                    cursor::MoveTo(0, rows.saturating_sub(1)),
+                    terminal::Clear(terminal::ClearType::UntilNewLine),
+                    style::Print(format!("── {name} · ctrl+] to let go ")),
+                    cursor::MoveTo(cx, cy),
+                )?;
+                out.flush()?;
+            }
+
+            if cevent::poll(Duration::from_millis(40))? {
+                if let Event::Key(key) = cevent::read()? {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
+                    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+                    if ctrl && key.code == KeyCode::Char(']') {
+                        return Ok(());
+                    }
+                    let _ = control::forward_key(pane, key.code, ctrl);
+                }
+            }
+        }
+    })();
+
+    execute!(out, cursor::Show, terminal::LeaveAlternateScreen)?;
+    terminal::disable_raw_mode()?;
+    result
+}
+
+/// `#rrggbb`, which is how a screen run carries a colour.
+fn colour(css: &str) -> Option<crossterm::style::Color> {
+    let hex = css.strip_prefix('#')?;
+    if hex.len() != 6 {
+        return None;
+    }
+    let n = |a: usize, b: usize| u8::from_str_radix(&hex[a..b], 16).ok();
+    Some(crossterm::style::Color::Rgb {
+        r: n(0, 2)?,
+        g: n(2, 4)?,
+        b: n(4, 6)?,
+    })
+}
+
+/// Tokens, in the shortest form that is still honest.
+fn tokens(n: u64) -> String {
+    match n {
+        n if n >= 1_000_000 => format!("{:.1}M", n as f64 / 1_000_000.0),
+        n if n >= 1_000 => format!("{:.0}k", n as f64 / 1_000.0),
+        n => n.to_string(),
+    }
+}
+
+/// A session id prefix, the name you gave it, or its tmux session name.
+/// Every subcommand that takes a "who" accepts all three, because which one a
+/// person has to hand depends on where they are looking.
+fn resolve(app: &App, who: &str) -> Option<String> {
+    app.sessions
+        .iter()
+        .find(|s| {
+            let pane = app
+                .steer
+                .get(&s.id)
+                .map(|p| p.session.clone())
+                .unwrap_or_default();
+            s.id.starts_with(who) || s.label().eq_ignore_ascii_case(who) || pane == who
+        })
+        .map(|s| s.id.clone())
+}
+
 fn main() -> Result<()> {
     let mut since = Duration::from_secs(24 * 3_600);
     let mut only_live = false;
@@ -79,7 +426,7 @@ fn main() -> Result<()> {
         "new", "send", "adopt", "approve", "waiting", "stop", "prune",
     ];
     if let Some(cmd) = args.first() {
-        if !control::OUTLIVES_SCOPE && ONE_SHOT.contains(&cmd.as_str()) {
+        if !control::outlives_ironsight() && ONE_SHOT.contains(&cmd.as_str()) {
             anyhow::bail!(
                 "scope holds sessions itself on this platform, so they end when it exits.\n\
                  `Ironsight {cmd}` would do that immediately — run Ironsight and use it from there."
@@ -125,6 +472,35 @@ fn main() -> Result<()> {
             return Ok(());
         }
         anyhow::bail!("something required is missing");
+    }
+
+    // The daemon. Nothing but the sessions and a socket: everything about what
+    // a session *means* stays in the front ends, which read the same files they
+    // always read.
+    if args.first().map(String::as_str) == Some("serve") {
+        let path = ironsight_core::daemon::default_path();
+        if ironsight_core::daemon::running() {
+            anyhow::bail!("one is already listening on {}", path.display());
+        }
+        println!("holding sessions · {}", path.display());
+        ironsight_core::daemon::serve(path)?;
+        return Ok(());
+    }
+
+    // The way back in when the window is the problem.
+    //
+    // tmux gave this for free — `tmux attach` and you are in the session. Held
+    // by Ironsight there has to be something that does the same, and it has to
+    // exist before anyone relies on the daemon rather than after.
+    if args.first().map(String::as_str) == Some("attach") {
+        let who = args
+            .get(1)
+            .ok_or_else(|| anyhow::anyhow!("usage: ironsight attach <who>"))?;
+        let pane = control::panes()
+            .into_iter()
+            .find(|p| p.session == *who || p.id == *who)
+            .ok_or_else(|| anyhow::anyhow!("no session called {who}"))?;
+        return attach_to(&pane.id, &pane.session);
     }
 
     if args.first().map(String::as_str) == Some("prune") {
@@ -193,6 +569,322 @@ fn main() -> Result<()> {
         app.sel = idx;
         app.answer(n);
         println!("{}", app.note);
+        return Ok(());
+    }
+
+    // The stream, for anything that is not Ironsight.
+    //
+    // If an Ironsight is running its socket is the source, so several consumers
+    // see one consistent stream. If none is, this becomes the watcher itself —
+    // which is the layer being useful with nothing above it, rather than a
+    // window onto something else that must already be open.
+    if args.first().map(String::as_str) == Some("events") {
+        let json = args.iter().any(|a| a == "--json");
+        let since: Option<u64> = args
+            .iter()
+            .position(|a| a == "--since")
+            .and_then(|i| args.get(i + 1))
+            .and_then(|s| s.parse().ok());
+        let dir = app::data_dir();
+        let show = |ev: &bus::Event| {
+            println!("{}", if json { ev.line() } else { ev.human() });
+            // Piped into something that has stopped reading, there is nothing
+            // useful left to do, and a broken pipe is not an error worth a
+            // stack trace.
+            use std::io::Write;
+            std::io::stdout().flush().ok();
+        };
+
+        let mut last = since.unwrap_or(0);
+        if let Some(from) = since {
+            let replayed = bus::replay_from(&dir.join("events.jsonl"), from);
+            // Say so before the events, not after: a consumer restarting needs
+            // to know it has a hole before it treats what follows as complete.
+            if replayed.missed > 0 {
+                eprintln!(
+                    "(missed {} event(s) before this point — they rotated out of the journal)",
+                    replayed.missed
+                );
+            }
+            for ev in replayed.events {
+                last = last.max(ev.seq);
+                show(&ev);
+            }
+        }
+
+        let sock = dir.join("events.sock");
+        if sock.exists() {
+            match gateway::follow(&sock, |ev| show(&ev)) {
+                Ok(()) => return Ok(()),
+                // The Ironsight that owned it exited between the check and the
+                // connect; fall through and watch the machine directly.
+                Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
+
+        let mut app = App::new(
+            app::default_root(),
+            app::default_sessions_dir(),
+            Duration::from_secs(24 * 3_600),
+            false,
+        );
+        if !app.with_stream().map_err(|e| anyhow::anyhow!(e))? {
+            // Another Ironsight took the socket between the check above and the
+            // bind. Read from it rather than watching the machine twice.
+            gateway::follow(&sock, |ev| show(&ev))?;
+            return Ok(());
+        }
+        let sub = app.bus.subscribe();
+        app.rescan_panes();
+        let mut lost = 0;
+        loop {
+            app.refresh();
+            app.probe();
+            for ev in sub.drain() {
+                let _ = last;
+                show(&ev);
+            }
+            if sub.lost() > lost {
+                eprintln!("(missed {} events — reading too slowly)", sub.lost() - lost);
+                lost = sub.lost();
+            }
+            std::thread::sleep(Duration::from_millis(400));
+        }
+    }
+
+    if args.first().map(String::as_str) == Some("tasks") {
+        // The sessions come too, because cost attributed to a piece of work
+        // rather than to a process is the point of having a tree at all — a
+        // supervisor's line shows what its workers spent as well as its own.
+        let mut app = App::new(
+            app::default_root(),
+            app::default_sessions_dir(),
+            Duration::from_secs(7 * 86_400),
+            false,
+        );
+        app.with_state();
+        if app.work.tasks().is_empty() {
+            println!("nothing has been assigned — try: ironsight assign <who> <what>");
+            return Ok(());
+        }
+        let rolled = app.rolled_up();
+        let store = &app.work;
+        // Ordered by the shape of the work, so a supervisor's workers sit under
+        // it rather than beside it.
+        let sessions: Vec<String> = store.tasks().iter().map(|t| t.session.clone()).collect();
+        for (session, depth) in store.ordered(&sessions) {
+            let Some(task) = store
+                .task_for(&session)
+                .or_else(|| store.tasks().iter().rev().find(|t| t.session == session))
+            else {
+                continue;
+            };
+            let pad = "  ".repeat(depth);
+            let short = session.chars().take(8).collect::<String>();
+            let cost = rolled.get(&session).copied().unwrap_or_default();
+            let spend = if cost.output > 0 {
+                format!("  [{} out · ${:.2}]", tokens(cost.output), cost.estimate)
+            } else {
+                String::new()
+            };
+            println!(
+                "{pad}{:<4} {:<10} {short}  {}{spend}",
+                task.id,
+                task.state.label(),
+                task.assignment
+            );
+            for note in &task.notes {
+                println!("{pad}       · {}", note.text);
+            }
+        }
+        return Ok(());
+    }
+
+    if args.first().map(String::as_str) == Some("assign") {
+        let who = args
+            .get(1)
+            .ok_or_else(|| anyhow::anyhow!("usage: ironsight assign <who> <what>"))?;
+        let what = args[2..].join(" ");
+        if what.is_empty() {
+            anyhow::bail!("usage: ironsight assign <who> <what>");
+        }
+        let mut app = App::new(
+            app::default_root(),
+            app::default_sessions_dir(),
+            Duration::from_secs(7 * 86_400),
+            false,
+        );
+        // Only the store: an Ironsight may well be running, and this command has
+        // no business taking the stream from it.
+        app.with_state();
+        app.rescan_panes();
+        let id = resolve(&app, who).ok_or_else(|| anyhow::anyhow!("no session matching {who}"))?;
+        let task = app.assign(&id, &what);
+        println!("{task} assigned to {}", &id[..id.len().min(8)]);
+        return Ok(());
+    }
+
+    // Verification, and the thing that does it on your behalf.
+    //
+    // These are one piece of work in two shapes: `check` answers now, `foreman`
+    // keeps answering. Neither can accept anything on an agent's say-so, which
+    // is the entire reason they exist.
+    if matches!(
+        args.first().map(String::as_str),
+        Some("check") | Some("claim") | Some("foreman")
+    ) {
+        let mut app = App::new(
+            app::default_root(),
+            app::default_sessions_dir(),
+            Duration::from_secs(7 * 86_400),
+            false,
+        );
+        // A foreman is a supervisor, so it publishes what it decides when it
+        // can. When another Ironsight already holds the stream it still does
+        // the work — its verdicts go to the store either way — and says so
+        // rather than pretending its events went anywhere.
+        let publishing = if args[0] == "foreman" {
+            app.with_stream().map_err(|e| anyhow::anyhow!(e))?
+        } else {
+            app.with_state();
+            false
+        };
+        app.rescan_panes();
+
+        if args[0] == "claim" {
+            let who = args
+                .get(1)
+                .ok_or_else(|| anyhow::anyhow!("usage: ironsight claim <who>"))?;
+            let id =
+                resolve(&app, who).ok_or_else(|| anyhow::anyhow!("no session matching {who}"))?;
+            let task = app
+                .work
+                .task_for(&id)
+                .map(|t| t.id.clone())
+                .ok_or_else(|| anyhow::anyhow!("{who} has not been assigned anything"))?;
+            app.work
+                .set_state(&task, work::State::Claimed)
+                .map_err(|e| anyhow::anyhow!(e))?;
+            app.work.flush();
+            println!("{task} claimed — it is not done until the checks say so");
+            return Ok(());
+        }
+
+        if args[0] == "check" {
+            let who = args
+                .get(1)
+                .ok_or_else(|| anyhow::anyhow!("usage: ironsight check <who>"))?;
+            let id =
+                resolve(&app, who).ok_or_else(|| anyhow::anyhow!("no session matching {who}"))?;
+            let outcomes = verify(&mut app, &id, false);
+            match outcomes {
+                Err(why) => anyhow::bail!(why),
+                Ok(outcomes) => {
+                    for o in &outcomes {
+                        report(&o);
+                    }
+                    if checks::Suite::verified(&outcomes) {
+                        println!("verified");
+                    } else {
+                        anyhow::bail!(
+                            checks::Suite::refusal(&outcomes)
+                                .unwrap_or_else(|| "not verified".into())
+                        );
+                    }
+                }
+            }
+            return Ok(());
+        }
+
+        // The foreman.
+        let every = args
+            .iter()
+            .position(|a| a == "--every")
+            .and_then(|i| args.get(i + 1))
+            .and_then(|s| parse_since(s))
+            .unwrap_or(Duration::from_secs(10));
+        println!(
+            "foreman watching · checking claimed work every {}s · {}",
+            every.as_secs(),
+            if publishing {
+                "publishing to the stream"
+            } else {
+                "another Ironsight holds the stream, so verdicts go to the store only"
+            }
+        );
+        loop {
+            app.refresh();
+            app.probe();
+            app.work.reload_if_stale();
+            let claimed: Vec<String> = app
+                .work
+                .tasks()
+                .iter()
+                .filter(|t| t.state == work::State::Claimed)
+                .map(|t| t.session.clone())
+                .collect();
+            for id in claimed {
+                match verify(&mut app, &id, true) {
+                    Ok(outcomes) => {
+                        for o in &outcomes {
+                            report(&o);
+                        }
+                    }
+                    // Nowhere to run the checks is not a verdict. Saying so and
+                    // leaving the task alone is the only honest answer.
+                    Err(why) => println!("cannot judge {}: {why}", &id[..id.len().min(8)]),
+                }
+            }
+            std::thread::sleep(every);
+        }
+    }
+
+    // Approving a project's checks, having read them.
+    if args.first().map(String::as_str) == Some("trust") {
+        let where_ = args.get(1).cloned().unwrap_or_else(|| ".".to_string());
+        let dir = std::path::PathBuf::from(app::expand(&where_));
+        let (root, suite) = checks::Suite::find(&dir)
+            .map_err(|e| anyhow::anyhow!(e))?
+            .ok_or_else(|| anyhow::anyhow!("{} has no {}", dir.display(), checks::FILE))?;
+        println!("{} would run, in {}:", suite.checks.len(), root.display());
+        for c in &suite.checks {
+            println!("  {:<10} {}", c.name, c.run);
+        }
+        checks::trust(&root, &suite).map_err(|e| anyhow::anyhow!(e))?;
+        println!("approved. If the file changes, it will ask again.");
+        return Ok(());
+    }
+
+    if args.first().map(String::as_str) == Some("refute") {
+        let id = args
+            .get(1)
+            .ok_or_else(|| anyhow::anyhow!("usage: ironsight refute <task> <command>"))?;
+        let command = args[2..].join(" ");
+        if command.is_empty() {
+            anyhow::bail!("usage: ironsight refute <task> <command that must fail>");
+        }
+        let mut store = work::Store::load(work::path_in(&app::data_dir()));
+        store
+            .refute_with(id, &command)
+            .map_err(|e| anyhow::anyhow!(e))?;
+        store.save()?;
+        println!("{id} will be refused if this succeeds: {command}");
+        return Ok(());
+    }
+
+    if args.first().map(String::as_str) == Some("note") {
+        let id = args
+            .get(1)
+            .ok_or_else(|| anyhow::anyhow!("usage: ironsight note <task> <text>"))?;
+        let text = args[2..].join(" ");
+        if text.is_empty() {
+            anyhow::bail!("usage: ironsight note <task> <text>");
+        }
+        let mut store = work::Store::load(work::path_in(&app::data_dir()));
+        store.note(id, &text).map_err(|e| anyhow::anyhow!(e))?;
+        store.save()?;
+        println!("noted on {id}");
         return Ok(());
     }
 
@@ -287,7 +979,37 @@ fn main() -> Result<()> {
             Duration::from_secs(3600),
             true,
         );
+        let assignment = opt("--task");
+        let parent = opt("--parent");
         let name = app.start_session(&spec).map_err(|e| anyhow::anyhow!(e))?;
+        // Lineage and assignment are recorded against the session Ironsight has
+        // just started, which it knows by the pane it is running in until the
+        // transcript catches up.
+        if assignment.is_some() || parent.is_some() {
+            app.with_state();
+            app.rescan_panes();
+            let id = app
+                .sessions
+                .iter()
+                .find(|s| {
+                    app.steer
+                        .get(&s.id)
+                        .map(|p| p.session == name)
+                        .unwrap_or(false)
+                })
+                .map(|s| s.id.clone())
+                .unwrap_or_else(|| format!("pane:{name}"));
+            if let Some(parent) = parent {
+                if let Some(pid) = resolve(&app, &parent) {
+                    app.record_lineage(&id, &pid);
+                    println!("started by {}", &pid[..pid.len().min(8)]);
+                }
+            }
+            if let Some(what) = assignment {
+                let task = app.assign(&id, &what);
+                println!("{task} assigned");
+            }
+        }
         println!("started {name} — {}", control::attach_hint(&name));
         return Ok(());
     }
@@ -354,9 +1076,20 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    // The live view publishes. A one-shot table does not: it would bind the
+    // socket, print, and take the stream away again before anything could read
+    // it, and it would fight the Ironsight you already have open.
+    match app.with_stream() {
+        Ok(true) => {}
+        Ok(false) => app.say("another Ironsight is publishing the stream — this one is watching"),
+        Err(e) => app.say(format!("the event stream is not available: {e}")),
+    }
+
     // One key that always means "back to scope", held for as long as Ironsight is
     // here to come back to.
     let way_back = control::hold_way_back();
+    // Before the terminal is put into a state that has to be undone.
+    restore_terminal_however_this_ends();
     let mut term = ratatui::init();
     if mouse {
         let _ = crossterm::execute!(std::io::stdout(), EnableMouseCapture);
@@ -368,6 +1101,58 @@ fn main() -> Result<()> {
     ratatui::restore();
     control::drop_way_back(way_back);
     result
+}
+
+/// Everything a terminal must be told to undo, as one string of bytes.
+///
+/// Mouse reporting first, because that is the one that makes a terminal
+/// unusable rather than merely untidy: with it left on, every movement of the
+/// mouse is typed at whatever is reading, and there is no way to type over it.
+/// Then the caret back on, and out of the alternate screen.
+const RESTORE: &[u8] =
+    b"\x1b[?1006l\x1b[?1015l\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[?25h\x1b[?1049l";
+
+/// Put the terminal back, from anywhere, including places where almost nothing
+/// is allowed to happen.
+///
+/// A signal handler may do very little safely — no allocation, no locks — so
+/// this is one `write` of a constant, which is on the short list of things that
+/// are. It is deliberately not `ratatui::restore()`, which allocates.
+#[cfg(unix)]
+extern "C" fn restore_on_signal(sig: i32) {
+    unsafe {
+        libc::write(1, RESTORE.as_ptr().cast(), RESTORE.len());
+        libc::write(2, RESTORE.as_ptr().cast(), RESTORE.len());
+        // Having tidied up, die the way we were asked to, so whoever sent the
+        // signal sees the exit status they expected.
+        libc::signal(sig, libc::SIG_DFL);
+        libc::raise(sig);
+    }
+}
+
+/// Make sure the terminal is handed back however this process ends.
+///
+/// The ordinary path already does this. These are the other ones: a `pkill`, a
+/// `systemctl stop`, a closed terminal, a panic. Without them the last thing
+/// Ironsight does is leave mouse reporting on, and every mouse movement is then
+/// typed into whatever shell comes next — which cannot be typed over, and looks
+/// like a broken terminal rather than like a program that failed to clean up.
+fn restore_terminal_however_this_ends() {
+    #[cfg(unix)]
+    unsafe {
+        for sig in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP, libc::SIGQUIT] {
+            libc::signal(sig, restore_on_signal as *const () as libc::sighandler_t);
+        }
+    }
+    let existing = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        use std::io::Write;
+        let mut out = std::io::stdout();
+        let _ = out.write_all(RESTORE);
+        let _ = out.flush();
+        ratatui::restore();
+        existing(info);
+    }));
 }
 
 /// The one-shot table.

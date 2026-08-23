@@ -7,8 +7,12 @@
 pub mod agent;
 pub mod app;
 pub mod bootstrap;
+pub mod bus;
+pub mod checks;
 pub mod control;
+pub mod daemon;
 pub mod event;
+pub mod gateway;
 pub mod git;
 pub mod history;
 // Selected only on Windows, but built and tested everywhere, so on Unix its
@@ -17,10 +21,13 @@ pub mod history;
 pub mod host;
 pub mod notify;
 pub mod pricing;
+pub mod redact;
 pub mod registry;
 pub mod screen;
 pub mod session;
+pub mod stream;
 pub mod tail;
 #[cfg(not(windows))]
 pub mod tmux;
 pub mod usage;
+pub mod work;
