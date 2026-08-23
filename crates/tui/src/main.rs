@@ -489,18 +489,28 @@ fn main() -> Result<()> {
     // terminal. One-shot: send the prompt, stream what happens, exit when the
     // turn finishes. This is the seam the foreman and chief will drive.
     if args.first().map(String::as_str) == Some("run") {
-        // Everything after `run` is the prompt, except `--model M`.
+        // `--model M` is a leading flag; everything from the first non-flag word
+        // on is the prompt, verbatim. Scanning the whole argv for `--model`
+        // would steal a word out of a prompt that merely mentions it — "explain
+        // the --model flag" would lose "--model flag" silently.
         let mut model: Option<String> = None;
-        let mut words: Vec<String> = Vec::new();
-        let mut rest = args[1..].iter();
-        while let Some(a) = rest.next() {
-            if a == "--model" {
-                model = rest.next().cloned();
-            } else {
-                words.push(a.clone());
+        let mut it = args[1..].iter().peekable();
+        while let Some(a) = it.peek() {
+            match a.as_str() {
+                "--model" => {
+                    it.next();
+                    model = it.next().cloned();
+                }
+                // An explicit end-of-flags marker, for a prompt that really does
+                // begin with a dash.
+                "--" => {
+                    it.next();
+                    break;
+                }
+                _ => break,
             }
         }
-        let prompt = words.join(" ");
+        let prompt = it.cloned().collect::<Vec<_>>().join(" ");
         if prompt.trim().is_empty() {
             anyhow::bail!("usage: ironsight run [--model M] <prompt>");
         }
@@ -511,12 +521,15 @@ fn main() -> Result<()> {
         let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let done_reader = done.clone();
 
-        let mut owned = owned::OwnedSession::start(
+        let mut owned = owned::OwnedSession::start_with(
             &program,
             &cwd,
             model.as_deref(),
             &session_id,
             "claude",
+            // A one-shot command: let claude's diagnostics reach the terminal,
+            // so a startup or auth failure is visible rather than a blank line.
+            owned::Stderr::Inherit,
             move |ev| {
                 println!("{}", ev.human());
                 use std::io::Write;

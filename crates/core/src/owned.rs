@@ -34,89 +34,135 @@ use serde_json::Value;
 /// Pure and total: an unknown or half-written line yields nothing rather than
 /// failing, because the far end is a process whose last line may be truncated
 /// and whose vocabulary may grow.
-pub fn parse_line(line: &str, session: &str, agent: &str) -> Vec<Event> {
-    let Ok(msg) = serde_json::from_str::<Value>(line) else {
-        return Vec::new();
-    };
-    let ev = |kind: Kind| Event::new(session, agent, kind);
-    let mut out = Vec::new();
+/// Turns the output stream into events, remembering just enough to attribute a
+/// result to the call it answers.
+///
+/// A `tool_result` names the call it belongs to by id, not by tool — so to say
+/// *which* tool failed, the parser has to remember the id→name pairs it saw go
+/// out. That is the only state it keeps, and it is bounded by the calls in
+/// flight. Everything else is a pure function of the line.
+#[derive(Default)]
+pub struct Parser {
+    /// tool_use_id → the tool's name, for the calls not yet answered
+    pending: std::collections::HashMap<String, String>,
+}
 
-    match msg.get("type").and_then(Value::as_str) {
-        // The session announces itself: model, tools, where it is working.
-        Some("system") if msg.get("subtype").and_then(Value::as_str) == Some("init") => {
-            let cwd = msg
-                .get("cwd")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string();
-            out.push(ev(Kind::SessionStarted {
-                cwd,
-                branch: String::new(),
-            }));
-        }
-        // What the agent did and said, block by block.
-        Some("assistant") => {
-            for block in blocks(&msg) {
-                match block.get("type").and_then(Value::as_str) {
-                    Some("tool_use") => {
+impl Parser {
+    pub fn new() -> Self {
+        Parser::default()
+    }
+
+    /// One line in, the events it means out. Never fails: an unknown or
+    /// half-written line yields nothing.
+    pub fn feed(&mut self, line: &str, session: &str, agent: &str) -> Vec<Event> {
+        let Ok(msg) = serde_json::from_str::<Value>(line) else {
+            return Vec::new();
+        };
+        let ev = |kind: Kind| Event::new(session, agent, kind);
+        let mut out = Vec::new();
+
+        match msg.get("type").and_then(Value::as_str) {
+            // The session announces itself: model, tools, where it is working.
+            Some("system") if msg.get("subtype").and_then(Value::as_str) == Some("init") => {
+                let cwd = msg
+                    .get("cwd")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                out.push(ev(Kind::SessionStarted {
+                    cwd,
+                    branch: String::new(),
+                }));
+            }
+            // What the agent did and said, block by block.
+            Some("assistant") => {
+                let mut last_tool: Option<String> = None;
+                for block in blocks(&msg) {
+                    if block.get("type").and_then(Value::as_str) == Some("tool_use") {
                         let tool = block
                             .get("name")
                             .and_then(Value::as_str)
                             .unwrap_or("tool")
                             .to_string();
+                        // Remember which call this is, so its result can be
+                        // attributed to the right tool when it comes back.
+                        if let Some(id) = block.get("id").and_then(Value::as_str) {
+                            self.pending.insert(id.to_string(), tool.clone());
+                        }
                         let summary = block
                             .get("input")
                             .map(|i| crate::event::tool_summary(&tool, i))
                             .unwrap_or_default();
                         out.push(ev(Kind::ToolCalled {
-                            tool,
+                            tool: tool.clone(),
                             summary: crate::redact::text(&crate::event::clip(&summary, 200)),
                         }));
+                        last_tool = Some(tool);
                     }
-                    // Text and thinking are conversation, not fleet events —
-                    // the same rule the transcript stream follows.
-                    _ => {}
+                    // Text and thinking are conversation, not fleet events.
+                }
+                // Carry the tool it is running, the way the watched path does,
+                // so the human render says "working · Bash" rather than a bare
+                // "working" for the same turn.
+                out.push(ev(Kind::SessionWorking { tool: last_tool }));
+            }
+            // Tool results come back inside a user message.
+            Some("user") => {
+                for block in blocks(&msg) {
+                    if block.get("type").and_then(Value::as_str) == Some("tool_result") {
+                        let failed = block
+                            .get("is_error")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false);
+                        // The result names its call; retire it from the pending
+                        // set either way, so the map cannot grow without bound.
+                        let tool = block
+                            .get("tool_use_id")
+                            .and_then(Value::as_str)
+                            .and_then(|id| self.pending.remove(id))
+                            .unwrap_or_else(|| "tool".into());
+                        if failed {
+                            let summary = block.get("content").map(value_text).unwrap_or_default();
+                            out.push(ev(Kind::ToolFailed {
+                                tool,
+                                // Redacted like every other thing that leaves —
+                                // a failed result is exactly where a token in a
+                                // curl error or an auth dump ends up.
+                                summary: crate::redact::text(&crate::event::clip(&summary, 200)),
+                            }));
+                        }
+                    }
                 }
             }
-            out.push(ev(Kind::SessionWorking { tool: None }));
-        }
-        // Tool results come back inside a user message.
-        Some("user") => {
-            for block in blocks(&msg) {
-                if block.get("type").and_then(Value::as_str) == Some("tool_result") {
-                    let failed = block
-                        .get("is_error")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false);
-                    if failed {
-                        let summary = block.get("content").map(value_text).unwrap_or_default();
-                        out.push(ev(Kind::ToolFailed {
-                            tool: "tool".into(),
-                            summary: crate::event::clip(&summary, 200),
-                        }));
-                    }
+            // A turn finished: what it cost, and back to waiting on the person.
+            Some("result") => {
+                let output = msg
+                    .get("usage")
+                    .and_then(|u| u.get("output_tokens"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                let estimate = msg
+                    .get("total_cost_usd")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0);
+                if output > 0 || estimate > 0.0 {
+                    out.push(ev(Kind::CostSpent { output, estimate }));
                 }
+                out.push(ev(Kind::SessionWaiting));
             }
+            _ => {}
         }
-        // A turn finished: what it cost, and back to waiting on the person.
-        Some("result") => {
-            let output = msg
-                .get("usage")
-                .and_then(|u| u.get("output_tokens"))
-                .and_then(Value::as_u64)
-                .unwrap_or(0);
-            let estimate = msg
-                .get("total_cost_usd")
-                .and_then(Value::as_f64)
-                .unwrap_or(0.0);
-            if output > 0 || estimate > 0.0 {
-                out.push(ev(Kind::CostSpent { output, estimate }));
-            }
-            out.push(ev(Kind::SessionWaiting));
-        }
-        _ => {}
+        out
     }
-    out
+}
+
+/// Parse a single line with no memory of the ones around it.
+///
+/// Fine for a line whose meaning is self-contained — an init, a call, a result.
+/// A stream where a failure must name the tool that produced it wants a
+/// [`Parser`] that persists across lines instead.
+pub fn parse_line(line: &str, session: &str, agent: &str) -> Vec<Event> {
+    Parser::new().feed(line, session, agent)
 }
 
 /// The content blocks of an assistant or user message, whatever shape it is in.
@@ -170,6 +216,15 @@ pub fn user_message(text: &str) -> String {
     msg.to_string()
 }
 
+/// What becomes of the agent's stderr.
+#[derive(Clone, Copy, Debug)]
+pub enum Stderr {
+    /// Discarded — a fleet backend that does not want it in a terminal.
+    Quiet,
+    /// Passed through to ours — a one-shot command that needs to see failures.
+    Inherit,
+}
+
 /// A running owned session: the process, its pipes, and a thread turning its
 /// output into events.
 ///
@@ -192,6 +247,25 @@ impl OwnedSession {
         model: Option<&str>,
         session: &str,
         agent: &str,
+        on_event: impl FnMut(Event) + Send + 'static,
+    ) -> std::io::Result<Self> {
+        Self::start_with(program, cwd, model, session, agent, Stderr::Quiet, on_event)
+    }
+
+    /// Start one, choosing what happens to the agent's stderr.
+    ///
+    /// A one-shot command wants to see it: the tool's single failure mode —
+    /// missing binary, unknown flag after a release, not logged in — writes
+    /// only there, and swallowing it turns every such failure into a blank line
+    /// or a hang. A fleet backend running many at once wants it quiet, so it
+    /// does not scatter across a terminal. The caller decides.
+    pub fn start_with(
+        program: &str,
+        cwd: &std::path::Path,
+        model: Option<&str>,
+        session: &str,
+        agent: &str,
+        stderr: Stderr,
         mut on_event: impl FnMut(Event) + Send + 'static,
     ) -> std::io::Result<Self> {
         use std::io::{BufRead, BufReader};
@@ -202,22 +276,36 @@ impl OwnedSession {
             .current_dir(cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(match stderr {
+                Stderr::Quiet => Stdio::null(),
+                Stderr::Inherit => Stdio::inherit(),
+            })
             .spawn()?;
 
         let stdin = child.stdin.take();
         let stdout = child.stdout.take();
         let (session_owned, agent_owned) = (session.to_string(), agent.to_string());
         if let Some(stdout) = stdout {
-            std::thread::Builder::new()
+            let spawned = std::thread::Builder::new()
                 .name("ironsight-owned-read".into())
                 .spawn(move || {
+                    // One parser for the whole session, so a failed result can
+                    // name the tool that produced it.
+                    let mut parser = Parser::new();
                     for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                        for ev in parse_line(&line, &session_owned, &agent_owned) {
+                        for ev in parser.feed(&line, &session_owned, &agent_owned) {
                             on_event(ev);
                         }
                     }
-                })?;
+                });
+            // A thread that would not start must not leave the agent running as
+            // an orphan: Child has no Drop that kills, and the OwnedSession that
+            // would clean up is never constructed here.
+            if let Err(e) = spawned {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(e);
+            }
         }
 
         Ok(OwnedSession {
@@ -278,9 +366,10 @@ mod tests {
     }
 
     fn all_events() -> Vec<Event> {
+        let mut parser = Parser::new();
         fixture()
             .lines()
-            .flat_map(|l| parse_line(l, "sess", "claude"))
+            .flat_map(|l| parser.feed(l, "sess", "claude"))
             .collect()
     }
 
@@ -375,6 +464,93 @@ mod tests {
         assert_eq!(back["type"], "user");
         assert_eq!(back["message"]["role"], "user");
         assert_eq!(back["message"]["content"], "hello there");
+    }
+
+    #[test]
+    fn a_failed_result_names_the_tool_that_produced_it() {
+        // A call goes out with an id; its failing result names that id, and the
+        // parser remembers the pairing so the failure is attributed to Bash
+        // rather than a generic "tool".
+        let mut parser = Parser::new();
+        parser.feed(
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_9","name":"Bash","input":{"command":"false"}}]}}"#,
+            "s",
+            "claude",
+        );
+        let events = parser.feed(
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_9","is_error":true,"content":"exit 1"}]}}"#,
+            "s",
+            "claude",
+        );
+        let tool = events.iter().find_map(|e| match &e.kind {
+            Kind::ToolFailed { tool, .. } => Some(tool.clone()),
+            _ => None,
+        });
+        assert_eq!(
+            tool.as_deref(),
+            Some("Bash"),
+            "the failure is attributed to the tool that failed, not to \"tool\""
+        );
+    }
+
+    #[test]
+    fn a_credential_in_a_failed_result_is_redacted() {
+        // This is where tokens actually leak: a curl error echoing a header, an
+        // auth dump. It must be masked the same as a call.
+        let line = r#"{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":"curl error, sent Authorization: Bearer ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"}]}}"#;
+        let summary = parse_line(line, "s", "claude")
+            .into_iter()
+            .find_map(|e| match e.kind {
+                Kind::ToolFailed { summary, .. } => Some(summary),
+                _ => None,
+            })
+            .expect("a failure event");
+        assert!(
+            !summary.contains("ghp_"),
+            "a failed result reaches the journal and socket, so it is redacted: {summary}"
+        );
+    }
+
+    #[test]
+    fn working_carries_the_tool_it_is_running() {
+        let events = parse_line(
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"x.rs"}}]}}"#,
+            "s",
+            "claude",
+        );
+        let working = events.iter().find_map(|e| match &e.kind {
+            Kind::SessionWorking { tool } => Some(tool.clone()),
+            _ => None,
+        });
+        assert_eq!(
+            working,
+            Some(Some("Edit".to_string())),
+            "working names the tool, matching the watched path rather than a bare \"working\""
+        );
+    }
+
+    #[test]
+    fn the_pending_set_does_not_grow_without_bound() {
+        // Every result retires its call, failed or not, so the id→name map is
+        // bounded by the calls actually in flight.
+        let mut parser = Parser::new();
+        for i in 0..100 {
+            parser.feed(
+                &format!(r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","id":"id{i}","name":"Bash","input":{{}}}}]}}}}"#),
+                "s",
+                "claude",
+            );
+            parser.feed(
+                &format!(r#"{{"type":"user","message":{{"content":[{{"type":"tool_result","tool_use_id":"id{i}","is_error":false,"content":"ok"}}]}}}}"#),
+                "s",
+                "claude",
+            );
+        }
+        assert_eq!(
+            parser.pending.len(),
+            0,
+            "successful results retire their calls too"
+        );
     }
 
     #[cfg(unix)]

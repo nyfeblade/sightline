@@ -432,9 +432,6 @@ fn letter_prompt(text: &str) -> Option<Approval> {
     })
 }
 
-/// Whether a command line belongs to Claude Code. A native install runs as
-/// `claude`, an npm one as `node .../claude-code/cli.js`, so the whole line is
-/// searched rather than the executable name alone.
 /// The command that runs Claude Code. On PATH by the name it installs as; an
 /// owned session runs this in stream-json mode.
 pub fn claude_program() -> String {
@@ -444,6 +441,9 @@ pub fn claude_program() -> String {
         .unwrap_or_else(|| "claude".to_string())
 }
 
+/// Whether a command line belongs to Claude Code. A native install runs as
+/// `claude`, an npm one as `node .../claude-code/cli.js`, so the whole line is
+/// searched rather than the executable name alone.
 pub fn is_claude(args: &str) -> bool {
     args.contains("claude")
 }
