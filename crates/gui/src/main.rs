@@ -990,7 +990,16 @@ fn main() {
                     use tauri::Manager;
                     loop {
                         std::thread::sleep(ENGINE_TICK);
-                        ticker.state::<Shared>().catch_up();
+                        // A panic in one tick — an unexpected shape from a file
+                        // Ironsight does not write, some future change — must not
+                        // wedge the engine for the rest of the session. Catch it,
+                        // and take the next tick. The lock is poison-tolerant
+                        // already (raw() recovers an into_inner), so the state is
+                        // still usable afterwards.
+                        let ticker = std::panic::AssertUnwindSafe(&ticker);
+                        let _ = std::panic::catch_unwind(|| {
+                            ticker.state::<Shared>().catch_up();
+                        });
                     }
                 })?;
 
