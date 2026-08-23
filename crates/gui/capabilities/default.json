@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The window listens for events the engine pushes to it, and nothing else. Every other thing it can do is a command in this crate, which the invoke handler already decides.",
+  "windows": ["main"],
+  "permissions": ["core:event:default"]
+}

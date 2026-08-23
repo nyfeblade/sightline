@@ -3,30 +3,24 @@
 // view cannot answer the same question differently.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use crossterm::event::KeyCode;
 use ironsight_core::app::App;
 use ironsight_core::session::Status;
-use ironsight_core::{app as core_app, bootstrap, control, history, screen, usage};
+use ironsight_core::{app as core_app, bootstrap, bus, control, history, usage, work};
 use serde::Serialize;
-use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::State;
 
 /// What the window shares with the engine.
 ///
-/// The lock matters more than it looks. Catching up — pumping every transcript,
-/// reading the registry, capturing every steerable pane — used to happen at the
-/// top of *every* command, so a keystroke queued behind three hundred megabytes
-/// of transcript and a dozen tmux calls before it could be sent. Now catching
-/// up is a thing that happens on its own rhythm, and typing is allowed to be
-/// nothing more than a write to a pane.
+/// Catching up — pumping every transcript, reading the registry, capturing
+/// every steerable pane — used to happen at the top of *every* command, so a
+/// question the window asked queued behind three hundred megabytes of
+/// transcript before it could be answered. It now happens on a clock of its
+/// own, and every command here is a read.
 struct Shared {
     app: Mutex<App>,
     meter: Mutex<usage::Meter>,
-    /// session id to the pane it lives in, kept by the refresh so that typing
-    /// never has to ask the engine anything
-    panes: Mutex<HashMap<String, String>>,
     caught_up: Mutex<Instant>,
 }
 
@@ -34,12 +28,14 @@ struct Shared {
 /// slow enough that it is not re-read for every frame of a moving screen.
 const CATCH_UP: Duration = Duration::from_millis(250);
 
+/// How often the engine reads the world of its own accord.
+const ENGINE_TICK: Duration = Duration::from_millis(400);
+
 impl Shared {
     fn new(app: App) -> Self {
         Shared {
             app: Mutex::new(app),
             meter: Mutex::new(usage::Meter::default()),
-            panes: Mutex::new(HashMap::new()),
             caught_up: Mutex::new(Instant::now() - CATCH_UP),
         }
     }
@@ -54,41 +50,28 @@ impl Shared {
         f(&mut app)
     }
 
-    /// The engine, caught up — at most as often as that is worth doing.
-    fn fresh<T>(&self, f: impl FnOnce(&mut App) -> T) -> T {
-        let mut app = match self.app.lock() {
-            Ok(a) => a,
-            Err(e) => e.into_inner(),
-        };
+    /// Read the world: transcripts, the registry, the pane of every steerable
+    /// session — and, as a consequence, publish everything that has changed.
+    ///
+    /// This runs on a clock of the engine's own, which is the point. It used to
+    /// happen only when the window asked a question, so the stream stopped the
+    /// moment nobody was looking at it — and a stream that only moves while
+    /// someone is watching is not a stream, it is a redraw.
+    fn catch_up(&self) {
         let mut at = match self.caught_up.lock() {
             Ok(t) => t,
             Err(e) => e.into_inner(),
         };
-        if at.elapsed() >= CATCH_UP {
-            app.refresh();
-            app.probe();
-            *at = Instant::now();
-            let mut panes = match self.panes.lock() {
-                Ok(p) => p,
-                Err(e) => e.into_inner(),
-            };
-            panes.clear();
-            for s in &app.sessions {
-                if let Some(pane) = app.pane_of(&s.id) {
-                    panes.insert(s.id.clone(), pane.id.clone());
-                }
-            }
+        if at.elapsed() < CATCH_UP {
+            return;
         }
-        f(&mut app)
-    }
-
-    /// Where a session lives, without touching the engine at all. This is the
-    /// whole reason a keystroke is fast.
-    fn pane(&self, id: &str) -> Option<String> {
-        match self.panes.lock() {
-            Ok(p) => p.get(id).cloned(),
-            Err(e) => e.into_inner().get(id).cloned(),
-        }
+        let mut app = match self.app.lock() {
+            Ok(a) => a,
+            Err(e) => e.into_inner(),
+        };
+        app.refresh();
+        app.probe();
+        *at = Instant::now();
     }
 
     /// Run something against one session by id, leaving the selection where it
@@ -163,6 +146,15 @@ struct SessionDto {
     tools: Vec<String>,
     steerable: bool,
     live: bool,
+    /// how deep this session sits under whoever started it
+    depth: usize,
+    /// the session that started it, when one did
+    parent: Option<String>,
+    /// what it was asked to do, and how that is going
+    task: Option<TaskDto>,
+    /// output tokens and cost with everything it started added in
+    rolled_output: u64,
+    rolled_cost: f64,
     /// the question it is blocked on, if any
     asking: Option<AskDto>,
     /// the tmux session or hosted name, when there is one
@@ -208,7 +200,7 @@ fn readiness() -> ReadinessDto {
     let checks = bootstrap::assess(&bootstrap::probe(&core_app::default_root()));
     ReadinessDto {
         ready: bootstrap::ready(&checks),
-        backend: control::WHERE.to_string(),
+        backend: control::where_backend().to_string(),
         checks: checks
             .into_iter()
             .map(|c| CheckDto {
@@ -222,13 +214,45 @@ fn readiness() -> ReadinessDto {
     }
 }
 
+#[derive(Serialize, Clone)]
+struct TaskDto {
+    id: String,
+    session: String,
+    parent: Option<String>,
+    assignment: String,
+    /// assigned · working · blocked · claimed · verified · abandoned
+    state: String,
+    /// why, when it is blocked
+    why: Option<String>,
+    notes: Vec<String>,
+    depth: usize,
+}
+
+fn task_dto(store: &work::Store, task: &work::Task) -> TaskDto {
+    TaskDto {
+        id: task.id.clone(),
+        session: task.session.clone(),
+        parent: task.parent.clone(),
+        assignment: task.assignment.clone(),
+        state: task.state.label().to_string(),
+        why: match &task.state {
+            work::State::Blocked { why } => Some(why.clone()),
+            _ => None,
+        },
+        notes: task.notes.iter().map(|n| n.text.clone()).collect(),
+        depth: store.depth_of(&task.session),
+    }
+}
+
 #[tauri::command]
 fn sessions(shared: State<Shared>) -> Vec<SessionDto> {
     let mut meter = match shared.meter.lock() {
         Ok(m) => m,
         Err(e) => e.into_inner(),
     };
-    let pids: Vec<i64> = shared.fresh(|app| {
+    // Deliberately not a catch-up. The engine keeps itself current on its own
+    // thread, so asking for the list is now a read rather than an errand.
+    let pids: Vec<i64> = shared.raw(|app| {
         app.sessions
             .iter()
             .filter_map(|s| {
@@ -240,6 +264,9 @@ fn sessions(shared: State<Shared>) -> Vec<SessionDto> {
             .collect()
     });
     let used_by = meter.measure_all(&pids);
+    // Cost that includes what each session's workers spent. Computed once for
+    // the whole list rather than per row, because it walks every tree.
+    let rolled = shared.raw(|app| app.rolled_up());
     shared.raw(|app| {
         app.sessions
             .iter()
@@ -291,6 +318,17 @@ fn sessions(shared: State<Shared>) -> Vec<SessionDto> {
                     tools: tools.into_iter().take(6).map(|(n, _)| n.clone()).collect(),
                     steerable: pane.is_some(),
                     live: s.live.is_some() || s.in_pane,
+                    depth: app.work.depth_of(&s.id),
+                    parent: app.work.parent_of(&s.id).map(str::to_string),
+                    task: app.work.task_for(&s.id).map(|t| task_dto(&app.work, t)),
+                    rolled_output: rolled
+                        .get(&s.id)
+                        .map(|c| c.output)
+                        .unwrap_or(s.totals.output),
+                    rolled_cost: rolled
+                        .get(&s.id)
+                        .map(|c| c.estimate)
+                        .unwrap_or(s.totals.cost),
                     asking: app.approvals.get(&s.id).map(|a| AskDto {
                         question: a.question.clone(),
                         options: a.options.clone(),
@@ -485,13 +523,8 @@ fn errors(shared: State<Shared>, id: String) -> Vec<EventDto> {
         .unwrap_or_default()
 }
 
-/// A session's screen, drawn as cells rather than handed over as a terminal.
-#[tauri::command]
-fn frame(shared: State<Shared>, id: String, cols: u16, rows: u16) -> Option<screen::Frame> {
-    let pane = shared.pane(&id)?;
-    control::frame(&pane, cols, rows)
-}
-
+/// Every mention of this across every session Ironsight is watching — the same
+/// search the terminal view does with `/`.
 #[derive(Serialize)]
 struct HitDto {
     id: String,
@@ -500,8 +533,6 @@ struct HitDto {
     head: String,
 }
 
-/// Every mention of this across every session Ironsight is watching — the same
-/// search the terminal view does with `/`.
 #[tauri::command]
 fn search(shared: State<Shared>, text: String) -> Vec<HitDto> {
     shared.raw(|app| {
@@ -619,39 +650,6 @@ fn rescan(shared: State<Shared>) {
     });
 }
 
-/// Send one key press to a session, so its own screen can be typed into.
-/// Browsers name keys their own way; this is the translation, and anything
-/// without a terminal meaning is dropped rather than guessed at.
-#[tauri::command]
-fn key(shared: State<Shared>, id: String, key: String, ctrl: bool) -> Result<(), String> {
-    let code = match key.as_str() {
-        "Enter" => KeyCode::Enter,
-        "Escape" => KeyCode::Esc,
-        "Tab" => KeyCode::Tab,
-        "Backspace" => KeyCode::Backspace,
-        "Delete" => KeyCode::Delete,
-        "ArrowUp" => KeyCode::Up,
-        "ArrowDown" => KeyCode::Down,
-        "ArrowLeft" => KeyCode::Left,
-        "ArrowRight" => KeyCode::Right,
-        "Home" => KeyCode::Home,
-        "End" => KeyCode::End,
-        "PageUp" => KeyCode::PageUp,
-        "PageDown" => KeyCode::PageDown,
-        other => {
-            let mut chars = other.chars();
-            match (chars.next(), chars.next()) {
-                (Some(c), None) => KeyCode::Char(c),
-                _ => return Ok(()),
-            }
-        }
-    };
-    let pane = shared
-        .pane(&id)
-        .ok_or("that session cannot be typed into")?;
-    control::forward_key(&pane, code, ctrl)
-}
-
 /// Open a session in a terminal window of its own.
 #[tauri::command]
 fn window(shared: State<Shared>, id: String) -> Result<String, String> {
@@ -659,15 +657,6 @@ fn window(shared: State<Shared>, id: String) -> Result<String, String> {
         .raw(|app| app.pane_of(&id).map(|p| p.session.clone()))
         .ok_or("scope has no terminal for that session")?;
     control::open_window(&pane)
-}
-
-/// Stop holding a session at the window's size, when the window stops showing
-/// it.
-#[tauri::command]
-fn release_frame(shared: State<Shared>, id: String) {
-    if let Some(pane) = shared.pane(&id) {
-        control::release_frame(&pane);
-    }
 }
 
 /// What a session's terminal is showing, as plain text.
@@ -783,6 +772,170 @@ fn open_tui() -> Result<String, String> {
     control::open_terminal_with("ironsight")
 }
 
+#[derive(Serialize)]
+struct FileTextDto {
+    path: String,
+    text: String,
+    lines: usize,
+    bytes: u64,
+    /// only the head of the file is here, because the whole of it is too much
+    truncated: bool,
+}
+
+/// A file the size of a thing a person reads. Beyond this the window would
+/// spend longer laying it out than anyone would spend looking at it, so the
+/// head is shown and the truncation is stated rather than hidden.
+const READABLE: u64 = 4 * 1024 * 1024;
+const READABLE_LINES: usize = 20_000;
+
+/// Read a file so it can be looked at without leaving the window.
+///
+/// `base` is the session's working directory, because a path from a git status
+/// is relative to the repository and a path from a transcript is not.
+#[tauri::command]
+fn open_file(path: String, base: Option<String>) -> Result<FileTextDto, String> {
+    let mut full = std::path::PathBuf::from(core_app::expand(&path));
+    if full.is_relative() {
+        let Some(base) = base.filter(|b| !b.is_empty()) else {
+            return Err(format!(
+                "{path} is relative and there is nowhere to read it from"
+            ));
+        };
+        full = std::path::Path::new(&base).join(full);
+    }
+    let meta = std::fs::metadata(&full).map_err(|e| format!("{}: {e}", full.display()))?;
+    if meta.is_dir() {
+        return Err(format!("{} is a directory", full.display()));
+    }
+    let bytes = meta.len();
+    let raw = std::fs::read(&full).map_err(|e| format!("{}: {e}", full.display()))?;
+    // A NUL in the first few kilobytes is what every other tool uses to decide
+    // this is not text, and it is right often enough.
+    if raw.iter().take(8192).any(|b| *b == 0) {
+        return Err(format!("{} is not text ({} bytes)", full.display(), bytes));
+    }
+    let text = String::from_utf8_lossy(&raw).into_owned();
+    let total = text.lines().count();
+    let truncated = bytes > READABLE || total > READABLE_LINES;
+    let text = if truncated {
+        text.lines()
+            .take(READABLE_LINES)
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        text
+    };
+    Ok(FileTextDto {
+        path: full.to_string_lossy().into_owned(),
+        text,
+        lines: total,
+        bytes,
+        truncated,
+    })
+}
+
+/// What a session has changed in one file, as a diff. Untracked files come back
+/// as their own contents, which is what there is to show.
+#[tauri::command]
+fn file_diff(shared: State<Shared>, id: String, path: String) -> Option<String> {
+    shared.raw(|app| {
+        let cwd = app.sessions.iter().find(|s| s.id == id)?.cwd.clone();
+        ironsight_core::git::diff(std::path::Path::new(&cwd), &path)
+    })
+}
+
+/// Where a session is working, so the window can resolve a relative path.
+#[tauri::command]
+fn session_cwd(shared: State<Shared>, id: String) -> Option<String> {
+    shared.raw(|app| {
+        app.sessions
+            .iter()
+            .find(|s| s.id == id)
+            .map(|s| s.cwd.clone())
+            .filter(|c| !c.is_empty())
+    })
+}
+
+/// The stream, replayed from a point, so a window that has just opened — or one
+/// that was closed while sessions carried on — shows what happened rather than
+/// starting blank.
+#[tauri::command]
+fn stream(since: u64) -> Vec<bus::Event> {
+    let journal = core_app::data_dir().join("events.jsonl");
+    let mut events = bus::replay(&journal, since);
+    // A window does not want a day of history; it wants the recent past and
+    // then the live feed, which arrives by push.
+    if events.len() > 400 {
+        events.drain(..events.len() - 400);
+    }
+    events
+}
+
+#[tauri::command]
+fn tasks(shared: State<Shared>) -> Vec<TaskDto> {
+    shared.raw(|app| {
+        let sessions: Vec<String> = app.work.tasks().iter().map(|t| t.session.clone()).collect();
+        let order = app.work.ordered(&sessions);
+        let mut out = Vec::new();
+        for (session, depth) in order {
+            let Some(task) = app
+                .work
+                .task_for(&session)
+                .or_else(|| app.work.tasks().iter().rev().find(|t| t.session == session))
+            else {
+                continue;
+            };
+            let mut dto = task_dto(&app.work, task);
+            dto.depth = depth;
+            out.push(dto);
+        }
+        out
+    })
+}
+
+#[tauri::command]
+fn assign(shared: State<Shared>, id: String, text: String) -> String {
+    shared.raw(|app| app.assign(&id, &text))
+}
+
+#[tauri::command]
+fn note(shared: State<Shared>, task: String, text: String) -> Result<(), String> {
+    shared.raw(|app| {
+        let out = app.work.note(&task, &text);
+        app.work.flush();
+        out
+    })
+}
+
+#[tauri::command]
+fn task_state(shared: State<Shared>, task: String, state: String) -> Result<(), String> {
+    let wanted = match state.as_str() {
+        "assigned" => work::State::Assigned,
+        "working" => work::State::Working,
+        "claimed" => work::State::Claimed,
+        "verified" => work::State::Verified,
+        "abandoned" => work::State::Abandoned,
+        other => return Err(format!("no such state: {other}")),
+    };
+    shared.raw(|app| {
+        let out = app.work.set_state(&task, wanted);
+        app.work.flush();
+        out
+    })
+}
+
+#[tauri::command]
+fn lineage(shared: State<Shared>, child: String, parent: String) {
+    shared.raw(|app| app.record_lineage(&child, &parent));
+}
+
+/// How many consumers are attached to the socket — including, once it is
+/// running, a foreman.
+#[tauri::command]
+fn consumers(shared: State<Shared>) -> Option<usize> {
+    shared.raw(|app| app.consumers())
+}
+
 fn main() {
     // Whatever holds sessions is started before the window is drawn, so the
     // first thing anyone clicks does not have to wait for it.
@@ -790,14 +943,60 @@ fn main() {
     // The same key, for the same reason: a session opened from the window has
     // to have a way back to it.
     let way_back = control::hold_way_back();
-    let app = App::new(
+    let mut app = App::new(
         core_app::default_root(),
         core_app::default_sessions_dir(),
         Duration::from_secs(24 * 3600),
         false,
     );
+    // The window is a consumer of the stream like any other. What it loses if
+    // this fails is the live feed, not the app, so it is reported and carried
+    // on from rather than fatal.
+    let subscription = match app.with_stream() {
+        // Either way the window gets a live feed. Owning the stream means it is
+        // also the one journalling it and offering it on the socket.
+        Ok(_) => Some(app.bus.subscribe()),
+        Err(e) => {
+            eprintln!("the event stream is not available: {e}");
+            None
+        }
+    };
     tauri::Builder::default()
         .manage(Shared::new(app))
+        .setup(move |handle| {
+            // The engine, kept current whether or not anyone is asking. Slower
+            // than the catch-up threshold so every wake does some work, and
+            // faster than the pane probe's own throttle so that throttle is
+            // what decides the rate rather than this.
+            let ticker = handle.handle().clone();
+            std::thread::Builder::new()
+                .name("ironsight-engine".into())
+                .spawn(move || {
+                    use tauri::Manager;
+                    loop {
+                        std::thread::sleep(ENGINE_TICK);
+                        ticker.state::<Shared>().catch_up();
+                    }
+                })?;
+
+            let Some(subscription) = subscription else {
+                return Ok(());
+            };
+            // Pushed rather than polled: the window learns that something
+            // happened at the moment it happens, and stops asking otherwise.
+            let emitter = handle.handle().clone();
+            std::thread::Builder::new()
+                .name("ironsight-window-feed".into())
+                .spawn(move || {
+                    use tauri::Emitter;
+                    while let Some(ev) = subscription.recv() {
+                        if emitter.emit("ironsight://event", &ev).is_err() {
+                            break;
+                        }
+                    }
+                })?;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             readiness,
             sessions,
@@ -817,13 +1016,20 @@ fn main() {
             plan,
             agents,
             errors,
-            frame,
-            release_frame,
-            key,
             window,
             tree,
             search,
             queued,
+            stream,
+            tasks,
+            assign,
+            note,
+            task_state,
+            lineage,
+            consumers,
+            open_file,
+            file_diff,
+            session_cwd,
             queue,
             broadcast,
             isolate,

@@ -11,13 +11,9 @@
        without you. -->
   <header class="bar">
     <span class="mark">IRONSIGHT</span>
-    <span class="counts" id="counts"></span>
     <span class="grow"></span>
     <input id="search" class="search" spellcheck="false" autocomplete="off"
            placeholder="Search every session…  /" />
-    <button class="ghost" id="cost" title="Requests, or what the same tokens would cost on the API">
-      <span id="spend"></span>
-    </button>
     <button class="ghost" id="resume">Resume…</button>
     <button class="ghost" id="more" title="Everything else">⋯</button>
     <button class="primary" id="new">New session</button>
@@ -37,15 +33,16 @@
 
     <section class="middle">
       <nav class="tabs" id="panes">
-        <button class="tab is-on" data-pane="feed">Feed</button>
-        <button class="tab" data-pane="read">Read</button>
-        <button class="tab" data-pane="mirror">Session</button>
+        <button class="tab is-on" data-pane="talk">Talk</button>
+        <button class="tab" data-pane="feed">Feed</button>
         <button class="tab" data-pane="files">Files</button>
         <button class="tab" data-pane="tree">Tree</button>
         <button class="tab" data-pane="plan">Plan</button>
         <button class="tab" data-pane="agents">Subagents</button>
         <button class="tab" data-pane="stats">Stats</button>
         <button class="tab" data-pane="errors">Errors</button>
+        <button class="tab" data-pane="stream">Stream</button>
+        <button class="tab" data-pane="work">Work</button>
         <button class="tab" data-pane="fleet">Fleet</button>
         <span class="grow"></span>
         <span class="context" id="context"></span>
@@ -72,9 +69,16 @@
     <span class="answers" id="answers"></span>
   </section>
 
+  <!-- Everything that is a number rather than a control. A status line is where
+       measurements belong; the bar at the top is for getting somewhere. -->
   <footer class="status">
     <span id="note"></span>
     <span class="grow"></span>
+    <span class="metrics" id="counts"></span>
+    <span class="metrics" id="pulse" title="Events on the stream in the last minute, and who is reading it"></span>
+    <button class="metrics quiet" id="cost" title="Requests, or what the same tokens would cost on the API">
+      <span id="spend"></span>
+    </button>
     <span class="hint" id="hint"></span>
   </footer>
 
@@ -123,6 +127,16 @@
     <div class="swatches" id="swatches"></div>
     <label class="inline">Custom<input type="color" id="custom-accent" /></label>
     <menu><button id="menu-close" class="ghost">Close</button></menu>
+  </dialog>
+
+  <dialog id="code" class="wide">
+    <header class="code-head">
+      <h2 id="code-title"></h2>
+      <span class="grow"></span>
+      <span class="code-note" id="code-note"></span>
+      <button id="code-close" class="ghost">Close</button>
+    </header>
+    <div id="code-body" class="code-scroll"></div>
   </dialog>
 
   <dialog id="detail-text">
