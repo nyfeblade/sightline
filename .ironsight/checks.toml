@@ -1,0 +1,32 @@
+# What finished means here.
+#
+# This is the floor, not the finish. Everything below can do is refuse: a suite
+# that passes has said that the failures it is able to express did not happen,
+# which is worth knowing and is not the same as the work being right. What
+# carries a task past "checked" is a refutation — something written to show the
+# work is wrong that was tried and did not fire. See `ironsight refute`.
+
+[[check]]
+name    = "format"
+run     = "cargo fmt --check"
+timeout = "2m"
+
+[[check]]
+name    = "tests"
+run     = "cargo test"
+timeout = "15m"
+
+# The window's highlighter is JavaScript and `cargo test` cannot see it. Its
+# round-trip check is the one that matters: colouring must never change the
+# code being read.
+[[check]]
+name    = "window"
+run     = "node crates/gui/ui/tokenize.test.mjs"
+timeout = "2m"
+
+# Cross-compiling is how a platform nobody is sitting at stays green.
+[[check]]
+name     = "windows"
+run      = "cargo check --target x86_64-pc-windows-msvc -p ironsight-core -p ironsight"
+timeout  = "10m"
+optional = true
