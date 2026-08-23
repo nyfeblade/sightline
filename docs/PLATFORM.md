@@ -88,7 +88,7 @@ own format changes, which is worth having on its own.
 
 ## Layer 2 — the event model
 
-Status: not built. Roughly one working session.
+Status: built. See `PHASE1.md` for what it is and what it cost.
 
 Ironsight already computes every transition worth naming; it simply keeps them to
 itself. Making them a versioned stream turns supervision from screen-scraping
@@ -121,7 +121,7 @@ agents. Useful with nothing above it.
 
 ## Layer 3 — lineage and task records
 
-Status: not built. Roughly one working session.
+Status: built. See `PHASE1.md`.
 
 Sessions are currently peers in a flat list. Nothing records that one session
 started another to do part of its job, so there is no tree to supervise, no
@@ -151,12 +151,29 @@ green, the diff applies.
 
 Verification means a per-project notion of "the checks", run on demand and on
 events, with a task refused rather than accepted when they fail. It is
-deliberately mechanical at first: no judgement, no review of quality, nothing
-that requires another model's opinion.
+deliberately mechanical: no judgement, no review of quality, nothing that
+requires another model's opinion.
 
     Agent:      done
-    Ironsight:      build failed, 2 tests failing
+    Ironsight:  build failed, 2 tests failing
     task state: not done
+
+The trap is the other direction, and it is worse:
+
+    Agent:      done
+    Ironsight:  everything passed
+    task state: still not done
+
+Checks can only refuse. A passing suite says the failures it can express did not
+happen, which is not the same as the work being right, and writing "verified" on
+the strength of it produces confident sign-off on work nobody has tried to
+break. What carries a task past `Checked` is a refutation — something written to
+succeed only if the work is wrong, that was run and did not. Work with nothing
+named that would refute it can be checked and never verified.
+
+And a refutation counts only once it has been seen to fire. One that cannot fire
+stands for ever and would verify anything, which is the same error again, one
+level down — it was in this codebase until a test went looking for it.
 
 Product if this is the top layer: nothing is marked finished until it is
 demonstrably finished, for a human running agents by hand. That is arguably the
@@ -293,8 +310,8 @@ with the cost visibility Ironsight already provides.
 ## Sequence
 
     1  compatibility contract        done
-    2  event model                   ~1 session
-    3  lineage and task records      ~1 session
+    2  event model                   done
+    3  lineage and task records      done
     4  verification                  ~1–2 sessions
     5  intent artifacts              ~½ session
     6  one chief, three workers      ~½ session to stand up

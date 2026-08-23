@@ -160,11 +160,16 @@ pub struct Task {
     pub notes: Vec<Note>,            // what has been learned, appended
 }
 
-pub enum State { Assigned, Working, Blocked(String), Claimed, Verified, Abandoned }
+pub enum State { Assigned, Working, Blocked(String), Claimed, Checked, Verified, Abandoned }
 ```
 
-`Claimed` is deliberately distinct from `Verified`: an agent may reach the first
-on its own and never the second.
+Three states, deliberately, where two would read more simply.
+
+`Claimed` is what an agent can reach by saying so. `Checked` is what a passing
+suite earns: the failures the checks are able to express did not happen.
+`Verified` needs something written to show the work is wrong to have been tried
+and failed — see layer 4, which is where the difference between the second and
+the third is argued.
 
 ### How it is wired
 
@@ -226,17 +231,71 @@ expect   = "success"
 optional = true      # missing tooling reports unknown, never failure
 ```
 
-### How it behaves
+### Checks can refuse. They cannot accept.
 
-Checks run in the session's own worktree, so a failing check never blocks
-another session. They run on demand (`ironsight check <session>`), when a task is
-`Claimed`, and on a commit event. Results become `ChecksPassed` or
-`ChecksFailed`, and a claimed task with a failing check returns to `Working`
-with the first failure appended as a note — which is the message the agent
-receives.
+This is the part most easily got wrong, and getting it wrong is worse than not
+building the layer at all.
 
-What it will not do: judge quality, review style, or ask a model whether the
-work is good. Mechanical signals only, so that a pass means something.
+A suite that passes has said one thing: the failures it is able to express did
+not happen. It has not said the work is right. Treating a green suite as
+"verified" manufactures confidence in work that nobody has tried to break —
+and it does so in exactly the cases that matter, because a defect subtle enough
+to survive review is usually subtle enough to survive the tests written before
+anyone knew to look for it. A layer that produces confident sign-off on
+unexamined work is worse than no layer, because the sign-off is believed.
+
+So a claimed task with a failing check returns to `Working` with the first
+failure appended as a note, and a claimed task with passing checks reaches
+`Checked` and stops there.
+
+### What carries a task past checked
+
+A refutation: a command written to succeed only if the work is wrong. It must
+fail. If it succeeds it has demonstrated the defect it was written to find, and
+the claim is refused with that as the reason.
+
+    ironsight refute t7 "curl -s localhost:8080/admin | grep -q 'secret'"
+
+This inverts where the burden sits. A check asks "did anything I know how to
+look for go wrong"; a refutation asks "what would it look like if this were
+wrong, and does it look like that". Only the second can be written after the
+work, by someone who now understands the failure mode — which is when the
+useful ones get written.
+
+A task with no refutation can be checked and can never be verified. That is not
+an oversight: nobody has said what being wrong would look like, and a definition
+of done that cannot fail is not one.
+
+A refutation that cannot be run — a typo, a missing tool — is reported as
+exactly that, and the task stays checked. Otherwise a broken refutation reads as
+evidence of correctness, which is the same mistake as trusting a green suite,
+one level down.
+
+### A refutation counts only once it has caught something
+
+The same mistake has one more level, and it was live in this codebase until it
+was tested for: `ironsight refute t1 "false"` cannot fire, therefore always
+stands, therefore verified anything. An instrument nobody has watched catch
+anything has demonstrated nothing.
+
+So a refutation is evidence only after it has been seen to fire at least once.
+The honest workflow proves them for free — write the refutation while the defect
+is there, watch it fire and the claim be refused, fix the defect, watch it
+stand. Only that second run means something, and only because of the first.
+
+Until then the task reaches `Checked` and says which of its refutations have
+never caught anything.
+
+### Nothing runs from a repository until it is read
+
+A checks file is a list of shell commands that arrives with someone else's code.
+`ironsight check` refuses to run any of it until those exact commands have been
+approved, and prints them so there is something to approve. What is remembered
+is the file's contents, so a repository that changes its checks asks again.
+
+What none of this does: judge quality, review style, or ask a model whether the
+work is good. Every signal here is an experiment with an outcome, so that a pass
+means something narrow and true rather than something broad and false.
 
 ### How it is tested
 
@@ -250,9 +309,11 @@ code, confirm it verifies.
 
 ### Done when
 
-A task cannot reach `Verified` while any required check fails, in both front
-ends and from the command line, with the failure visible to the agent that
-claimed it.
+A task cannot reach `Verified` while any required check fails — and cannot
+reach it on the strength of passing checks either. The failure is visible to the
+agent that claimed it, in both front ends and from the command line, and
+`ironsight tasks` shows what was tried against a verified task and did not
+fire.
 
 ## Layer 5 — intent
 
