@@ -20,6 +20,7 @@ pub mod history;
 #[cfg_attr(not(windows), allow(dead_code))]
 pub mod host;
 pub mod notify;
+pub mod owned;
 pub mod pricing;
 pub mod redact;
 pub mod registry;

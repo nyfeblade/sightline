@@ -1,6 +1,6 @@
 //! Ironsight — watch every Claude Code session on this machine, live.
 
-use ironsight_core::{app, bootstrap, bus, checks, control, gateway, git, session, work};
+use ironsight_core::{app, bootstrap, bus, checks, control, gateway, git, owned, session, work};
 
 mod ui;
 
@@ -29,6 +29,10 @@ usage: Ironsight [options]
        ironsight adopt <who>        (re)open a conversation in tmux so it can be steered
        ironsight prune              close Ironsight sessions whose process has exited
        ironsight doctor             check everything Ironsight needs is installed
+       ironsight run [--model M] <prompt>
+                               run a session Ironsight owns: structured JSON, no
+                               terminal, no scraping. Streams what it does as it
+                               happens and exits when the turn is done
        ironsight serve              hold sessions in a process of Ironsight's own,
                                 so they outlive every window. Started for you
                                 when it is needed; run it yourself to watch it
@@ -481,6 +485,65 @@ fn main() -> Result<()> {
     // The daemon. Nothing but the sessions and a socket: everything about what
     // a session *means* stays in the front ends, which read the same files they
     // always read.
+    // A session Ironsight owns, spoken to over the protocol rather than a
+    // terminal. One-shot: send the prompt, stream what happens, exit when the
+    // turn finishes. This is the seam the foreman and chief will drive.
+    if args.first().map(String::as_str) == Some("run") {
+        // Everything after `run` is the prompt, except `--model M`.
+        let mut model: Option<String> = None;
+        let mut words: Vec<String> = Vec::new();
+        let mut rest = args[1..].iter();
+        while let Some(a) = rest.next() {
+            if a == "--model" {
+                model = rest.next().cloned();
+            } else {
+                words.push(a.clone());
+            }
+        }
+        let prompt = words.join(" ");
+        if prompt.trim().is_empty() {
+            anyhow::bail!("usage: ironsight run [--model M] <prompt>");
+        }
+
+        let program = control::claude_program();
+        let cwd = std::env::current_dir()?;
+        let session_id = format!("owned-{}", std::process::id());
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let done_reader = done.clone();
+
+        let mut owned = owned::OwnedSession::start(
+            &program,
+            &cwd,
+            model.as_deref(),
+            &session_id,
+            "claude",
+            move |ev| {
+                println!("{}", ev.human());
+                use std::io::Write;
+                let _ = std::io::stdout().flush();
+                // The turn is over when the session goes back to waiting.
+                if matches!(ev.kind, bus::Kind::SessionWaiting) {
+                    done_reader.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            },
+        )
+        .map_err(|e| anyhow::anyhow!("could not start an owned session: {e}"))?;
+
+        owned.send(&prompt)?;
+        owned.close_input();
+
+        // Wait for the turn, bounded so a hung agent does not hang the command.
+        let deadline = Instant::now() + Duration::from_secs(600);
+        while Instant::now() < deadline {
+            if done.load(std::sync::atomic::Ordering::Relaxed) || !owned.alive() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        owned.stop();
+        return Ok(());
+    }
+
     if args.first().map(String::as_str) == Some("serve") {
         let path = ironsight_core::daemon::default_path();
         if ironsight_core::daemon::running() {

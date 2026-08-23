@@ -435,6 +435,15 @@ fn letter_prompt(text: &str) -> Option<Approval> {
 /// Whether a command line belongs to Claude Code. A native install runs as
 /// `claude`, an npm one as `node .../claude-code/cli.js`, so the whole line is
 /// searched rather than the executable name alone.
+/// The command that runs Claude Code. On PATH by the name it installs as; an
+/// owned session runs this in stream-json mode.
+pub fn claude_program() -> String {
+    std::env::var("IRONSIGHT_CLAUDE")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "claude".to_string())
+}
+
 pub fn is_claude(args: &str) -> bool {
     args.contains("claude")
 }

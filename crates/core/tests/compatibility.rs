@@ -270,3 +270,31 @@ fn the_stream_still_carries_what_a_transcript_says() {
         );
     }
 }
+
+/// The stream-json protocol is a documented, versioned interface — but it is
+/// still one Ironsight depends on, and the point of pinning it is that a change
+/// fails here rather than as an owned session that silently produces no events.
+#[test]
+fn claude_code_still_speaks_the_stream_json_ironsight_parses() {
+    use ironsight_core::owned::parse_line;
+
+    let fixture = read("claude-stream-json.jsonl");
+    let events: Vec<_> = fixture
+        .lines()
+        .flat_map(|l| parse_line(l, "sess", "claude"))
+        .collect();
+    let kinds: Vec<&str> = events.iter().map(|e| e.kind.name()).collect();
+
+    assert!(
+        kinds.contains(&"sessionStarted"),
+        "the init line still announces the session — its shape or subtype moved: {kinds:?}"
+    );
+    assert!(
+        kinds.contains(&"toolCalled"),
+        "a tool_use block is still a call — the assistant message shape moved: {kinds:?}"
+    );
+    assert!(
+        kinds.contains(&"costSpent"),
+        "the result line still carries usage — the field moved or was renamed: {kinds:?}"
+    );
+}
