@@ -92,9 +92,29 @@ fn looks_opaque(word: &str) -> bool {
 }
 
 /// Whether a name says that what it holds is a secret.
+///
+/// A whole-token match, not a bare substring: `--author` and `GIT_AUTHOR_NAME`
+/// contain "auth" but hold nothing sensitive, and mangling them was exactly the
+/// over-redaction the module warns against. A telling word counts only when the
+/// character after it is not another letter — so "auth", "auth_token" and "AUTH"
+/// match, "author" does not.
 fn telling(name: &str) -> bool {
     let lowered = name.to_ascii_lowercase();
-    TELLING.iter().any(|w| lowered.contains(w))
+    TELLING.iter().any(|w| {
+        let mut from = 0;
+        while let Some(at) = lowered[from..].find(w) {
+            let end = from + at + w.len();
+            let next_is_letter = lowered[end..]
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic());
+            if !next_is_letter {
+                return true;
+            }
+            from = from + at + 1;
+        }
+        false
+    })
 }
 
 /// Everything that looks like a credential, replaced.
@@ -218,6 +238,25 @@ mod tests {
         ] {
             assert_eq!(text(plain), plain, "mangled an ordinary command");
         }
+    }
+
+    #[test]
+    fn author_is_not_treated_as_auth() {
+        // "auth" inside "author" is not a credential name; the value must survive.
+        let out = text("git commit --author=\"John Doe\" -m fix");
+        assert!(
+            out.contains("John") || out.contains("--author"),
+            "an --author was mangled as if it were a secret: {out}"
+        );
+        assert!(
+            !out.contains(MASK),
+            "nothing should have been redacted: {out}"
+        );
+        // But a real auth token name is still caught.
+        assert!(
+            text("AUTH_TOKEN=Zm9vYmFyMTIzNDU2Nzg5MFFXRVJUWQ").contains(MASK),
+            "a genuine AUTH_TOKEN is still redacted"
+        );
     }
 
     #[test]

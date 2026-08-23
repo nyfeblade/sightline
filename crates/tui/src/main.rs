@@ -354,7 +354,11 @@ fn attach_to(pane: &str, name: &str) -> Result<()> {
                         continue;
                     }
                     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-                    if ctrl && key.code == KeyCode::Char(']') {
+                    // Every shape ctrl+] takes on a terminal without the kitty
+                    // keyboard protocol, plus F12 — the same universal escape
+                    // the live view uses. Watching only for Char(']') made
+                    // attach a one-way door on macOS Terminal and most SSH.
+                    if leaves_passthrough(key.code, ctrl) {
                         return Ok(());
                     }
                     let _ = control::forward_key(pane, key.code, ctrl);
@@ -614,8 +618,28 @@ fn main() -> Result<()> {
 
         let sock = dir.join("events.sock");
         if sock.exists() {
-            match gateway::follow(&sock, |ev| show(&ev)) {
-                Ok(()) => return Ok(()),
+            match gateway::connect(&sock) {
+                Ok(live) => {
+                    // Connected first, so nothing published from here on is
+                    // missed. Now top the journal up from where the replay above
+                    // stopped: that catches anything the publisher wrote between
+                    // that replay and this connect — the gap `--since` exists to
+                    // close. The live stream is then deduped against it by seq,
+                    // so an event in both is shown once.
+                    for ev in bus::replay_from(&dir.join("events.jsonl"), last).events {
+                        if ev.seq > last {
+                            last = ev.seq;
+                            show(&ev);
+                        }
+                    }
+                    for ev in live {
+                        if ev.seq > last {
+                            last = ev.seq;
+                            show(&ev);
+                        }
+                    }
+                    return Ok(());
+                }
                 // The Ironsight that owned it exited between the check and the
                 // connect; fall through and watch the machine directly.
                 Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {}

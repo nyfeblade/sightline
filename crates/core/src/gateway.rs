@@ -181,22 +181,39 @@ pub fn serve(_path: PathBuf, _sub: Subscriber) -> io::Result<Gateway> {
 /// not Ironsight. Blocks until the far end closes.
 #[cfg(unix)]
 pub fn follow(path: &Path, mut on: impl FnMut(Event)) -> io::Result<()> {
+    for ev in connect(path)? {
+        on(ev);
+    }
+    Ok(())
+}
+
+/// Connect and yield events as they arrive, so a caller can interleave the
+/// live stream with a journal top-up and dedupe by sequence — closing the gap
+/// between "replayed the journal" and "attached to the socket", in which the
+/// publisher can emit events a fresh client never sees.
+#[cfg(unix)]
+pub fn connect(path: &Path) -> io::Result<impl Iterator<Item = Event>> {
     use std::io::{BufRead, BufReader};
     use std::os::unix::net::UnixStream;
 
     let stream = UnixStream::connect(path)?;
-    for line in BufReader::new(stream).lines() {
-        let line = line?;
-        if let Ok(ev) = serde_json::from_str::<Event>(&line) {
-            on(ev);
-        }
-    }
-    Ok(())
+    Ok(BufReader::new(stream)
+        .lines()
+        .map_while(Result::ok)
+        .filter_map(|l| serde_json::from_str::<Event>(&l).ok()))
 }
 
 #[cfg(not(unix))]
 pub fn follow(_path: &Path, _on: impl FnMut(Event)) -> io::Result<()> {
     Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "no event socket on this platform",
+    ))
+}
+
+#[cfg(not(unix))]
+pub fn connect(_path: &Path) -> io::Result<impl Iterator<Item = Event>> {
+    Err::<std::iter::Empty<Event>, _>(io::Error::new(
         io::ErrorKind::Unsupported,
         "no event socket on this platform",
     ))

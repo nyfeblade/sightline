@@ -301,16 +301,53 @@ fn shell(command: &str) -> Command {
 /// a check whose output had been truncated by another check of the same name.
 static RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// The two temp files a check writes to, removed whenever this goes out of
+/// scope — so every early return cleans up, not only the happy path.
+struct TempPair {
+    out: PathBuf,
+    err: PathBuf,
+}
+
+impl TempPair {
+    fn new(out: PathBuf, err: PathBuf) -> Self {
+        TempPair { out, err }
+    }
+}
+
+impl Drop for TempPair {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.out);
+        let _ = std::fs::remove_file(&self.err);
+    }
+}
+
+/// Kill a check and everything it forked, then reap it.
+///
+/// On Unix the child leads its own process group (set in `pre_exec`), so
+/// signalling the negative pid reaches the shell and every descendant — a build
+/// that spawned compilers, a test runner that spawned workers. Killing only the
+/// shell would leave those reparented to init and still running.
+fn kill_tree(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    unsafe {
+        libc::killpg(child.id() as libc::pid_t, libc::SIGKILL);
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 fn execute(check: &Check, cwd: &Path, env: &HashMap<String, String>) -> State {
     // Output goes to files rather than pipes. A check that writes more than a
     // pipe will hold — a test suite, a build — would otherwise block forever
     // waiting for a reader that is busy waiting for it to exit.
     let nth = RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let base = std::env::temp_dir().join(format!("ironsight-check-{}-{nth}", std::process::id()));
-    let (out_path, err_path) = (base.with_extension("out"), base.with_extension("err"));
+    // Unlinked however this function returns — a failed spawn, a wait error, a
+    // half-created pair — not only on the happy path.
+    let temp = TempPair::new(base.with_extension("out"), base.with_extension("err"));
     let (Ok(out), Ok(err)) = (
-        std::fs::File::create(&out_path),
-        std::fs::File::create(&err_path),
+        std::fs::File::create(&temp.out),
+        std::fs::File::create(&temp.err),
     ) else {
         return State::Unknown {
             why: "nowhere to write the output".into(),
@@ -324,6 +361,21 @@ fn execute(check: &Check, cwd: &Path, env: &HashMap<String, String>) -> State {
         .stdin(Stdio::null())
         .stdout(Stdio::from(out))
         .stderr(Stdio::from(err));
+    // Its own process group, so a timeout can kill everything the shell forked
+    // — cargo, rustc, node — rather than only the shell, which would leave the
+    // real workers reparented to init and still burning the machine.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
 
     let mut child = match command.spawn() {
         Ok(c) => c,
@@ -339,12 +391,15 @@ fn execute(check: &Check, cwd: &Path, env: &HashMap<String, String>) -> State {
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
             Ok(None) if Instant::now() >= deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
+                kill_tree(&mut child);
                 break None;
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(50)),
             Err(e) => {
+                // Reap before returning: dropping a Child does not wait, so the
+                // process would otherwise linger as a zombie until Ironsight
+                // exits. The temp files are cleaned by TempPair's drop.
+                kill_tree(&mut child);
                 return State::Unknown {
                     why: format!("could not be waited on: {e}"),
                 };
@@ -352,10 +407,8 @@ fn execute(check: &Check, cwd: &Path, env: &HashMap<String, String>) -> State {
         }
     };
 
-    let stdout = std::fs::read_to_string(&out_path).unwrap_or_default();
-    let stderr = std::fs::read_to_string(&err_path).unwrap_or_default();
-    let _ = std::fs::remove_file(&out_path);
-    let _ = std::fs::remove_file(&err_path);
+    let stdout = std::fs::read_to_string(&temp.out).unwrap_or_default();
+    let stderr = std::fs::read_to_string(&temp.err).unwrap_or_default();
 
     let Some(status) = status else {
         return State::Failed {
@@ -421,14 +474,17 @@ fn missing_tool(stderr: &str) -> bool {
 /// this looks for the words they share and falls back to the first thing said
 /// on the error channel — which is nearly always the right line.
 pub fn first_failure(stdout: &str, stderr: &str) -> Option<String> {
-    const MARKERS: [&str; 7] = [
+    // Deliberately no "warning: unused": rustc prints warnings before errors, so
+    // matching one would return it as the reason a build failed while the real
+    // error sat below. A warning alone never fails a build — this only runs on a
+    // non-zero exit — so the marker could only ever mask the error it precedes.
+    const MARKERS: [&str; 6] = [
         "error",
         "FAILED",
         "failures:",
         "panicked",
         "assertion",
         "Error:",
-        "warning: unused",
     ];
     for text in [stderr, stdout] {
         for line in text.lines() {
@@ -561,6 +617,34 @@ timeout = "2m"
         }
         assert!(!Suite::verified(&outcomes), "one failure is not done");
         assert!(Suite::refusal(&outcomes).unwrap().starts_with("bad failed"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_timeout_kills_what_the_check_forked_not_only_the_shell() {
+        let dir = scratch("tree");
+        // The shell backgrounds a sleep and waits; on timeout the whole group
+        // must die, so the marker file the sleep would create never appears.
+        let marker = dir.join("survived");
+        let check = Check {
+            name: "forks".into(),
+            run: format!("sh -c 'sleep 10; touch {}' & sleep 10", marker.display()),
+            timeout: Some("1s".into()),
+            expect: None,
+            optional: false,
+        };
+        let outcome = run(&check, &dir, &none());
+        assert!(
+            matches!(outcome.state, State::Failed { .. }),
+            "it timed out"
+        );
+        // Give any orphan the time it would have needed to fire.
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(
+            !marker.exists(),
+            "a forked descendant survived the timeout and kept running"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -410,39 +410,65 @@ impl PublisherLock {
             .open(&path)
         {
             Ok(mut f) => {
+                // Write the pid immediately, and flush, so the window in which
+                // the file exists but is empty is as small as the OS allows —
+                // and the reader below treats an empty file as "being written"
+                // rather than stealing it, which closes the window entirely.
                 let _ = writeln!(f, "{}", std::process::id());
+                let _ = f.flush();
                 Ok(PublisherLock { path })
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                let holder = std::fs::read_to_string(&path)
-                    .ok()
-                    .and_then(|t| t.trim().parse::<u32>().ok());
+                let text = std::fs::read_to_string(&path).unwrap_or_default();
+                let holder = text.trim().parse::<u32>().ok();
                 match holder {
                     // A living holder: it is theirs, and this process watches.
                     Some(pid) if pid_alive(pid) => {
                         Err(format!("another Ironsight (pid {pid}) is publishing"))
                     }
-                    // Left by something that has gone. Steal it, and note that
-                    // the stealing is itself racy — two processes both finding
-                    // it stale would both try, so the create_new below keeps
-                    // only one.
-                    _ => {
-                        let _ = std::fs::remove_file(&path);
-                        match std::fs::OpenOptions::new()
-                            .write(true)
-                            .create_new(true)
-                            .open(&path)
-                        {
-                            Ok(mut f) => {
-                                let _ = writeln!(f, "{}", std::process::id());
-                                Ok(PublisherLock { path })
-                            }
-                            Err(_) => Err("another Ironsight took the lock first".into()),
+                    // A dead holder: genuinely stale, steal it.
+                    Some(_) => Self::steal(path),
+                    // No pid yet. An empty or unparsed file is almost always
+                    // one another process just created and has not finished
+                    // writing — stealing it there is the race that grants the
+                    // lock to two processes at once. So refuse, unless the file
+                    // is old enough that the writer plainly crashed, in which
+                    // case it really is debris.
+                    None => {
+                        let stale = std::fs::metadata(&path)
+                            .and_then(|m| m.modified())
+                            .ok()
+                            .and_then(|t| t.elapsed().ok())
+                            .map(|age| age > std::time::Duration::from_secs(10))
+                            .unwrap_or(false);
+                        if stale {
+                            Self::steal(path)
+                        } else {
+                            Err("another Ironsight is acquiring the lock".into())
                         }
                     }
                 }
             }
             Err(e) => Err(e.to_string()),
+        }
+    }
+
+    /// Replace a lock left by a process that is gone. Racy by nature — two
+    /// processes both finding it stale would both try — so the create_new keeps
+    /// only one, and the loser is told rather than left believing it won.
+    fn steal(path: PathBuf) -> Result<Self, String> {
+        let _ = std::fs::remove_file(&path);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut f) => {
+                let _ = writeln!(f, "{}", std::process::id());
+                let _ = f.flush();
+                Ok(PublisherLock { path })
+            }
+            Err(_) => Err("another Ironsight took the lock first".into()),
         }
     }
 }
@@ -672,6 +698,23 @@ mod tests {
         assert!(
             PublisherLock::acquire(path.clone()).is_ok(),
             "a released lock can be taken"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_empty_lock_being_written_is_not_stolen() {
+        // The race: process A created the file but has not written its pid yet.
+        // A second acquirer must refuse, not steal — stealing hands the lock to
+        // two processes and duplicates sequence numbers.
+        let dir = std::env::temp_dir().join("ironsight-lock-empty");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("publisher.lock");
+        std::fs::write(&path, "").unwrap(); // freshly created, no pid yet
+        assert!(
+            PublisherLock::acquire(path.clone()).is_err(),
+            "an empty, freshly-written lock is being acquired, not stale"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
