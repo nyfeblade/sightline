@@ -368,8 +368,7 @@ body.focused .context { display: block; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .detail .sub { color: var(--muted); font-size: .92em; padding-bottom: 9px; border-bottom: 1px solid var(--line-soft); }
-.fact { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0; }
-.fact { padding: 4px 0; }
+.fact { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; }
 .fact .k { color: var(--muted); }
 .fact .v {
   color: var(--body);
@@ -432,16 +431,17 @@ body.focused .context { display: block; }
   gap: 12px;
   margin: 0 9px 9px;
   padding: 10px 14px;
-  border: 1px solid var(--accent-soft);
+  border: 1px solid var(--warn-soft);
+  border-left: 2px solid var(--warn);
   border-radius: 8px;
-  background: linear-gradient(180deg, rgba(210, 153, 34, .12), rgba(210, 153, 34, .04));
+  background: var(--warn-wash);
 }
-.ask .warn { color: var(--accent); }
-.ask b { color: var(--accent); font-weight: 400; padding-right: 8px; }
+.ask .warn { color: var(--warn); }
+.ask b { color: var(--warn); font-weight: 400; padding-right: 8px; }
 .answers { display: flex; gap: 7px; }
 .answer { background: transparent; border: 1px solid var(--line); border-radius: 5px; color: var(--body); padding: 5px 12px; }
 .answer:hover { border-color: var(--accent-soft); color: var(--text); }
-.answer.first { background: var(--accent); border-color: var(--accent); color: #16120a; }
+.answer.first { background: var(--accent); border-color: var(--accent); color: var(--ground); }
 .answer .key { opacity: .65; padding-right: 6px; }
 
 .metrics {

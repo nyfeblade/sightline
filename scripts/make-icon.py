@@ -89,11 +89,15 @@ def crosshair(img):
         if n == 0:
             dot(0, 0)
             continue
+        # The corners (±n, ±n) are produced by both the vertical and the
+        # horizontal arm; draw each cell once so a future per-dot tweak cannot
+        # double-apply there.
+        seen = set()
         for off in spread:
-            dot(n, off)        # right arm
-            dot(-n, off)       # left
-            dot(off, n)        # down
-            dot(off, -n)       # up
+            for cell in ((n, off), (-n, off), (off, n), (off, -n)):
+                if cell not in seen:
+                    seen.add(cell)
+                    dot(*cell)
     return img
 
 
@@ -101,11 +105,16 @@ def positions():
     """Every dot as (x, y, radius, colour), in fractions of the tile."""
     out = []
     for n in range(0, CELLS + 1):
-        cells = [(0, 0)] if n == 0 else [
-            (sx * n, off) for off in range(-thickness(n), thickness(n) + 1) for sx in (1, -1)
-        ] + [
-            (off, sy * n) for off in range(-thickness(n), thickness(n) + 1) for sy in (1, -1)
-        ]
+        if n == 0:
+            cells = [(0, 0)]
+        else:
+            cells = []
+            seen = set()
+            for off in range(-thickness(n), thickness(n) + 1):
+                for cell in ((n, off), (-n, off), (off, n), (off, -n)):
+                    if cell not in seen:
+                        seen.add(cell)
+                        cells.append(cell)
         for ix, iy in cells:
             far = max(abs(ix), abs(iy))
             r = DOT_R * (1 - 0.56 * (far / CELLS) ** 1.05)

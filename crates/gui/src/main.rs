@@ -174,6 +174,9 @@ struct EventDto {
     tool: Option<String>,
     head: String,
     body: String,
+    /// whether it succeeded — a failed tool call renders red in the Talk view,
+    /// which it could not before because this field was dropped on the way out
+    ok: bool,
 }
 
 #[derive(Serialize)]
@@ -358,6 +361,7 @@ fn feed(shared: State<Shared>, id: String, limit: usize) -> Vec<EventDto> {
                     tool: e.tool.clone(),
                     head: e.head.clone(),
                     body: e.body.clone(),
+                    ok: e.ok,
                 })
                 .collect()
         })
@@ -517,6 +521,7 @@ fn errors(shared: State<Shared>, id: String) -> Vec<EventDto> {
                     tool: e.tool.clone(),
                     head: e.head.clone(),
                     body: e.body.clone(),
+                    ok: e.ok,
                 })
                 .collect()
         })
@@ -874,7 +879,17 @@ fn stream(since: u64) -> Vec<bus::Event> {
 #[tauri::command]
 fn tasks(shared: State<Shared>) -> Vec<TaskDto> {
     shared.raw(|app| {
-        let sessions: Vec<String> = app.work.tasks().iter().map(|t| t.session.clone()).collect();
+        // One entry per session, not one per historical task: verified and
+        // abandoned tasks are kept, so a reassigned session would otherwise
+        // render a duplicate card for each. Dedupe before ordering.
+        let sessions: Vec<String> = app
+            .work
+            .tasks()
+            .iter()
+            .map(|t| t.session.clone())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
         let order = app.work.ordered(&sessions);
         let mut out = Vec::new();
         for (session, depth) in order {

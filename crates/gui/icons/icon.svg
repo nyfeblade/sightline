@@ -15,26 +15,22 @@
   <circle cx="256.0" cy="256.0" r="15.5" fill="#f0f9ff"/>
   <circle cx="285.2" cy="226.8" r="13.3" fill="#e2e8f0"/>
   <circle cx="226.8" cy="226.8" r="13.3" fill="#e2e8f0"/>
+  <circle cx="226.8" cy="285.2" r="13.3" fill="#e2e8f0"/>
   <circle cx="285.2" cy="256.0" r="13.3" fill="#e2e8f0"/>
   <circle cx="226.8" cy="256.0" r="13.3" fill="#e2e8f0"/>
-  <circle cx="285.2" cy="285.2" r="13.3" fill="#e2e8f0"/>
-  <circle cx="226.8" cy="285.2" r="13.3" fill="#e2e8f0"/>
-  <circle cx="226.8" cy="285.2" r="13.3" fill="#e2e8f0"/>
-  <circle cx="226.8" cy="226.8" r="13.3" fill="#e2e8f0"/>
   <circle cx="256.0" cy="285.2" r="13.3" fill="#e2e8f0"/>
   <circle cx="256.0" cy="226.8" r="13.3" fill="#e2e8f0"/>
   <circle cx="285.2" cy="285.2" r="13.3" fill="#e2e8f0"/>
-  <circle cx="285.2" cy="226.8" r="13.3" fill="#e2e8f0"/>
   <circle cx="314.4" cy="226.8" r="12.0" fill="#e2e8f0"/>
   <circle cx="197.6" cy="226.8" r="12.0" fill="#e2e8f0"/>
-  <circle cx="314.4" cy="256.0" r="12.0" fill="#e2e8f0"/>
-  <circle cx="197.6" cy="256.0" r="12.0" fill="#e2e8f0"/>
-  <circle cx="314.4" cy="285.2" r="12.0" fill="#e2e8f0"/>
-  <circle cx="197.6" cy="285.2" r="12.0" fill="#e2e8f0"/>
   <circle cx="226.8" cy="314.4" r="12.0" fill="#e2e8f0"/>
   <circle cx="226.8" cy="197.6" r="12.0" fill="#e2e8f0"/>
+  <circle cx="314.4" cy="256.0" r="12.0" fill="#e2e8f0"/>
+  <circle cx="197.6" cy="256.0" r="12.0" fill="#e2e8f0"/>
   <circle cx="256.0" cy="314.4" r="12.0" fill="#e2e8f0"/>
   <circle cx="256.0" cy="197.6" r="12.0" fill="#e2e8f0"/>
+  <circle cx="314.4" cy="285.2" r="12.0" fill="#e2e8f0"/>
+  <circle cx="197.6" cy="285.2" r="12.0" fill="#e2e8f0"/>
   <circle cx="285.2" cy="314.4" r="12.0" fill="#e2e8f0"/>
   <circle cx="285.2" cy="197.6" r="12.0" fill="#e2e8f0"/>
   <circle cx="343.6" cy="256.0" r="10.6" fill="#e2e8f0"/>

@@ -1144,7 +1144,7 @@ function askCard(s) {
 // again. Rebuilding four times a second means re-colouring every code block in
 // the conversation while someone is trying to type into the box below it, and
 // that is exactly what it feels like.
-let talkOn = { id: null, count: 0, mark: "", lastCall: null };
+let talkOn = { id: null, lastKey: null, mark: "", asking: "", lastCall: null };
 
 /// One rendered event, appended to the conversation.
 function talkNode(e, events, i) {
@@ -1176,11 +1176,22 @@ async function drawTalk(id) {
     return;
   }
 
-  const grew =
-    talkOn.id === id &&
-    out.firstChild &&
-    events.length >= talkOn.count &&
-    talkOn.count > 0;
+  // Find where we left off by the last-rendered event's identity, not by an
+  // index. `feed` returns a sliding window of the newest 400 events, so once a
+  // session passes 400 the indices shift under us and an index-based diff
+  // appends nothing — the view froze. As long as the last event we drew is
+  // still in the window we append only what follows it; if it has scrolled off
+  // the back, we rebuild.
+  let startIdx = -1;
+  if (talkOn.id === id && talkOn.lastKey) {
+    for (let i = events.length - 1; i >= 0; i -= 1) {
+      if (keyOf(events[i]) === talkOn.lastKey) {
+        startIdx = i;
+        break;
+      }
+    }
+  }
+  const grew = talkOn.id === id && out.firstChild && startIdx >= 0;
 
   const follow = keepingUp(out);
   const existing = out.querySelector(".asking-card");
@@ -1193,7 +1204,7 @@ async function drawTalk(id) {
     if (s) whose.append(make("span", "whose-where", `${s.state} · ${shortPath(s.cwd)}`));
     out.append(whose);
     if (!events.length) {
-      talkOn = { id, count: 0, mark, asking, lastCall: null };
+      talkOn = { id, lastKey: null, mark, asking, lastCall: null };
       return out.append(empty("nothing said yet — type below to start"));
     }
     talkOn.lastCall = null;
@@ -1205,7 +1216,7 @@ async function drawTalk(id) {
   } else {
     // Only what is new. A result completes the call above it rather than
     // arriving as a row of its own, so the call is rebuilt in place.
-    for (let i = talkOn.count; i < events.length; i += 1) {
+    for (let i = startIdx + 1; i < events.length; i += 1) {
       const e = events[i];
       if (e.kind === "result" && talkOn.lastCall) {
         const call = { kind: "tool", at: talkOn.lastCall.at, head: talkOn.lastCall.head, tool: e.tool, body: "" };
@@ -1221,7 +1232,13 @@ async function drawTalk(id) {
   }
 
   if (s?.asking) out.append(askCard(s));
-  talkOn = { id, count: events.length, mark, asking, lastCall: talkOn.lastCall };
+  talkOn = {
+    id,
+    lastKey: events.length ? keyOf(events.at(-1)) : null,
+    mark,
+    asking,
+    lastCall: talkOn.lastCall,
+  };
   if (follow) out.scrollTop = out.scrollHeight;
 }
 
@@ -1916,7 +1933,10 @@ function ask(title, value = "") {
 // ── the accent ────────────────────────────────────────────────────────────
 // A session lets you pick its colours; so does this. The accent is the only
 // colour that carries meaning here, so it is the only one worth choosing.
-const ACCENTS = ["#539bf5", "#986ee2", "#57ab5a", "#39c5cf", "#d29922", "#e5534b", "#adbac7"];
+// Deliberately none of the meaning colours: amber (--warn), green (--good) and
+// red (--bad) each say something, and a colour that means something cannot also
+// be a preference — picking one would collapse "needs you" onto "selected".
+const ACCENTS = ["#539bf5", "#986ee2", "#39c5cf", "#e879a6", "#7f96c4", "#adbac7"];
 
 function dim(hex, amount) {
   const n = parseInt(hex.slice(1), 16);
@@ -1937,7 +1957,12 @@ function chosenAccent() {
   } catch {
     saved = null;
   }
-  return ACCENTS.includes(saved) ? saved : ACCENTS[0];
+  // A stored swatch survives only if it is still on the palette; a custom pick
+  // survives if it is a well-formed hex. Without the second clause the custom
+  // colour picker persisted nothing — it reset to blue on the next launch.
+  return ACCENTS.includes(saved) || /^#[0-9a-f]{6}$/i.test(saved || "")
+    ? saved
+    : ACCENTS[0];
 }
 
 /// The interface accent only. Amber is not offered here: it means "this needs
