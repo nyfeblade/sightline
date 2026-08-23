@@ -47,7 +47,7 @@ usage: Ironsight [options]
                                follow everything happening on this machine;
                                attaches to a running Ironsight if there is one,
                                and watches the machine itself if there is not
-       ironsight tasks              what each session was asked to do
+       ironsight tasks [--json]     what each session was asked to do
        ironsight assign <who> <text>
                                give a session an assignment
        ironsight note <task> <text> append what was learned to a task
@@ -760,6 +760,7 @@ fn main() -> Result<()> {
     }
 
     if args.first().map(String::as_str) == Some("tasks") {
+        let json = args.iter().any(|a| a == "--json");
         // The sessions come too, because cost attributed to a piece of work
         // rather than to a process is the point of having a tree at all — a
         // supervisor's line shows what its workers spent as well as its own.
@@ -771,7 +772,11 @@ fn main() -> Result<()> {
         );
         app.with_state();
         if app.work.tasks().is_empty() {
-            println!("nothing has been assigned — try: ironsight assign <who> <what>");
+            if json {
+                println!("[]");
+            } else {
+                println!("nothing has been assigned — try: ironsight assign <who> <what>");
+            }
             return Ok(());
         }
         let rolled = app.rolled_up();
@@ -779,6 +784,38 @@ fn main() -> Result<()> {
         // Ordered by the shape of the work, so a supervisor's workers sit under
         // it rather than beside it.
         let sessions: Vec<String> = store.tasks().iter().map(|t| t.session.clone()).collect();
+
+        // One object per task, for a chief or any tool that acts on fleet state
+        // rather than reads it. The same tree, the same rolled-up cost, as data.
+        if json {
+            let items: Vec<serde_json::Value> = store
+                .ordered(&sessions)
+                .into_iter()
+                .filter_map(|(session, depth)| {
+                    let task = store
+                        .task_for(&session)
+                        .or_else(|| store.tasks().iter().rev().find(|t| t.session == session))?;
+                    let cost = rolled.get(&session).copied().unwrap_or_default();
+                    Some(serde_json::json!({
+                        "id": task.id,
+                        "session": session,
+                        "depth": depth,
+                        "parent": task.parent,
+                        "state": task.state.label(),
+                        "assignment": task.assignment,
+                        "constraints": task.constraints,
+                        "success": task.success,
+                        "escalate_if": task.escalate_if,
+                        "notes": task.notes.iter().map(|n| &n.text).collect::<Vec<_>>(),
+                        "rolled_output": cost.output,
+                        "rolled_cost": cost.estimate,
+                    }))
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&items)?);
+            return Ok(());
+        }
+
         for (session, depth) in store.ordered(&sessions) {
             let Some(task) = store
                 .task_for(&session)
