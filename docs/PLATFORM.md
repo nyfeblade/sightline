@@ -143,7 +143,9 @@ rather than a list of processes, with cost attributed to projects.
 
 ## Layer 4 — verification
 
-Status: not built. One to two working sessions. The most valuable layer here.
+Status: built. Checks refuse but never accept; a task reaches `Verified` only
+when a refutation written to show the work wrong was run and did not fire, and
+only once that refutation has been seen to fire at least once.
 
 An agent reporting completion is worth very little. The only trustworthy signals
 are external: the build compiles, the tests pass, continuous integration is
@@ -181,7 +183,9 @@ most useful single feature on this list and needs no organisation above it.
 
 ## Layer 5 — intent
 
-Status: not built. Roughly half a working session.
+Status: built. A project constitution (`.ironsight/constitution.md`) parsed into
+fixed sections, and `ironsight brief` renders a task-focused packet from it — the
+constraints that bear on the task, what done means, and when to escalate.
 
 Two artifacts, both plain files, both readable and editable by a person.
 
@@ -205,7 +209,9 @@ yourself, and decisions that stop being re-litigated every morning.
 
 ## Layer 6 — supervision and planning
 
-Status: not built, and a hypothesis rather than a plan.
+Status: half built. The foreman exists as a program — `ironsight foreman` watches
+for claimed work and runs its checks and refutations, refusing what does not
+pass. The chief — turning a paragraph of intent into assignments — is not built.
 
 Two roles, deliberately separate because they fail differently.
 
@@ -312,9 +318,9 @@ with the cost visibility Ironsight already provides.
     1  compatibility contract        done
     2  event model                   done
     3  lineage and task records      done
-    4  verification                  ~1–2 sessions
-    5  intent artifacts              ~½ session
-    6  one chief, three workers      ~½ session to stand up
+    4  verification                  done
+    5  intent artifacts              done
+    6  foreman                       done · chief not built
     7  measure, honestly             a fortnight of real use
     8  organisations                 only with evidence from 7
 

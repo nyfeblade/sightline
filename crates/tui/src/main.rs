@@ -1,6 +1,8 @@
 //! Ironsight — watch every Claude Code session on this machine, live.
 
-use ironsight_core::{app, bootstrap, bus, checks, control, gateway, git, owned, session, work};
+use ironsight_core::{
+    app, bootstrap, brief, bus, checks, control, gateway, git, owned, session, work,
+};
 
 mod ui;
 
@@ -49,6 +51,10 @@ usage: Ironsight [options]
        ironsight assign <who> <text>
                                give a session an assignment
        ironsight note <task> <text> append what was learned to a task
+       ironsight brief <who> [--task <what>]
+                               render a session's brief from the project's
+                               constitution: the constraints that bear on the
+                               task, what done means, and when to escalate
        ironsight refute <task> <command>
                                name something that would show this work is
                                wrong. The command must fail; if it succeeds the
@@ -973,6 +979,72 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Render the brief for a session's task: the constraints that bear on it,
+    // what success looks like, and when to escalate — assembled from the
+    // project's constitution and the task's own record, nothing else.
+    if args.first().map(String::as_str) == Some("brief") {
+        let who = args
+            .get(1)
+            .ok_or_else(|| anyhow::anyhow!("usage: ironsight brief <who> [--task <what>]"))?;
+        let adhoc = args
+            .iter()
+            .position(|a| a == "--task")
+            .and_then(|i| args.get(i + 1..))
+            .map(|rest| {
+                rest.iter()
+                    .take_while(|a| !a.starts_with("--"))
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .filter(|s| !s.is_empty());
+
+        let mut app = App::new(
+            app::default_root(),
+            app::default_sessions_dir(),
+            Duration::from_secs(7 * 86_400),
+            false,
+        );
+        app.with_state();
+        app.rescan_panes();
+
+        // A real session is resolved for its cwd and its assigned task. But a
+        // `--task` given against a path (or `.`) is a preview from that
+        // directory's constitution, so a brief can be read before any session
+        // exists — which is how a person checks what a worker would be told.
+        let session = resolve(&app, who);
+        let (cwd, task) = match (&session, &adhoc) {
+            (Some(id), _) => {
+                let cwd = app
+                    .sessions
+                    .iter()
+                    .find(|s| s.id == *id)
+                    .map(|s| s.cwd.clone())
+                    .filter(|c| !c.is_empty())
+                    .unwrap_or_else(|| ".".into());
+                let task = match &adhoc {
+                    Some(what) => work::Task::new("adhoc".into(), id.clone(), what.clone()),
+                    None => app.work.task_for(id).cloned().ok_or_else(|| {
+                        anyhow::anyhow!("{who} has no assignment — give one with --task")
+                    })?,
+                };
+                (cwd, task)
+            }
+            (None, Some(what)) => {
+                // `who` was a path to preview from, not a session.
+                let cwd = app::expand(who);
+                (
+                    cwd,
+                    work::Task::new("preview".into(), who.clone(), what.clone()),
+                )
+            }
+            (None, None) => anyhow::bail!("no session matching {who} — give --task to preview"),
+        };
+        let constitution = brief::Constitution::find(std::path::Path::new(&cwd)).map(|(_, c)| c);
+        print!("{}", brief::render(constitution.as_ref(), &task));
+        return Ok(());
+    }
+
     if args.first().map(String::as_str) == Some("note") {
         let id = args
             .get(1)
@@ -1106,8 +1178,22 @@ fn main() -> Result<()> {
                 }
             }
             if let Some(what) = assignment {
-                let task = app.assign(&id, &what);
-                println!("{task} assigned");
+                let task_id = app.assign(&id, &what);
+                println!("{task_id} assigned");
+                // Brief the session from the project's constitution: the
+                // constraints that bear on this task and what done means here,
+                // delivered as its opening message rather than left implicit.
+                let cwd = std::path::PathBuf::from(&spec.path);
+                let constitution = brief::Constitution::find(&cwd).map(|(_, c)| c);
+                if let Some(task) = app.work.get(&task_id) {
+                    let packet = brief::render(constitution.as_ref(), task);
+                    match app.send_to(&id, &packet) {
+                        Ok(()) => println!("briefed from {}", brief::FILE),
+                        // The session may not be steerable yet; the brief still
+                        // stands as the task record, so this is not fatal.
+                        Err(_) => {}
+                    }
+                }
             }
         }
         println!("started {name} — {}", control::attach_hint(&name));

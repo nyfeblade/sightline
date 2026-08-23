@@ -7,6 +7,7 @@
 pub mod agent;
 pub mod app;
 pub mod bootstrap;
+pub mod brief;
 pub mod bus;
 pub mod checks;
 pub mod control;

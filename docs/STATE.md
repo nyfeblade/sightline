@@ -100,6 +100,19 @@ into the binary, so editing anything under `crates/gui/ui/` needs a rebuild
 before it has any effect; an hour can go into wondering why a change did not
 take.
 
+## Intent: the constitution and the brief
+
+A project writes its standing decisions once, in `.ironsight/constitution.md` —
+mission, architecture, constraints, preferences, rejected approaches, what done
+means, open questions — and a decision recorded there outlives the session that
+made it. `ironsight brief <who>` renders a worker's brief from it: the standing
+constraints that bear on the task, its success criteria, and its escalation
+conditions, and nothing else, because a brief is not a transcript. A `[tag]`
+prefix scopes a constraint to tasks that mention it, so a database worker is not
+handed the front-end rules. Starting a session with `--task` briefs it this way
+as its opening message. Nothing here asks a model anything — intent paraphrased
+on the way in is intent you can no longer trust.
+
 ## Hardening, and what each fix actually guarantees
 
 A pass over the ways the system could lose or leak data, each with a test that
