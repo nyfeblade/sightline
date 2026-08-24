@@ -22,7 +22,7 @@ Keep the failure honest. When something cannot be determined, say so rather than
 guessing: no reading rather than a made-up number, "cannot tell" rather than a
 confident wrong status. Nothing is closed, killed or answered on a guess.
 
-One implementation, two callers. The terminal view and the desktop app are front
+One implementation, two callers. The commands and the desktop app are front
 ends over `ironsight-core`. Any behaviour that both need lives in core; anything a
 front end knows that the other does not is a bug waiting to be reported twice.
 

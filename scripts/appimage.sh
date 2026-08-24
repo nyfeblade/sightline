@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Build a single-file AppImage containing both the app and the terminal view.
+# Build a single-file AppImage containing the app and the commands.
 #
-# Clicking it opens the window; `./ironsight.AppImage --tui` runs the terminal view
-# in the shell you started it from, so one download covers both.
+# Clicking it opens the window; any argument is handed to `ironsight` in the
+# shell you started it from, so one download covers both.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -41,15 +41,13 @@ StartupWMClass=ironsight-gui
 EOF
 cp "$appdir/ironsight.desktop" "$appdir/usr/share/applications/"
 
-# One file, two front ends: the window by default, the terminal view on request,
-# and any other argument handed to the terminal view so `--once`, `doctor` and
-# the rest work from the AppImage too.
+# One file, both callers: the window by default, and any argument handed to the
+# commands, so `doctor` and the rest work from the AppImage too.
 cat > "$appdir/AppRun" <<'EOF'
 #!/usr/bin/env bash
 here="$(dirname "$(readlink -f "$0")")"
 export PATH="$here/usr/bin:$PATH"
 case "${1:-}" in
-  --tui|-t) shift; exec "$here/usr/bin/ironsight" "$@" ;;
   "")       exec "$here/usr/bin/ironsight-gui" ;;
   --gui)    shift; exec "$here/usr/bin/ironsight-gui" "$@" ;;
   *)        exec "$here/usr/bin/ironsight" "$@" ;;

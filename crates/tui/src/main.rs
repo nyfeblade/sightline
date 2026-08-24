@@ -1,26 +1,25 @@
-//! Ironsight — watch every Claude Code session on this machine, live.
+//! Ironsight — the commands, and the session table.
+//!
+//! The interface is the window (`crates/gui`). What is here is everything that
+//! is useful from a shell or a script: starting and steering sessions, tasks,
+//! checks, briefs, ceilings, invariants, glue — and a one-shot table of what is
+//! running, which is what a bare `ironsight` prints.
 
 use ironsight_core::{
     app, bootstrap, brief, bus, checks, control, gateway, git, owned, session, work,
 };
 
-mod ui;
-
 use anyhow::Result;
-use app::{App, Prompt, View};
-use crossterm::event::{
-    self as cevent, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind,
-    KeyModifiers, MouseButton, MouseEventKind,
-};
-use ratatui::DefaultTerminal;
+use app::App;
+use crossterm::event::{self as cevent, Event, KeyCode, KeyEventKind, KeyModifiers};
 use session::Status;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 const USAGE: &str = "\
-Ironsight — live view of what Claude Code is doing
+Ironsight — commands for the Claude Code sessions on this machine
 
-usage: Ironsight [options]
+usage: ironsight [options]     print what every session is doing, and exit
        ironsight new [path] [--agent A] [--name N] [--model M] [--effort E]
                  [--permission-mode P] [--prompt T] [--worktree BRANCH]
                  [--task WHAT] [--parent WHO] [--owned]
@@ -91,15 +90,12 @@ options:
                   accepts 90m, 12h, 7d, or plain seconds
   --live          only sessions with a running claude process
   --cost          show API-equivalent cost (default: subscription view)
-  --view <name>   start on feed, files, or stats
-  --plain         no colour (also honours NO_COLOR)
-  --no-mouse      do not capture the mouse (restores terminal text selection)
-  --once          print a one-shot table instead of the live view
   --root <path>   transcript root (default ~/.claude/projects)
   -h, --help      this text
   -V, --version   version
 
-keys: j/k select · J/K feed · enter detail · f filter · l live · ? help · q quit";
+The window is the interface: `ironsight-gui`, or the desktop entry. This binary
+is the commands, plus the table above for a shell or a script.";
 
 fn parse_since(s: &str) -> Option<Duration> {
     let (num, mult) = match s.chars().last()? {
@@ -481,11 +477,7 @@ fn resolve(app: &App, who: &str) -> Option<String> {
 fn main() -> Result<()> {
     let mut since = Duration::from_secs(24 * 3_600);
     let mut only_live = false;
-    let mut once = false;
     let mut show_cost = false;
-    let mut view = View::Feed;
-    let mut plain = std::env::var_os("NO_COLOR").is_some();
-    let mut mouse = true;
     let mut root = app::default_root();
 
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -2010,18 +2002,8 @@ fn main() -> Result<()> {
             }
             "--live" => only_live = true,
             "--cost" => show_cost = true,
-            "--plain" => plain = true,
-            "--no-mouse" => mouse = false,
-            "--view" => {
-                i += 1;
-                view = match args.get(i).map(String::as_str) {
-                    Some("feed") => View::Feed,
-                    Some("files") => View::Files,
-                    Some("stats") => View::Stats,
-                    _ => anyhow::bail!("--view wants feed, files, or stats"),
-                };
-            }
-            "--once" => once = true,
+            // The table is all there is now, so this only ever meant "yes".
+            "--once" => {}
             "--since" => {
                 i += 1;
                 since = args
@@ -2041,8 +2023,6 @@ fn main() -> Result<()> {
         i += 1;
     }
 
-    ui::init_palette(plain);
-
     if !root.exists() {
         anyhow::bail!(
             "no transcripts at {}\nset CLAUDE_CONFIG_DIR, or point at them with --root <path>",
@@ -2052,38 +2032,8 @@ fn main() -> Result<()> {
 
     let mut app = App::new(root, app::default_sessions_dir(), since, only_live);
     app.show_cost = show_cost;
-    app.view = view;
-
-    if once {
-        print_once(&app);
-        return Ok(());
-    }
-
-    // The live view publishes. A one-shot table does not: it would bind the
-    // socket, print, and take the stream away again before anything could read
-    // it, and it would fight the Ironsight you already have open.
-    match app.with_stream() {
-        Ok(true) => {}
-        Ok(false) => app.say("another Ironsight is publishing the stream — this one is watching"),
-        Err(e) => app.say(format!("the event stream is not available: {e}")),
-    }
-
-    // One key that always means "back to scope", held for as long as Ironsight is
-    // here to come back to.
-    let way_back = control::hold_way_back();
-    // Before the terminal is put into a state that has to be undone.
-    restore_terminal_however_this_ends();
-    let mut term = ratatui::init();
-    if mouse {
-        let _ = crossterm::execute!(std::io::stdout(), EnableMouseCapture);
-    }
-    let result = run(&mut term, &mut app);
-    if mouse {
-        let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
-    }
-    ratatui::restore();
-    control::drop_way_back(way_back);
-    result
+    print_once(&app);
+    Ok(())
 }
 
 /// Everything a terminal must be told to undo, as one string of bytes.
@@ -2133,14 +2083,43 @@ fn restore_terminal_however_this_ends() {
         let mut out = std::io::stdout();
         let _ = out.write_all(RESTORE);
         let _ = out.flush();
-        ratatui::restore();
         existing(info);
     }));
 }
 
+/// Token counts the way a person reads them, and how long ago something last
+/// happened. Both used to live in the terminal view; the table is what is left
+/// of it.
+fn fmt_tokens(n: u64) -> String {
+    if n >= 1_000_000_000 {
+        format!("{:.1}B", n as f64 / 1_000_000_000.0)
+    } else if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.0}k", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
+}
+
+fn fmt_age(secs: i64) -> String {
+    if secs == i64::MAX {
+        return "-".into();
+    }
+    if secs < 60 {
+        format!("{secs}s")
+    } else if secs < 3600 {
+        format!("{}m", secs / 60)
+    } else if secs < 86_400 {
+        format!("{}h", secs / 3600)
+    } else {
+        format!("{}d", secs / 86_400)
+    }
+}
+
 /// The one-shot table.
 ///
-/// Writes rather than prints: `Ironsight --once | head` closes the pipe halfway,
+/// Writes rather than prints: `ironsight | head` closes the pipe halfway,
 /// and a tool that panics when someone pipes it into `head` is a tool that
 /// looks broken.
 fn print_once(app: &App) {
@@ -2178,14 +2157,14 @@ fn print_once(app: &App) {
             truncate(&status, 12),
             truncate(&s.label(), 26),
             truncate(&s.where_(), 26),
-            ui::fmt_tokens(s.totals.ctx),
-            ui::fmt_tokens(s.totals.output),
+            fmt_tokens(s.totals.ctx),
+            fmt_tokens(s.totals.output),
             if app.show_cost {
                 format!("${:.2}", s.totals.cost)
             } else {
                 s.totals.requests.to_string()
             },
-            ui::fmt_age(s.age_secs()),
+            fmt_age(s.age_secs()),
         );
     }
     let (tokens, cost, working) = app.totals();
@@ -2197,7 +2176,7 @@ fn print_once(app: &App) {
     line!(
         "\n{} sessions · {working} working · {} output tokens{tail}",
         app.sessions.len(),
-        ui::fmt_tokens(tokens)
+        fmt_tokens(tokens)
     );
 }
 
@@ -2249,370 +2228,5 @@ mod tests {
         assert!(!leaves_passthrough(KeyCode::Esc, false));
         assert!(!leaves_passthrough(KeyCode::Char('q'), false));
         assert!(!leaves_passthrough(KeyCode::Char('c'), true));
-    }
-}
-
-fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
-    let tick = Duration::from_millis(250);
-    let mut last_tick = Instant::now();
-    loop {
-        term.draw(|f| ui::draw(f, app))?;
-
-        let timeout = tick.saturating_sub(last_tick.elapsed());
-        if cevent::poll(timeout)? {
-            let event = cevent::read()?;
-            // Clicks and the wheel, so the thing on screen can just be pointed at.
-            if let Event::Mouse(m) = event {
-                let (col, row) = (m.column, m.row);
-                match m.kind {
-                    MouseEventKind::Down(MouseButton::Left) => {
-                        if let Some(i) = app.regions.menu_at(col, row) {
-                            let keys: Vec<char> = app.actions().iter().map(|a| a.key).collect();
-                            if let Some(k) = keys.get(i) {
-                                app.menu_sel = i;
-                                app.run_action(*k);
-                            }
-                        } else if app.menu {
-                            app.menu = false;
-                        } else if let Some(i) = app.regions.session_at(col, row) {
-                            if i < app.sessions.len() {
-                                app.sel = i;
-                            }
-                        } else if let Some(i) = app.regions.right_at(col, row) {
-                            // A second click on the same row opens it.
-                            if app.point_right(i) {
-                                app.popup = true;
-                                app.popup_scroll = 0;
-                            }
-                        }
-                    }
-                    MouseEventKind::ScrollDown => {
-                        if app.regions.over_list(col, row) {
-                            app.select_session(1);
-                        } else {
-                            app.move_right(3);
-                        }
-                    }
-                    MouseEventKind::ScrollUp => {
-                        if app.regions.over_list(col, row) {
-                            app.select_session(-1);
-                        } else {
-                            app.move_right(-3);
-                        }
-                    }
-                    _ => {}
-                }
-                continue;
-            }
-            if let Event::Key(key) = event {
-                if key.kind != KeyEventKind::Press {
-                    continue;
-                }
-                if key.modifiers.contains(KeyModifiers::CONTROL)
-                    && matches!(key.code, KeyCode::Char('c'))
-                {
-                    return Ok(());
-                }
-                // The conversation browser takes the keyboard while it is
-                // open: typing filters it, so nothing else can claim letters.
-                if app.past_open {
-                    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-                    match key.code {
-                        KeyCode::Esc => app.past_open = false,
-                        KeyCode::Enter => app.resume_past(),
-                        KeyCode::Down => app.move_past(1),
-                        KeyCode::Up => app.move_past(-1),
-                        KeyCode::Char('n') if ctrl => app.move_past(1),
-                        KeyCode::Char('p') if ctrl => app.move_past(-1),
-                        KeyCode::PageDown => app.move_past(10),
-                        KeyCode::PageUp => app.move_past(-10),
-                        KeyCode::Char('u') if ctrl => app.filter_past(String::clear),
-                        KeyCode::Backspace => app.filter_past(|f| {
-                            f.pop();
-                        }),
-                        KeyCode::Char(c) if !ctrl => app.filter_past(|f| f.push(c)),
-                        _ => {}
-                    }
-                    continue;
-                }
-                if app.popup {
-                    match key.code {
-                        KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') | KeyCode::Char('v') => {
-                            app.popup = false
-                        }
-                        KeyCode::Down | KeyCode::Char('j') => app.popup_scroll += 1,
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            app.popup_scroll = app.popup_scroll.saturating_sub(1)
-                        }
-                        KeyCode::PageDown => app.popup_scroll += 20,
-                        KeyCode::PageUp => app.popup_scroll = app.popup_scroll.saturating_sub(20),
-                        KeyCode::Home => app.popup_scroll = 0,
-                        _ => {}
-                    }
-                    continue;
-                }
-                if app.passthrough {
-                    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-                    if leaves_passthrough(key.code, ctrl) {
-                        app.toggle_passthrough();
-                        continue;
-                    }
-                    app.forward_key(key.code, ctrl);
-                    continue;
-                }
-                // ctrl+<digit> answers a prompt with that option
-                if key.modifiers.contains(KeyModifiers::CONTROL) {
-                    if let KeyCode::Char(c @ '1'..='9') = key.code {
-                        app.answer(c as usize - '0' as usize);
-                        continue;
-                    }
-                }
-                if let Some(input) = app.input.as_mut() {
-                    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-                    match key.code {
-                        KeyCode::Esc => app.input = None,
-                        KeyCode::Enter => app.submit_input(),
-                        KeyCode::Backspace => input.backspace(),
-                        KeyCode::Delete => input.delete(),
-                        KeyCode::Left => input.left(),
-                        KeyCode::Right => input.right(),
-                        KeyCode::Home => input.home(),
-                        KeyCode::End => input.end(),
-                        KeyCode::Char('u') if ctrl => input.clear(),
-                        KeyCode::Char('w') if ctrl => input.delete_word(),
-                        KeyCode::Char('a') if ctrl => input.home(),
-                        KeyCode::Char('e') if ctrl => input.end(),
-                        KeyCode::Char(c) => input.insert(c),
-                        _ => {}
-                    }
-                    continue;
-                }
-                if app.menu {
-                    match key.code {
-                        KeyCode::Esc | KeyCode::Char('q') => app.menu = false,
-                        KeyCode::Down | KeyCode::Char('j') => app.menu_sel += 1,
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            app.menu_sel = app.menu_sel.saturating_sub(1)
-                        }
-                        KeyCode::Enter => {
-                            let key = app.actions().get(app.menu_sel).map(|a| a.key);
-                            if let Some(k) = key {
-                                app.run_action(k);
-                            }
-                        }
-                        KeyCode::Char(c) => app.run_action(c),
-                        _ => {}
-                    }
-                    continue;
-                }
-                if app.help {
-                    app.help = false;
-                    continue;
-                }
-                match key.code {
-                    // Esc dismisses; it does not quit. An accidental Esc should
-                    // never take the monitor down with it.
-                    KeyCode::Char('q') => {
-                        if app.may_quit() {
-                            return Ok(());
-                        }
-                    }
-                    KeyCode::Esc => {
-                        if app.passthrough {
-                            app.toggle_passthrough();
-                        } else if !app.search.is_empty() {
-                            app.search.clear();
-                            app.hits.clear();
-                            app.say("search cleared");
-                        }
-                    }
-                    KeyCode::Down if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        app.move_session(1)
-                    }
-                    KeyCode::Up if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        app.move_session(-1)
-                    }
-                    KeyCode::Char('j') | KeyCode::Down => app.select_session(1),
-                    KeyCode::Char('k') | KeyCode::Up => app.select_session(-1),
-                    KeyCode::BackTab => app.select_session(-1),
-                    KeyCode::Char('J') => app.move_right(1),
-                    KeyCode::Char('K') => app.move_right(-1),
-                    KeyCode::PageDown => app.move_right(20),
-                    KeyCode::PageUp => app.move_right(-20),
-                    KeyCode::Char(c @ '0'..='9') => {
-                        // 1-9 pick the first nine panes, 0 the tenth.
-                        let i = if c == '0' {
-                            9
-                        } else {
-                            c as usize - '1' as usize
-                        };
-                        if let Some(v) = app::VIEWS.get(i) {
-                            app.view = *v;
-                            app.list_sel = 0;
-                            app.list_top_right = 0;
-                        }
-                    }
-                    // Before the plain `w` below: match arms are ordered, and
-                    // an unguarded `Char('w')` swallows the modified one, so
-                    // this read as ctrl+w doing nothing but cycle the view.
-                    // Two keys, because one key that a terminal might eat is how
-                    // a feature becomes "it just broke". Tab was a second way to
-                    // do what j already does; turning the Hub round is a better
-                    // use of it, and it is the key anyone reaches for to switch
-                    // between two faces.
-                    KeyCode::Tab | KeyCode::BackTab => app.switch_mode(),
-                    KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        app.switch_mode()
-                    }
-                    KeyCode::Char('w') => {
-                        app.view = app.view.next();
-                        app.list_sel = 0;
-                        app.list_top_right = 0;
-                    }
-                    KeyCode::Char('$') => app.show_cost = !app.show_cost,
-                    KeyCode::Char('g') | KeyCode::Home => {
-                        app.follow = false;
-                        app.feed_sel = 0;
-                        app.feed_top = 0;
-                    }
-                    KeyCode::Char('G') | KeyCode::End => app.follow = true,
-                    KeyCode::Enter | KeyCode::Char('.') => {
-                        app.menu = true;
-                        app.menu_sel = 0;
-                    }
-                    // Workflow's own keys. Guarded on the mode and placed above
-                    // the plain letters below, because match arms are ordered
-                    // and an unguarded arm swallows a guarded one written after
-                    // it — which is how the first two of these did nothing.
-                    KeyCode::Char('c') if app.mode == app::Mode::Workflow => {
-                        app.open_input(Prompt::Chief)
-                    }
-                    KeyCode::Char('l') if app.mode == app::Mode::Workflow => {
-                        app.open_input(Prompt::Ceiling)
-                    }
-                    KeyCode::Char('s') if app.mode == app::Mode::Workflow => {
-                        let here = app.here();
-                        match app.set_up_project(&here) {
-                            Ok(said) => app.say(said),
-                            Err(e) => app.say(e),
-                        }
-                    }
-                    KeyCode::Char('g') if app.mode == app::Mode::Workflow => {
-                        app.open_input(Prompt::Reconcile)
-                    }
-                    KeyCode::Char('v') if app.mode == app::Mode::Workflow => {
-                        let here = app.here();
-                        app.say("running the invariants…");
-                        match app.run_invariants(&here) {
-                            Ok(said) => app.say(said),
-                            Err(e) => app.say(e),
-                        }
-                    }
-                    KeyCode::Char('v') | KeyCode::Char('o') => {
-                        let has = match app.view {
-                            View::Files => !app.file_keys().is_empty(),
-                            _ => app.feed_len() > 0,
-                        };
-                        if has {
-                            app.popup = true;
-                            app.popup_scroll = 0;
-                        }
-                    }
-                    KeyCode::Char('f') => {
-                        app.filter = app.filter.next();
-                        app.feed_top = 0;
-                        app.follow = true;
-                    }
-                    KeyCode::Char('l') => {
-                        app.only_live = !app.only_live;
-                        app.discover();
-                        app.refresh();
-                    }
-                    KeyCode::Char('r') => {
-                        app.discover();
-                        app.refresh();
-                    }
-                    KeyCode::Char('s') => app.run_action('s'),
-                    KeyCode::Char('b') => {
-                        if app.steer.is_empty() {
-                            app.say("nothing Ironsight can steer is running");
-                        } else {
-                            app.open_input(Prompt::Broadcast);
-                        }
-                    }
-                    KeyCode::Char('n') => app.run_action('n'),
-                    KeyCode::Char('i') => app.run_action('i'),
-                    KeyCode::Char('a') => app.run_action('a'),
-                    KeyCode::Char('A') => app.run_action('A'),
-                    KeyCode::Char('R') => app.run_action('R'),
-                    KeyCode::F(2) => app.run_action('N'),
-                    // The Hub's other face. Everything about directing work —
-                    // assignments, a chief, what this project says done means,
-                    // what it may spend — lives there rather than in a terminal
-                    // command, which is where it all started and was wrong.
-                    KeyCode::Char('x') => app.run_action('x'),
-                    // Closing and removing are different things. `x` ends the
-                    // process; these take rows off the list, and the
-                    // conversation stays on disk for `R` either way.
-                    KeyCode::Char('-') | KeyCode::Delete => app.run_action('-'),
-                    KeyCode::Char('=') => app.run_action('='),
-                    KeyCode::Char('+') => app.run_action('+'),
-                    KeyCode::Char('y') => app.answer(1),
-                    KeyCode::Char('d') => app.answer(0),
-
-                    KeyCode::Char('p') => app.next_blocked(),
-                    KeyCode::Char('Q') => app.run_action('Q'),
-                    KeyCode::Char('/') => app.open_input(Prompt::Search),
-                    KeyCode::Char(']') => app.cycle_hit(1),
-                    KeyCode::Char('[') => app.cycle_hit(-1),
-                    KeyCode::Char('m') => app.run_action('m'),
-                    KeyCode::Char('L') => app.launch_fleet(),
-                    KeyCode::Char('W') => app.run_action('W'),
-                    KeyCode::Char('M') => app.run_action('M'),
-                    KeyCode::Char('X') => app.run_action('X'),
-                    KeyCode::Char('N') => {
-                        app.notify_on = !app.notify_on;
-                        let on = app.notify_on;
-                        app.say(if on {
-                            "notifications on"
-                        } else {
-                            "notifications off"
-                        });
-                    }
-                    KeyCode::Char('?') => app.help = true,
-                    _ => {}
-                }
-            }
-        }
-
-        if let Some(session) = app.attach_to.take() {
-            if control::inside_tmux() {
-                // Ironsight stays where it is; only the tmux client moves.
-                match control::attach(&session) {
-                    Ok(_) => app.say(format!("switched to {session} — F12 comes back")),
-                    Err(e) => app.say(e),
-                }
-            } else {
-                ratatui::restore();
-                let outcome = control::attach(&session);
-                *term = ratatui::init();
-                term.clear()?;
-                if let Err(e) = outcome {
-                    app.say(e);
-                }
-            }
-            app.discover();
-            app.refresh();
-            continue;
-        }
-
-        if last_tick.elapsed() >= tick {
-            app.refresh();
-            app.probe();
-            if app.last_discover.elapsed() >= Duration::from_secs(3) {
-                app.discover();
-            }
-            last_tick = Instant::now();
-        }
     }
 }

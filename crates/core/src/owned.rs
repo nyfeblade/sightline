@@ -717,9 +717,20 @@ pub const PREFIX: &str = "owned-";
 /// only so much — and if listing the fleet had to touch each session to ask
 /// what it was doing, one slow write would stall every window. Reading the
 /// state never waits on a write; writing never waits on a reader.
+/// How many events one session may hold before the oldest are dropped.
+///
+/// The front end drains these on its tick. A session that produced more than
+/// this between two drains has lost the oldest, and the count says so rather
+/// than the gap being silent — the same bargain the event socket already makes
+/// with a slow consumer.
+const HELD_EVENTS: usize = 2048;
+
 struct Held {
     session: std::sync::Arc<OwnedSession>,
     state: std::sync::Arc<std::sync::Mutex<Owned>>,
+    /// What the session has said since it was last drained, and how much was
+    /// dropped because nobody drained in time.
+    pending: std::sync::Arc<std::sync::Mutex<(std::collections::VecDeque<Event>, u64)>>,
 }
 
 impl Held {
@@ -744,13 +755,17 @@ fn locked() -> std::sync::MutexGuard<'static, Fleet> {
     }
 }
 
-fn hold(session: OwnedSession) -> Held {
+fn hold(session: OwnedSession, pending: Pending) -> Held {
     let state = session.shared_state();
     Held {
         session: std::sync::Arc::new(session),
         state,
+        pending,
     }
 }
+
+/// The buffer a session's reader thread fills and a front end drains.
+type Pending = std::sync::Arc<std::sync::Mutex<(std::collections::VecDeque<Event>, u64)>>;
 
 /// The next free `owned-N`, counting up from the highest taken.
 ///
@@ -792,6 +807,10 @@ pub fn start(
     let mut held = locked();
     let taken: Vec<String> = held.keys().cloned().collect();
     let name = next_name(&taken);
+    let pending: Pending = std::sync::Arc::new(std::sync::Mutex::new((
+        std::collections::VecDeque::new(),
+        0,
+    )));
     let session = OwnedSession::start_with(
         program,
         cwd,
@@ -801,11 +820,27 @@ pub fn start(
         // Many of these may run at once under a daemon with no terminal;
         // their diagnostics must not scatter across whatever it inherited.
         Stderr::Quiet,
-        // The events are dropped here on purpose. Everything a front end shows
-        // about a session is read from its transcript, and an owned session
-        // writes one — so publishing from here as well would put every event on
-        // the stream twice.
-        |_ev| {},
+        // Kept, not dropped. What the session does arrives here live, on the
+        // pipe, as it happens — the tool call before its result, the failure
+        // with its reason. Ironsight used to learn the same things by re-reading
+        // the transcript on a poll, which is archaeology: later, lossier, and
+        // reconstructed rather than witnessed.
+        //
+        // Buffered rather than published, because this may be running inside
+        // the daemon and the journal has exactly one writer. The front end
+        // drains.
+        {
+            let mine = pending.clone();
+            move |ev| {
+                if let Ok(mut held) = mine.lock() {
+                    if held.0.len() >= HELD_EVENTS {
+                        held.0.pop_front();
+                        held.1 += 1;
+                    }
+                    held.0.push_back(ev);
+                }
+            }
+        },
     )
     .map_err(|e| format!("could not start an owned session: {e}"))?;
     if let Some(first) = &spec.opening {
@@ -820,8 +855,32 @@ pub fn start(
         session.settle(settle);
     }
     let state = session.state();
-    held.insert(name, hold(session));
+    held.insert(name, hold(session, pending));
     Ok(state)
+}
+
+/// Everything the held sessions have said since the last drain, in order, with
+/// the count of anything lost to a slow drain.
+///
+/// Draining is destructive on purpose: these are handed to whoever journals
+/// them, and handing the same event to two front ends would number it twice.
+pub fn drain() -> (Vec<Event>, u64) {
+    let held = locked();
+    let mut out: Vec<Event> = Vec::new();
+    let mut lost = 0;
+    for entry in held.values() {
+        let mut pending = match entry.pending.lock() {
+            Ok(p) => p,
+            Err(e) => e.into_inner(),
+        };
+        out.extend(pending.0.drain(..));
+        lost += pending.1;
+        pending.1 = 0;
+    }
+    // The order within one session is the order it said things; across sessions
+    // it is whatever the map gave, so time settles it.
+    out.sort_by_key(|e| e.at);
+    (out, lost)
 }
 
 /// Every owned session this process holds, dead ones included — a session that

@@ -37,10 +37,9 @@ As a desktop app on Linux, one file, nothing installed:
 scripts/appimage.sh            # builds dist/ironsight-<version>-x86_64.AppImage
 ```
 
-Clicking it opens the app. The same file is also the terminal view —
-`./ironsight-0.4.1-x86_64.AppImage --tui` runs it in the shell you started it from,
-and any other argument goes there too, so `--once` and `doctor` work from it as
-well. `scripts/desktop-entry.sh` puts it in your application menu instead, if you
+Clicking it opens the app. Arguments go to the commands, so
+`./ironsight-0.4.1-x86_64.AppImage doctor` works from the same file.
+`scripts/desktop-entry.sh` puts it in your application menu instead, if you
 would rather run it from a checkout. The app needs webkit2gtk on the host, which
 a normal desktop already has.
 
@@ -50,12 +49,13 @@ On Windows:
 irm https://raw.githubusercontent.com/nyfeblade/ironsight/master/install.ps1 | iex
 ```
 
-Then run `ironsight`. Linux, macOS and Windows. On Linux and macOS tmux is optional,
-and only needed to steer sessions rather than watch them.
+Then run `ironsight-gui` for the window, or `ironsight` for the commands. Linux,
+macOS and Windows. On Linux and macOS tmux is optional, and only needed to steer
+sessions rather than watch them.
 
 ### What runs where
 
-The terminal view runs on all three. Linux and macOS steer sessions through
+The commands run on all three. Linux and macOS steer sessions through
 tmux, so a session outlives Ironsight; Windows has no tmux, so Ironsight hosts the
 session itself and it ends when Ironsight does.
 
@@ -198,8 +198,7 @@ the same as any other.
 
 ### Directing work, not just watching it
 
-Ironsight has two faces. `ctrl+w` turns it round, and in the app the Work tab is
-the same thing.
+Ironsight has two faces, and the Work tab in the app is the other one.
 
 The one you know is monitoring: what is running, what it is doing, what it is
 asking. The other is workflow, and it answers the question you have when you are
@@ -219,11 +218,9 @@ Then `c` hands work to a chief: a session with Ironsight on its path, a brief
 drawn from your constitution, and a ceiling it cannot raise. It appears in the
 session list like anything else, and you watch it work in the Talk view.
 
-    ctrl+w   turn the Hub round
-    c        hand work to a chief
-    s        set this project up
-    l        ceilings — what a fleet here may run and spend
-    v        run the invariants
+    ironsight chief <what>   hand work to a chief
+    ironsight limits          ceilings — what a fleet here may run and spend
+    ironsight invariants      what must never stop being true here
 
 Ceilings are not optional for a chief, and that is the one place Ironsight
 insists: something that starts sessions on your behalf does not start without a
@@ -438,14 +435,14 @@ drawn on screen.
 
 ## The app
 
-The desktop app and the terminal view are two front ends over one engine. Opening
-the app starts whatever holds sessions — the tmux server on Unix — before the
+The desktop app is the interface, and `ironsight` is the same engine reached from
+a shell. Opening the app starts whatever holds sessions — the tmux server on Unix — before the
 window is drawn, so the first thing you click does not wait for it, and it says
 plainly what is missing rather than failing quietly: `ironsight doctor` prints the
 same checks in a terminal.
 
 Neither front end is allowed to grow logic the other needs. `crates/core` holds
-everything that is not a way of looking at it, `crates/tui` is the terminal view,
+everything that is not a way of looking at it, `crates/tui` the commands,
 `crates/gui` the app; sending a message, answering a prompt or reopening a
 conversation is one implementation with two callers.
 

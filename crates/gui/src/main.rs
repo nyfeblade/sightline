@@ -822,13 +822,6 @@ fn stop(shared: State<Shared>, id: String) -> Result<(), String> {
         .unwrap_or_else(|| Err("no such session".into()))
 }
 
-/// Hand the whole thing over to the terminal view, for anyone who would rather
-/// drive it that way. The window stays where it is.
-#[tauri::command]
-fn open_tui() -> Result<String, String> {
-    control::open_terminal_with("ironsight")
-}
-
 #[derive(Serialize)]
 struct FileTextDto {
     path: String,
@@ -1270,7 +1263,6 @@ fn main() {
             remove_ended,
             restore_removed,
             removed_count,
-            open_tui,
             files,
             plan,
             agents,

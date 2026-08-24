@@ -9,7 +9,7 @@ Layer 6: the chief, the ceilings under it, invariants that can fire, and glue.
 
 ## What works
 
-The terminal view and the desktop app, over one engine, on Linux. Watching every
+The desktop app and the commands, over one engine, on Linux. Watching every
 session on the machine; the feed, reading view, files, git tree, plan,
 subagents, stats and errors; answering permission prompts from one place;
 sending, queueing, broadcasting, interrupting; typing straight into a session's
@@ -104,7 +104,7 @@ pseudo-terminals live, because tmux cannot hold a pipe.
 
 Proved end to end: started with a task, briefed from the project's constitution
 as its opening message, answered, spoken to again from a *different* process
-minutes later, both turns in one transcript, listed in the terminal view and
+minutes later, both turns in one transcript, listed by `ironsight` and
 talked to in the window — then stopped by name.
 
 ### What it cannot do, and why
@@ -125,8 +125,8 @@ were not asked. Without it a session getting nothing done looked like a session
 with bad luck.
 
 Interrupting is the other absence: there is no Escape to press and no interrupt
-in the input format, so the window and the terminal view both say so rather than
-sending a key nowhere.
+in the input format, so the window says so rather than sending a key
+nowhere.
 
 ## Aider, read rather than watched
 
@@ -267,9 +267,8 @@ top of the fleet — a chief, ceilings, what a project says done means, what mus
 never stop being true — arrived as a terminal command, in a program whose whole
 purpose is that you should not need one.
 
-`ctrl+w` turns the terminal view round; in the window the Work tab is the same
-thing. The session list stays either way, because what is running is still what
-you are directing. What changes is the question the rest of the screen answers:
+The Work tab in the window is the other face. The session list stays either
+way, because what is running is still what you are directing. What changes is the question the rest of the screen answers:
 
     THIS PROJECT   checks, whether they are approved, invariants, a constitution
                    — that is, whether anything here can tell a worker it is wrong

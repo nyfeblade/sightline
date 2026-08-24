@@ -64,7 +64,7 @@ everything else needs.
 - Lifecycle: start with options, name, close, and reopen a conversation that has
   stopped
 
-Two front ends sit on this — a terminal view and a desktop app — and neither
+Two callers sit on this — a desktop app and a set of commands — and neither
 holds logic the other lacks.
 
 ## Layer 1 — the compatibility contract

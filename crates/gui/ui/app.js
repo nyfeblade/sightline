@@ -2246,9 +2246,6 @@ async function drawMenu() {
     await invoke("rescan");
     say("rescanned");
   });
-  item("Terminal view", "drive all of this from a terminal", async () => {
-    say(`opened in ${await invoke("open_tui")}`);
-  });
   item("Keys", "what the keyboard does here", async () => {
     el("detail-title").textContent = "Keys";
     el("detail-body").textContent = [

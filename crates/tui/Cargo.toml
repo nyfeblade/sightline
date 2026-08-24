@@ -18,7 +18,6 @@ ironsight-core = { path = "../core" }
 anyhow.workspace = true
 chrono.workspace = true
 crossterm.workspace = true
-ratatui.workspace = true
 serde_json.workspace = true
 
 [target.'cfg(unix)'.dependencies]

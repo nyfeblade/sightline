@@ -28,7 +28,7 @@ Four library choices in the roadmap are not taken. Each is a deliberate
 decision rather than an oversight.
 
 No tokio. The roadmap names `tokio::sync::broadcast`. Core is synchronous and
-embeddable: the terminal view and the desktop app each construct `App` and
+embeddable: the commands and the desktop app each construct `App` and
 drive it from their own loop. An async runtime inside core would make both front
 ends async to reach it, and the workload does not justify it — a handful of
 local subscribers, not a network service. `std::sync::mpsc::SyncSender` with
