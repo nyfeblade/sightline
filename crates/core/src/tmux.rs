@@ -163,13 +163,26 @@ fn way_back_is_free() -> bool {
     let Some(table) = tmux(&["list-keys", "-T", "root"]) else {
         return false;
     };
-    // `list-keys -T root F12` prints nothing even when F12 is bound, so the
-    // table is read whole and the line looked for here.
-    let key = way_back();
-    !table.lines().any(|l| {
+    free_in(&table, &way_back())
+}
+
+/// Whether the key can be taken, from the table as tmux prints it.
+///
+/// Free means unbound — or bound to Ironsight's own action, which is not
+/// somebody else's binding at all. tmux key tables belong to the whole server
+/// and outlive any one client, so a run that was killed rather than closed
+/// leaves the key bound behind it. Reading that as "taken" is how the next run
+/// decided it had not got the key, and told everybody to use `Ctrl+b d` while
+/// F12 sat there working.
+fn free_in(table: &str, key: &str) -> bool {
+    let bound = table.lines().find(|l| {
         let mut words = l.split_whitespace();
-        words.any(|w| w == "root") && words.next() == Some(key.as_str())
-    })
+        words.any(|w| w == "root") && words.next() == Some(key)
+    });
+    match bound {
+        None => true,
+        Some(line) => line.contains("client_last_session"),
+    }
 }
 
 /// Take the key for as long as Ironsight is running.
@@ -196,6 +209,31 @@ pub fn drop_way_back(held: bool) {
     }
 }
 
+/// What the way back actually is right now, for saying so to a person.
+///
+/// Three different answers, and only one of them is the one Ironsight prints
+/// everywhere else, so it is worth being able to ask.
+pub fn way_back_state() -> String {
+    if !available() {
+        return "no tmux here, so there is no key to take".into();
+    }
+    let key = way_back();
+    let Some(table) = tmux(&["list-keys", "-T", "root"]) else {
+        return format!("could not ask tmux whether {key} is free");
+    };
+    let ours = holds_way_back();
+    if ours {
+        format!("{key} — bound, and it is Ironsight's")
+    } else if free_in(&table, &key) {
+        format!("{key} — free, and taken when Ironsight starts")
+    } else {
+        format!(
+            "{key} is bound by something else, so Ironsight leaves it alone and \
+             the way back is tmux's own detach. Name another with IRONSIGHT_WAY_BACK"
+        )
+    }
+}
+
 /// Whether Ironsight currently holds it, for anything that wants to say so.
 pub fn holds_way_back() -> bool {
     tmux(&["list-keys", "-T", "root"])
@@ -211,11 +249,17 @@ pub fn holds_way_back() -> bool {
         .unwrap_or(false)
 }
 
-/// What to tell someone about getting back, which depends on whether Ironsight was
-/// able to give them one key for it.
+/// What to tell someone about getting back.
+///
+/// Both ways, when there are two. The single key is the nicer one and it is
+/// what Ironsight offers — but a desktop, a terminal emulator or a keyboard that
+/// does not send the function key at all will swallow it before tmux ever sees
+/// it, and then the status line is promising something that does nothing and
+/// the person is stuck in a session with no way out that they know of. tmux's
+/// own detach always works, so it is always named.
 fn hint(taken: bool, tmux_way: &str) -> String {
     if taken {
-        format!(" {} → back to Ironsight ", way_back())
+        format!(" {} → back to Ironsight · or {tmux_way} ", way_back())
     } else {
         format!(" {tmux_way} → back to Ironsight ")
     }
@@ -667,6 +711,71 @@ pub fn outlives_ironsight() -> bool {
 
 pub fn where_name() -> &'static str {
     WHERE
+}
+
+#[cfg(test)]
+mod way_back_tests {
+    use super::free_in;
+
+    // Lines as `tmux list-keys -T root` actually prints them.
+    const OURS: &str = "bind-key  -T root F12    if-shell -F \"#{client_last_session}\" \"switch-client -l\" detach-client";
+    const SOMEBODY_ELSES: &str = "bind-key  -T root F12    display-message \"my own thing\"";
+    const UNRELATED: &str = "bind-key  -T root MouseDown1Pane    select-pane -t =";
+
+    #[test]
+    fn the_way_out_always_names_a_way_that_cannot_be_swallowed() {
+        // A function key can be taken by a desktop, a terminal or a keyboard
+        // before tmux sees it. When that happens the status line was promising
+        // a key that does nothing, and the only way out was one the person had
+        // to already know tmux to know.
+        let with_key = super::hint(true, "ctrl+b d");
+        assert!(with_key.contains("F12"), "the nice one is offered");
+        assert!(
+            with_key.contains("ctrl+b d"),
+            "and the one that always works is named beside it: {with_key}"
+        );
+        let without = super::hint(false, "ctrl+b d");
+        assert!(without.contains("ctrl+b d"));
+    }
+
+    #[test]
+    fn an_unbound_key_is_free() {
+        assert!(free_in(UNRELATED, "F12"));
+        assert!(free_in("", "F12"));
+    }
+
+    #[test]
+    fn a_binding_left_behind_by_ironsight_is_ironsights_to_take_back() {
+        // The bug this is here for. tmux key tables belong to the server and
+        // outlive any one client, so a run that was killed rather than closed
+        // leaves the key bound. Reading that as somebody else's meant the next
+        // run believed it had not got the key and told everyone to use
+        // `Ctrl+b d`, while F12 sat there working.
+        let table = format!("{UNRELATED}\n{OURS}\n");
+        assert!(
+            free_in(&table, "F12"),
+            "our own leftover binding is not somebody else's claim"
+        );
+    }
+
+    #[test]
+    fn a_key_somebody_else_bound_stays_theirs() {
+        // The other half, and the one that must not regress: a key you have
+        // already bound is yours, and Ironsight tells you the tmux way instead
+        // of stealing it.
+        let table = format!("{UNRELATED}\n{SOMEBODY_ELSES}\n");
+        assert!(!free_in(&table, "F12"));
+    }
+
+    #[test]
+    fn another_keys_binding_is_not_this_keys_binding() {
+        let table = "bind-key  -T root F9    display-message \"whatever\"\n";
+        assert!(
+            free_in(table, "F12"),
+            "F9 being taken says nothing about F12"
+        );
+        assert!(!free_in(table, "F9"));
+    }
 }
 
 #[cfg(test)]

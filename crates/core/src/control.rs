@@ -138,6 +138,33 @@ pub fn inside_tmux() -> bool {
     on_backend!(inside_tmux())
 }
 
+/// The key Ironsight uses for the way back, whatever it has been named.
+pub fn way_back_key() -> String {
+    #[cfg(windows)]
+    {
+        "F12".to_string()
+    }
+    #[cfg(not(windows))]
+    {
+        crate::tmux::way_back()
+    }
+}
+
+/// What the way back out of a full-screen session actually is right now.
+pub fn way_back_state() -> String {
+    #[cfg(windows)]
+    {
+        "F12 — Ironsight draws the session itself here, so the key is its own".to_string()
+    }
+    #[cfg(not(windows))]
+    {
+        match backend() {
+            Backend::Tmux => crate::tmux::way_back_state(),
+            _ => "F12 — Ironsight draws the session itself here, so the key is its own".to_string(),
+        }
+    }
+}
+
 pub fn hold_way_back() -> bool {
     on_backend!(hold_way_back())
 }

@@ -35,6 +35,8 @@ usage: Ironsight [options]
                                and invariants, then has it write the adapters in a
                                worktree of its own. --install just teaches it
        ironsight owned              list the sessions Ironsight is holding itself
+       ironsight key                read one keypress and say what arrived, for
+                               working out why the way back does nothing
        ironsight hidden [--ended] [--clear]
                                rows taken off the session list; --ended takes
                                every finished one off, --clear puts them all back
@@ -545,6 +547,11 @@ fn main() -> Result<()> {
                 println!("     {:<14} {fix}", "");
             }
         }
+        // Not a check — nothing is missing either way — but it is the question
+        // people actually ask, and the answer has been guessable rather than
+        // askable. `F12 → back to Ironsight` is printed on a session's status
+        // line; whether it is true depends on tmux, and tmux is where to look.
+        println!("ok   {:<14} {}", "way back", control::way_back_state());
         if bootstrap::ready(&checks) {
             println!("\nready");
             return Ok(());
@@ -1012,6 +1019,77 @@ fn main() -> Result<()> {
             it.name
         );
         println!("it works only in that worktree and will not merge — that is yours to do.");
+        return Ok(());
+    }
+
+    // Does the key even arrive.
+    //
+    // The way back out of a full-screen session is a single key, and when it
+    // does not work there are three different places it can be going wrong: the
+    // desktop can take it, the terminal can take it, or tmux can be holding a
+    // binding for something else. Nothing about the first two is visible from
+    // inside Ironsight — so rather than guess, read one keypress and say what
+    // actually arrived.
+    if args.first().map(String::as_str) == Some("key") {
+        use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+        // A keypress needs somewhere for one to come from. Piped or redirected,
+        // raw mode fails with an OS error that says nothing useful.
+        if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+            anyhow::bail!(
+                "there is no terminal on stdin, so there is no key to read — \
+                 run `ironsight key` directly in a terminal"
+            );
+        }
+        let want = control::way_back_key();
+        println!("press {want} — or any key to see what it is. esc gives up.");
+        println!("(if nothing happens at all, something above Ironsight is taking it)");
+        crossterm::terminal::enable_raw_mode()?;
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let mut saw: Option<String> = None;
+        while Instant::now() < deadline {
+            if !event::poll(Duration::from_millis(200))? {
+                continue;
+            }
+            if let Event::Key(k) = event::read()? {
+                // Terminals that speak the kitty protocol report a release as
+                // well, and reporting both would read as two presses.
+                if k.kind != KeyEventKind::Press {
+                    continue;
+                }
+                if k.code == KeyCode::Esc {
+                    break;
+                }
+                saw = Some(match k.code {
+                    KeyCode::F(n) => format!("F{n}"),
+                    KeyCode::Char(c) if k.modifiers.contains(event::KeyModifiers::CONTROL) => {
+                        format!("ctrl+{c}")
+                    }
+                    KeyCode::Char(c) => format!("{c}"),
+                    other => format!("{other:?}"),
+                });
+                break;
+            }
+        }
+        crossterm::terminal::disable_raw_mode()?;
+        println!();
+        match saw {
+            Some(key) if key == want => {
+                println!("{key} arrives here, so your terminal is not taking it.");
+                println!("If it does nothing inside a session, the binding is the problem:");
+                println!("  ironsight doctor        says whether tmux is holding it");
+            }
+            Some(key) => {
+                println!("that arrived as {key}, not {want}.");
+                println!("Use it instead:  IRONSIGHT_WAY_BACK={key} ironsight");
+                println!("Put that in your shell profile to keep it.");
+            }
+            None => {
+                println!("nothing arrived in twenty seconds.");
+                println!("Whatever you pressed is being taken above Ironsight — by the");
+                println!("desktop, or by the terminal itself. Pick a key that gets");
+                println!("through and name it:  IRONSIGHT_WAY_BACK=F9 ironsight");
+            }
+        }
         return Ok(());
     }
 

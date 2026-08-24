@@ -196,6 +196,31 @@ beside the code rather than in a central store — and Ironsight reads it, so an
 Aider session shows what was asked, what came back, its model and what it cost,
 the same as any other.
 
+### Reconciling a fork
+
+If you have forked this and customised it, `ironsight glue <version>` brings your
+fork onto a newer release without you doing the merge. It ships an ability —
+upstream's own account of the layers, the seams a customisation is meant to live
+in, and the invariants that must survive — installs it into your fork, and
+briefs your own agent, which already knows your fork, to write the adapters in a
+worktree of its own.
+
+```sh
+ironsight glue --install     # teach your agent, and stop there
+ironsight glue v0.5.0        # reconcile onto that release
+```
+
+It does not decide the merge worked. The bar is the same as everywhere else
+here: your project's checks pass and its invariants do not fire. Nothing is
+merged — the result sits on its own branch for you to take.
+
+There is a demo you can watch, on a fork built to diverge in a way a plain merge
+handles badly:
+
+```sh
+docs/demo/glue/run.sh
+```
+
 ### Sessions Ironsight holds itself
 
 Everything above watches a session running in a terminal. Ironsight can also
