@@ -74,7 +74,7 @@ impl Limits {
         }
         let mut parts = Vec::new();
         if let Some(n) = self.sessions {
-            parts.push(format!("at most {n} sessions running"));
+            parts.push(format!("at most {n} sessions of its own running"));
         }
         if let Some(d) = self.spend {
             parts.push(format!(
@@ -171,7 +171,7 @@ pub fn refuse(limits: &Limits, running: usize, spent: f64) -> Option<String> {
         // one more. A ceiling of three means three, not four.
         if running + 1 > most {
             return Some(format!(
-                "that would be {} sessions running and the ceiling is {most} \
+                "that would be {} sessions of Ironsight's running and the ceiling is {most} \
                  — raise it in {}",
                 running + 1,
                 machine_path().display()

@@ -1211,16 +1211,38 @@ impl App {
         }
     }
 
-    /// How many sessions are running right now, whoever started them.
+    /// How many sessions Ironsight started are running right now.
     ///
-    /// Whoever started them on purpose: a ceiling on how many agents may be
-    /// working on this machine is not a ceiling if six of them were opened by
-    /// hand and do not count.
+    /// Deliberately not every session on the machine. The ceiling exists to
+    /// bound *autonomy* — what a supervisor can cause — and the sessions you
+    /// opened yourself in your own terminal are not that. Counting them meant
+    /// your own work ate the fleet's allowance: someone with a dozen of their
+    /// own sessions open could not start a single worker, and since a chief
+    /// refuses to run without a ceiling, that made the chief unusable on
+    /// exactly the machines busy enough to want one.
+    ///
+    /// A supervisor cannot start a session by any route other than Ironsight,
+    /// so this still bounds everything it is able to do.
     pub fn running_sessions(&self) -> usize {
         self.sessions
             .iter()
             .filter(|s| !matches!(s.status(), Status::Ended))
+            .filter(|s| self.started_by_ironsight(&s.id))
             .count()
+    }
+
+    /// Whether Ironsight started this one, as opposed to merely watching it.
+    ///
+    /// Two ways it can be: held by pipe in the owned fleet, or running in a
+    /// terminal Ironsight opened, which is what that terminal's name says.
+    fn started_by_ironsight(&self, id: &str) -> bool {
+        if self.owned.contains_key(id) {
+            return true;
+        }
+        self.steer
+            .get(id)
+            .map(|p| control::is_ours(&p.session))
+            .unwrap_or(false)
     }
 
     /// What a ceiling would refuse about starting one more session here.
@@ -1233,7 +1255,12 @@ impl App {
     }
 
     /// The same, against the ceilings actually in force for a folder.
-    fn ceiling_refusal(&self, cwd: &std::path::Path) -> Option<String> {
+    ///
+    /// Public because the answer is wanted *before* anything is built for a
+    /// session that may not be allowed to start. Creating a worktree and then
+    /// discovering there is no room for the session leaves a branch and a
+    /// checkout behind for something that never existed.
+    pub fn ceiling_refusal(&self, cwd: &std::path::Path) -> Option<String> {
         let limits = match limits::in_force(cwd) {
             Ok(limits) => limits,
             // A ceilings file that will not parse is not permission to ignore
@@ -2700,6 +2727,12 @@ impl App {
             self.say("not inside a git repository");
             return;
         };
+        // Before the checkout exists, not after: a refusal here must not leave a
+        // branch and a worktree behind for a session that never started.
+        if let Some(refused) = self.ceiling_refusal(PathBuf::from(&cwd).as_path()) {
+            self.say(refused);
+            return;
+        }
         match git::create_worktree(&repo, branch) {
             Ok(dir) => {
                 let spec = NewSpec {
@@ -3336,10 +3369,11 @@ mod tests {
     }
 
     #[test]
-    fn a_ceiling_counts_every_session_that_is_running() {
-        // The mistake that would hollow this out: counting only the sessions
-        // Ironsight started. Six agents opened by hand and a ceiling of eight
-        // means two more, not eight more.
+    fn a_ceiling_counts_what_ironsight_started_and_not_your_own_work() {
+        // It counted every session on the machine, which meant a dozen of your
+        // own open sessions ate the whole allowance and no worker could start.
+        // A chief refuses to run without a ceiling, so that made the chief
+        // unusable on exactly the machines busy enough to want one.
         let mut app = bare_app();
         app.fold_owned(vec![
             an_owned("owned-1", "a", true),
@@ -3367,6 +3401,30 @@ mod tests {
             app.ceiling_refusal_given(&three, 0.0),
             None,
             "and room for one more is room for one more"
+        );
+
+        // A session Ironsight only watches — someone's own, in their own
+        // terminal — does not count against what a supervisor may start.
+        app.sessions.push(Session::pending(
+            "not-ours".into(),
+            registry::Live {
+                pid: 1,
+                cwd: "/w".into(),
+                name: String::new(),
+                status: "busy".into(),
+                kind: "claude".into(),
+                version: String::new(),
+            },
+        ));
+        assert_eq!(
+            app.running_sessions(),
+            2,
+            "it is running, and it is not Ironsight's to count"
+        );
+        assert_eq!(
+            app.ceiling_refusal_given(&three, 0.0),
+            None,
+            "so it does not eat the allowance"
         );
     }
 

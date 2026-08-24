@@ -314,7 +314,7 @@ mod tests {
             &limits,
             &work::Store::default(),
         );
-        assert!(out.contains("at most 3 sessions running"));
+        assert!(out.contains("at most 3 sessions of its own running"));
         assert!(out.contains("at most $10.00"));
         assert!(
             out.contains("Ironsight enforces these"),

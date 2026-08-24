@@ -1146,7 +1146,20 @@ fn main() -> Result<()> {
             return Ok(());
         }
         // What the ceilings are actually being measured against, because a
-        // ceiling you cannot see the other side of is not much use.
+        // ceiling you cannot see the other side of is not much use — and
+        // picking a number without knowing the current one is guessing.
+        let mut app = App::new(
+            app::default_root(),
+            app::default_sessions_dir(),
+            Duration::from_secs(7 * 86_400),
+            true,
+        );
+        app.discover();
+        app.refresh();
+        let running = app.running_sessions();
+        println!(
+            "running  {running} session(s) of Ironsight's own — your own sessions do not count"
+        );
         let journal = app::data_dir().join("events.jsonl");
         let hours = in_force.window_hours();
         let spent = ironsight_core::limits::spent_since(&journal, hours);
@@ -1783,6 +1796,24 @@ fn main() -> Result<()> {
                 .and_then(|i| args.get(i + 1))
                 .cloned()
         };
+        // Whether there is room for another session at all, asked before a
+        // worktree is cut for it. A ceiling that refuses after the checkout
+        // exists leaves a branch and a directory behind for a session that
+        // never started — which is exactly what a supervisor then finds and has
+        // to work out.
+        {
+            let where_ = std::path::PathBuf::from(app::expand(&path));
+            let probe = App::new(
+                app::default_root(),
+                app::default_sessions_dir(),
+                Duration::from_secs(3600),
+                true,
+            );
+            if let Some(refused) = probe.ceiling_refusal(&where_) {
+                anyhow::bail!(refused);
+            }
+        }
+
         // --worktree runs the session in its own branch and checkout.
         let path = match opt("--worktree") {
             Some(branch) => {

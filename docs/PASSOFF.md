@@ -1,17 +1,16 @@
 # Passoff — resume the Ironsight build
 
-Written 2026-08-23. Read this, then `docs/STATE.md` (what is true now),
+Written 2026-08-24. Read this, then `docs/STATE.md` (what is true now),
 `docs/PLATFORM.md` (the layers and why), and `docs/BUILD.md` (how each layer is
 built and proved). This file is the shorter, more perishable "where the work is
 and what to do next".
 
 ## One line
 
-Layers 0–6 are built as far as code can build them, plus the two things that
-were off the roadmap (a self-contained daemon, and sessions Ironsight drives
-over stream-json) — and those sessions are now a first-class kind rather than a
-one-shot command. Everything is green. What is left is not another layer; it is
-the experiment.
+Layers 0–6 are built, both halves of 6 included, plus the daemon, owned sessions
+as a first-class kind, ceilings a supervisor cannot raise, invariants that can
+fire, and glue. Everything is green. What is left is not another layer; it is
+the experiment, and living with what exists.
 
 ## Where the code is
 
@@ -41,9 +40,9 @@ the largest untested-by-adversary surface. Worth opening PR #4
 (`layer-5-intent → review/3-stream-json`) and PR #5 (`solidify → layer-5-intent`)
 before anything else.
 
-**The work below is committed on `solidify`?** Check `git log --oneline -3` and
-`git status`. If it is still uncommitted, that is deliberate — the standing rule
-here is to commit only when asked — and it is the first thing to ask about.
+Everything described here is committed and pushed on `solidify`. The standing
+rule is to commit only when asked, so if you find uncommitted work, ask about it
+before building on top of it.
 
 ## What is built (layers)
 
@@ -57,11 +56,22 @@ here is to commit only when asked — and it is the first thing to ask about.
   `ironsight brief <who>` renders a task-focused packet. `--task` briefs a
   session as its opening message. Both halves are now in the window: a session's
   brief, and the constitution read and edited in place.
-- **6 supervision** — foreman built; **chief not built** (it is a methodology —
-  "a session with ironsight on its path and a brief" — not new runtime).
+- **6 supervision** — both halves. The foreman refuses claimed work that does not
+  pass. `ironsight chief` starts a supervisor: Ironsight on its path, a brief,
+  and a ceiling it cannot raise. It will not start without ceilings in force,
+  because granting something else the power to start sessions is exactly the
+  case they exist for.
+- **Ceilings** — `limits.rs`. A count of Ironsight's own running sessions and an
+  amount of spend, checked at both doors, in a file outside every worktree. A
+  project may lower them and never raise them.
+- **Invariants** — `[[invariant]]` in `.ironsight/checks.toml`, commands that
+  must *fail*. `ironsight invariants` runs them; a broken one refuses work.
+- **Glue** — an ability shipped in the binary that teaches a fork's own agent
+  upstream's architecture, seams and invariants, plus `ironsight glue` to drive
+  the reconciliation in a worktree.
 - **Off-roadmap:** the daemon (`ironsight serve`), and owned sessions.
 
-## Owned sessions, which is what changed most recently
+## Owned sessions, which everything above is built on
 
 `ironsight new <path> --owned` starts a session Ironsight holds itself, spoken to
 over Claude Code's stream-json with no terminal. It takes the same folder, model,
@@ -89,17 +99,20 @@ Claude Code adds a permission seam, `owned::Parser` is where it lands.
 There is no obvious next layer, which is itself the finding. In rough order of
 what would actually be worth the effort:
 
-1. **Get Layer 5 and this work adversarially reviewed** (PR #4 and #5 above).
-   Everything below the line has had a cloud ultrareview; this has had tests and
-   one pair of eyes.
+1. **Get everything above `review/3-stream-json` adversarially reviewed** — PRs
+   #4 and #5. Everything below that line had a cloud ultrareview; four layers
+   have since landed on tests and one pair of eyes. This is the largest
+   unreviewed surface in the repository, and it includes the code that decides
+   what an agent is allowed to do.
 2. **Run the experiment.** Does supervised orchestration beat one person driving
-   the same agents by hand (Layer 7/8 of `PLATFORM.md`)? Owned sessions exist
-   now, so a chief has something to drive and the comparison is finally
-   possible. This is a bet to run, not code to write.
-3. **Live with the daemon.** It survived crashes and 400 concurrent requests and
-   now holds owned sessions too, but not a week of real use. Sustained daily use
-   on `IRONSIGHT_BACKEND=daemon` is the only thing that will find what is left.
-4. **The chief**, once 2 has said whether it is worth having.
+   the same agents by hand (Layer 7/8 of `PLATFORM.md`)? Everything it needs
+   exists now. `BUILD.md` has the protocol; it is a bet to run, not code.
+3. **Live with the daemon**, and with a chief. Both work; neither has been used
+   for a week. Sustained daily use on `IRONSIGHT_BACKEND=daemon` is the only
+   thing that will find what is left.
+4. **Glue against a real fork.** It is proved end to end against a fixture with
+   a genuine two-sided divergence, and never against a fork someone actually
+   cares about. The first real one will find something.
 
 ## The honest gaps (cannot be closed from this Linux box)
 
@@ -112,6 +125,11 @@ what would actually be worth the effort:
 - Aider is wired but was proved with a stand-in binary and a real recorded
   history, not by driving actual Aider against a model. The reading is tested
   against a real run's output; the *pane discovery* was tested with a shim.
+- A chief has run once, well, until a session rate limit stopped it. That is
+  evidence it starts and orients, and no evidence about a long run.
+- The spend ceiling is measured from the event journal, which is only written
+  while an Ironsight window or terminal view is running. On a machine that only
+  ever runs the commands it measures nothing, and `ironsight limits` says so.
 
 ## Gotchas that will cost you time
 
@@ -151,7 +169,22 @@ what would actually be worth the effort:
   Every fix here got a test that would have failed before it.
 - **Check the tool before designing around it.** Two of the assumptions in the
   previous passoff were wrong in ways ten minutes with `claude --help` and a
-  Python driver would have caught. Drive the real thing and read what comes out.
+  Python driver would have caught. `--allowedTools` grants and does not restrict,
+  which is the opposite of what the name suggests and was only found by watching
+  a session run `ls /tmp` while allowed nothing but `Bash(echo *)`.
+- **A running daemon holds the old code.** It is started once and outlives every
+  rebuild, so a change to anything it does — especially `owned::Spec`, which
+  decides what an agent may do — does not reach it until it is restarted. An
+  afternoon went into a chief that could not run a command because of this.
+  `Spec` is `deny_unknown_fields` now and the wire version bumps for it, so the
+  next one fails loudly; the habit to keep is to kill the daemon by its recorded
+  pid after changing core.
+- **An invariant that fires against an intact repository is worse than none.**
+  Three of the first nine did, all from sloppy shell: a `grep -A2` window that
+  always contains a line without the term, a guard matched on the wrong line, a
+  file that was not where the thing being checked actually lives. Break each
+  guarantee on purpose in a scratch tree and watch the command catch it before
+  believing any of them.
 
 ## Working style the user asked for
 

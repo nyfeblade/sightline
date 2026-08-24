@@ -4,8 +4,8 @@
 more perishable document: what is true right now, what is half-done, and what
 would trip someone up if nobody said so.
 
-Last updated 23 August 2026, at v0.4.1, after Phase 2 and the two layers above
-it: sessions Ironsight holds itself, and intent in the window.
+Last updated 24 August 2026, at v0.4.1. Phase 2 is built, and so is the rest of
+Layer 6: the chief, the ceilings under it, invariants that can fire, and glue.
 
 ## What works
 
@@ -205,6 +205,136 @@ what someone writes reaches a brief instead of sitting in a file nothing reads.
 It is the only thing in the window that writes into your repository, and it
 writes exactly the path it showed you.
 
+## Supervision, and the ceilings under it
+
+A chief is a session with Ironsight on its path, a brief, and a ceiling it cannot
+raise. `ironsight chief <path> <what you want done>` starts one. It is not a new
+runtime — that is the point, and the recursion falls out: a chief is a session
+Ironsight manages, managing sessions Ironsight manages.
+
+Its brief carries the intent unparaphrased, the project's constitution, the fleet
+as it stands, and three prohibitions. It does not answer permission prompts,
+because the moment a supervisor answers them its blast radius is everything a
+permission protects. It does not restart a stalled session, because from outside
+thinking and wedged are identical and a restart throws away work and pays for it
+twice. And it does not write code — that one is enforced rather than asked for,
+since an owned chief starts with the editing tools denied.
+
+`limits.rs` is the part that does not depend on the chief reading carefully. A
+count of sessions and an amount of spend, checked at both doors a session can
+come through, refusing with the reason. The real file lives in Ironsight's data
+directory, outside every worktree, because a ceiling a supervised agent can edit
+is a suggestion in a file it has write access to; a project's
+`.ironsight/limits.toml` may lower it and never raise it, and `effective` is a
+pure function with a test that a greedy repository gets what the machine allows.
+
+The count is of sessions *Ironsight started*, not of every session on the
+machine. It counted everything at first, which meant a dozen of your own open
+sessions ate the whole allowance and no worker could start — and since a chief
+refuses to run without a ceiling, that made the chief unusable on exactly the
+machines busy enough to want one. A supervisor cannot start a session by any
+route other than Ironsight, so this still bounds everything it can do.
+`ironsight limits` shows where you stand, because picking a number without
+knowing the current one is guessing.
+
+Spend is counted from the event journal rather than from the sessions currently
+open, since spend you can reset by closing a window is not a ceiling. That has a
+real limit and the command says so: the journal is written while an Ironsight is
+running, so a spend ceiling on a machine that only ever runs the commands is
+measuring nothing yet.
+
+Nothing is on by default. A ceiling nobody asked for that refuses a ninth session
+is a surprise, and surprises are how a tool gets turned off. What is not optional
+is supervision.
+
+A live chief was run against a real project with a real failing check. It read
+the fleet, the constitution and the checks, diagnosed the bug, wrote an
+assignment more precise than the one it was given — including an edge case the
+tests did not cover — started a worker on a worktree, polled its state, and ran
+`ironsight check` and `ironsight trust` against it. A session rate limit stopped
+it, not a design fault. Two things were learned only by running it: a headless
+supervisor needs an explicit grant for the commands its job is made of, because
+`--allowedTools` grants rather than restricts and nothing can be asked mid-run;
+and a daemon built before `owned::Spec` had an `allow` field silently dropped it,
+which is why `Spec` is now `deny_unknown_fields` and any change to it bumps the
+wire version.
+
+## Invariants: guarantees that can fire
+
+`.ironsight/checks.toml` takes `[[invariant]]` beside `[[check]]`, and they point
+in opposite directions. A check must pass, and a passing check says only that the
+failures it can express did not happen. An invariant is stated as the thing that
+must not be found, so its command must *fail* — one that succeeds has
+demonstrated the very defect it was written to look for.
+
+That direction is what makes them survive a merge. "The tests pass" survives an
+adapter that quietly broke something load-bearing; a command looking for the
+breakage does not. `ironsight invariants` runs them and a quiet run is the good
+one. A broken invariant refuses work: `ironsight check` runs them before the
+suite and sends the task back to Working, because they answer a different
+question — not "is this finished" but "did it break something that was never its
+business".
+
+Nine are written for this repository. Each was proved the way the fire-once rule
+demands, by breaking the thing on purpose in a scratch tree and watching the
+command catch it — which mattered, because three of them fired against an intact
+repository on the first draft. All three were bad shell rather than broken
+guarantees, and they were only found by running them.
+
+`Unrunnable` is neither held nor broken. An invariant nobody can test vouches for
+nothing, which is the same mistake the fire-once rule exists to prevent one level
+down. The trust gate counts them: they are shell from the same file arriving with
+the same someone else's code, and approving nine commands without naming them
+would be the gate failing at its only job.
+
+## Glue: reconciling a fork by teaching its agent
+
+People fork this, customise it, and every release pulls them further out of step.
+`git merge` matches line numbers, knows nothing about what a module is for, and
+hands back conflict markers — so nobody reconciles and the fork stops updating.
+
+The observation glue is built on is that whoever forked it already has an agent,
+and that agent already knows their fork. What it does not know is upstream: the
+layers, the seams a customisation is meant to live in, the invariants that must
+survive, and how upstream tests. That is the same for every fork, so it is
+written once and shipped in the binary as an ability.
+
+    ironsight glue --install     teach this fork's agent, and stop there
+    ironsight glue <version>     compute the divergence, cut a worktree, and
+                                 brief an owned session to do the work
+
+`--install` matters on its own: after it, the fork's own agent can be asked to
+reconcile without going through Ironsight at all, which is the point of shipping
+an ability rather than a tool. Maintenance then scales with forks rather than
+with the author's time.
+
+It does not get to decide the merge worked. The bar is the same as everywhere
+else here — the checks pass and the refutations do not fire — and a fork with no
+checks file is told plainly that its result can only ever be unverified. It runs
+inside somebody else's repository, so every step that can fail says what it
+wanted: not a repo, no remotes, an unknown version, upstream unchanged, the fork
+unchanged, uncommitted work in the tree.
+
+## Taking rows off the list
+
+A machine that has run agents for a week has a list mostly made of sessions that
+ended days ago. `x` ends a process; `-` ends a row. `=` takes every finished row
+off, `+` puts everything back, and `ironsight hidden --ended` does it from a
+shell. Both front ends have it.
+
+Hidden, never deleted: the transcript stays where Claude Code wrote it, `R` still
+finds the conversation and `A` still reopens it.
+
+Any row comes off, running or not, whoever started it. The first version refused
+a running one and said to close it first with `x` — but `x` needs a session
+Ironsight can steer, so for anything it merely watches that was a dead end with
+no way out. A live one says so as it goes.
+
+The filter runs on both the fast tick and the slow one. It ran only in `discover`
+at first, four times a second slower than the pass in `refresh` that re-adds
+owned sessions, so a removed row came back within 250ms and looked exactly like a
+key that did nothing.
+
 ## Hardening, and what each fix actually guarantees
 
 A pass over the ways the system could lose or leak data, each with a test that
@@ -364,12 +494,28 @@ The vocabulary is already reserved — `ChecksPassed` and `ChecksFailed` are in
 the stream's version 1 and nothing emits them yet — so a consumer written today
 does not change when they start arriving.
 
-Phase 2 is built: checks, fire-once refutations, the foreman, and the intent
-layer above them. Owned sessions are the substrate for what comes next, and the
-Aider adapter is wired, so neither is outstanding any more.
+Layer 6 is built, both halves. The foreman refuses claimed work that does not
+pass; the chief turns a paragraph of intent into assignments and cannot exceed
+what it was given. Owned sessions are the substrate underneath both, and glue is
+what the whole apparatus turns out to be good for once it exists.
 
-What is left is not more of the same shape. The honest next questions are the
-ones no more code answers by itself: whether supervised orchestration actually
-beats one person driving the same agents by hand, and what a chief — a session
-with Ironsight on its path and a brief — does with a fleet of owned sessions now
-that there is one to drive.
+What is left is not more of the same shape.
+
+The experiment is the honest next thing, and it is a bet rather than code: does
+supervised orchestration beat one person driving the same agents by hand? Owned
+sessions and a chief exist now, so the comparison is finally possible.
+`BUILD.md` has the protocol.
+
+Two things want living with rather than building. The daemon has held sessions
+through crashes and 400 concurrent requests, but not a week of real use. And a
+chief has run once, well, until a rate limit stopped it — once is not evidence
+about anything except that it starts.
+
+The glue idea has one weak seam left, and it is worth naming: "auto-merge if
+confident" is not this codebase's bar and never will be. It is auto-merge if
+*verified*. Where a fork has no refutations, the strongest thing that can be said
+is checked, and glue should keep saying so rather than growing a confidence
+threshold. The Phase 2 sketch — agents that find and fix bugs in the background
+and merge them without telling anyone — has the same problem in a worse place:
+undisclosed local fixes generate exactly the divergence glue exists to remove.
+The valuable version proposes and never merges.

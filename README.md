@@ -97,6 +97,9 @@ ironsight approve api-7c       # answer it (option 1 by default)
 ironsight adopt nyfe-32        # (re)open a conversation in tmux so it can be steered
 ironsight prune                # close Ironsight sessions whose process has exited
 ironsight owned                # the sessions Ironsight is holding itself
+ironsight hidden --ended       # take every finished session off the list
+ironsight invariants           # try to break what must never stop being true
+ironsight limits               # what a fleet here may do, and where you stand
 ```
 
 ## Managing sessions
