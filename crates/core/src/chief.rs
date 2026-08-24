@@ -45,13 +45,17 @@ pub const DENIED: &[&str] = &["Write", "Edit", "NotebookEdit"];
 /// live chief could not run a single `ironsight` command for exactly this
 /// reason, and correctly reported itself blocked rather than working around it.
 /// These are the commands the job is made of.
-pub const GRANTED: &[&str] = &[
-    "Bash(ironsight:*)",
-    "Bash(ironsight *)",
-    "Read",
-    "Grep",
-    "Glob",
-];
+pub const GRANTED: &[&str] = &["Read", "Grep", "Glob"];
+
+/// What a chief is *not* granted, and why the list above is now short.
+///
+/// A chief used to be given `Bash(ironsight:*)`, because the way it started a
+/// worker was to run a command. That is no longer how it works — it asks the
+/// kernel — and the grants had to go with it for a reason worth stating: a
+/// granted tool does not prompt, and a call that does not prompt never reaches
+/// the permission boundary. Every entry here was a hole in the thing the chief
+/// is supervised by. See `owned::argv`.
+const _: () = ();
 
 /// What the chief is told when it starts.
 ///
@@ -134,27 +138,25 @@ pub fn brief(
 
     out.push_str(
         "HOW TO WORK\n\
-         \x20 Everything is done through the `ironsight` command. The useful ones:\n\
+         \x20 You do not start processes. Ironsight does, when you ask it to, and it\n\
+         \x20 gives you three tools for the purpose:\n\
          \n\
-         \x20   ironsight tasks --json          what every session was asked and where it got to\n\
-         \x20   ironsight new <path> --owned --task \"...\" [--worktree BRANCH]\n\
-         \x20                                   start a worker on an assignment\n\
-         \x20   ironsight owned                 the workers you are holding, and what each is doing\n\
-         \x20   ironsight send <who> <text>     say something to one\n\
-         \x20   ironsight events --since N      what has happened across the fleet\n\
-         \x20   ironsight check <who>           run the project's checks against a session's work\n\
-         \x20   ironsight note <task> <text>    write down something learned, so it outlives the session\n\
-         \x20   ironsight stop <who>            end a worker\n\
+         \x20   assign(path, task)   start a worker on one assignment\n\
+         \x20   fleet()              every worker, whether it is busy, what it is doing\n\
+         \x20   tell(who, text)      say something to a worker you started\n\
          \n\
-         \x20 A worker that has to change files needs --permission-mode acceptEdits.\n\
-         \x20 Nothing can be asked of an owned session while it runs, so a worker\n\
-         \x20 started without it has every edit refused and spends its turn saying so.\n\
+         \x20 This is not a formality. A worker Ironsight starts is confined to its\n\
+         \x20 directory, counted against the ceilings, and stopped when the fleet is\n\
+         \x20 stopped. One you started yourself would be none of those things, so\n\
+         \x20 there is no way to start one and no reason to look for one.\n\
          \n\
-         \x20 Give each worker its own branch and checkout with --worktree unless the\n\
-         \x20 work genuinely cannot be isolated. Containment is the price of autonomy.\n\
+         \x20 A worker cannot start workers. Whatever you assign is done by the\n\
+         \x20 session you assigned it to, so assign work that one session can finish.\n\
          \n\
          \x20 An assignment is a sentence a stranger could act on. \"Fix the tests\" is\n\
-         \x20 not one. Say what is to be true afterwards.\n\n",
+         \x20 not one. Say what is to be true afterwards. The worker sees the task and\n\
+         \x20 nothing else — not this brief, not the constitution, not what you were\n\
+         \x20 asked. Everything it needs has to be in the sentence you write.\n\n",
     );
 
     out.push_str(
@@ -340,20 +342,45 @@ mod tests {
     }
 
     #[test]
-    fn the_commands_the_job_is_made_of_are_granted() {
-        // A chief that cannot run `ironsight` is a chief that can do nothing at
-        // all, which is what the first live one turned out to be.
+    fn nothing_the_chief_is_granted_can_bypass_the_boundary() {
+        // This test used to assert the opposite: that `Bash(ironsight:*)` was
+        // granted, because running a command was how a chief started a worker.
+        // It asks the kernel now, and the grant had to go — a granted tool does
+        // not prompt, and a call that does not prompt never reaches the gate.
         assert!(
-            GRANTED.iter().any(|g| g.contains("ironsight")),
-            "the fleet is reached through one command, and it has to be granted"
+            !GRANTED.iter().any(|g| g.starts_with("Bash")),
+            "a Bash grant is a hole in the boundary the chief is supervised by"
         );
         assert!(
             GRANTED.iter().any(|g| *g == "Read"),
-            "and reading the code it is supervising is the other half of the job"
+            "reading the code it is supervising is half the job"
         );
         assert!(
             !GRANTED.iter().any(|g| DENIED.contains(g)),
             "nothing is granted and denied at once"
+        );
+    }
+
+    #[test]
+    fn the_chief_is_told_to_ask_rather_than_to_run_something() {
+        let brief = brief(
+            "get the thing done",
+            "/tmp/x",
+            None,
+            &Limits::default(),
+            &work::Store::default(),
+        );
+        assert!(
+            brief.contains("assign(path, task)"),
+            "the way to create work has to be in the brief"
+        );
+        assert!(
+            !brief.contains("ironsight new"),
+            "a chief told to shell out is the copy-paster this replaced"
+        );
+        assert!(
+            brief.contains("cannot start workers"),
+            "the depth of the tree is a fact it should not have to discover"
         );
     }
 

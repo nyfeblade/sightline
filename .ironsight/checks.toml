@@ -67,7 +67,12 @@ refute = "! grep -q 'redact::text' crates/core/src/stream.rs"
 [[invariant]]
 name   = "checks only ever refuse"
 must   = "A passing suite reaches Checked, never Verified. Only refutations that have all stood — and have been seen to fire at some point — carry a task past it."
-refute = "! grep -q 'stood == refutations.len()' crates/tui/src/main.rs"
+refute = "! grep -q 'stood == refutations.len()' crates/core/src/ladder.rs"
+
+[[invariant]]
+name   = "there is one definition of finished"
+must   = "Only the ladder runs a refutation. A worker claiming through the kernel tool and a person running `ironsight check` must reach the same verdict, so the promotion past Checked has one implementation and both call it."
+refute = "grep -rlq 'checks::refute(' crates/tui/src crates/gui/src"
 
 [[invariant]]
 name   = "nothing runs from a repository until it is read"

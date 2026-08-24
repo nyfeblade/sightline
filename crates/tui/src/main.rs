@@ -6,7 +6,7 @@
 //! running, which is what a bare `ironsight` prints.
 
 use ironsight_core::{
-    app, bootstrap, brief, bus, checks, control, gateway, git, owned, session, work,
+    app, bootstrap, brief, bus, checks, control, gateway, git, ladder, owned, session, work,
 };
 
 use anyhow::Result;
@@ -130,6 +130,13 @@ fn report(o: &checks::Outcome) {
 /// The recording is the whole point. A task reaches `Verified` here and nowhere
 /// else, and a claim that fails goes back to `Working` with the first failure
 /// attached, which is the message the agent that claimed it will read.
+/// Run this project's checks against a session's work, and say what they showed.
+///
+/// The verdict itself is `ladder::adjudicate`, in core, because the worker that
+/// did the work reaches it too — through the `claim` tool — and two
+/// implementations of "finished" is two definitions of finished. What is here is
+/// the part that genuinely belongs to a front end: printing, and publishing the
+/// events core deliberately leaves to whoever holds the journal.
 fn verify(app: &mut App, id: &str, record: bool) -> Result<Vec<checks::Outcome>, String> {
     let session = app
         .sessions
@@ -141,210 +148,47 @@ fn verify(app: &mut App, id: &str, record: bool) -> Result<Vec<checks::Outcome>,
         return Err("that session has no directory to run anything in".into());
     }
     let cwd = std::path::PathBuf::from(&cwd);
-    let (root, suite) = checks::Suite::find(&cwd)?.ok_or_else(|| {
-        format!(
-            "{} has no {} — a project has to say what finished means",
-            cwd.display(),
-            checks::FILE
-        )
-    })?;
-    let mut env = std::collections::HashMap::new();
-    if let Some(tree) = git::status(&cwd) {
-        env.insert("BRANCH".to_string(), tree.branch);
-    }
-    // Nothing runs until these exact commands have been approved. A checks
-    // file arrives with a repository, and cloning something should not run
-    // whatever its author felt like running.
-    if !checks::trusted(&root, &suite) {
-        return Err(checks::untrusted_hint(&root, &suite));
-    }
-    // The invariants first, and separately, because they answer a different
-    // question. The checks ask whether this work is finished; these ask whether
-    // it broke something that was never its business. Work that broke a
-    // guarantee is refused however green its own suite is — that is the case a
-    // passing suite is worst at catching, and the reason these exist.
-    let held = suite.hold(&root, &env);
-    for h in held.iter().filter(|h| h.broken()) {
-        println!("BROKE  {} — {}", h.name, h.must);
-    }
-    let broke: Vec<String> = held
-        .iter()
-        .filter(|h| h.broken())
-        .map(|h| h.name.clone())
-        .collect();
 
-    let outcomes = suite.run(&root, &env);
     if !record {
-        return Ok(outcomes);
+        // Asking what the checks say, without it counting as a claim.
+        let (root, suite) = checks::Suite::find(&cwd)?.ok_or_else(|| {
+            format!(
+                "{} has no {} — a project has to say what finished means",
+                cwd.display(),
+                checks::FILE
+            )
+        })?;
+        if !checks::trusted(&root, &suite) {
+            return Err(checks::untrusted_hint(&root, &suite));
+        }
+        let mut env = std::collections::HashMap::new();
+        if let Some(tree) = git::status(&cwd) {
+            env.insert("BRANCH".to_string(), tree.branch);
+        }
+        return Ok(suite.run(&root, &env));
     }
 
-    let Some(task) = app.work.task_for(id).map(|t| t.id.clone()) else {
-        return Ok(outcomes);
-    };
+    let mut store = std::mem::take(&mut app.work);
+    let outcome = ladder::adjudicate(&mut store, id, &cwd);
+    app.work = store;
+    let report = outcome?;
+
     let short = &id[..id.len().min(8)];
-    if !broke.is_empty() {
-        // Straight back to working. There is nothing to wait for, only
-        // something to put back.
-        let why = format!(
-            "refused: {} invariant(s) broken — {}",
-            broke.len(),
-            broke.join(", ")
-        );
-        let _ = app.work.set_state(&task, work::State::Working);
-        let _ = app.work.note(&task, &why);
-        println!("{task} refused · {short} · {why}");
-        for name in &broke {
-            let ev = bus::Event::new(
-                id,
-                "foreman",
-                bus::Kind::ChecksFailed {
-                    suite: format!("invariant · {name}"),
-                    first: "a guarantee that must never stop being true has".into(),
-                },
-            );
-            app.publish(ev);
-        }
-        app.work.flush();
-        return Ok(outcomes);
+    for line in &report.tried {
+        println!("     refutation {line}");
     }
-    if checks::Suite::verified(&outcomes) {
-        let names: Vec<&str> = outcomes.iter().map(|o| o.name.as_str()).collect();
-        for o in &outcomes {
-            let ev = bus::Event::new(
-                id,
-                "foreman",
-                bus::Kind::ChecksPassed {
-                    suite: o.name.clone(),
-                    ms: o.ms,
-                },
-            );
-            app.publish(ev);
-        }
-        // The checks passing is a floor, never a finish.
-        //
-        // A suite can only say that the failures it is able to express did not
-        // happen. Writing "verified" on the strength of that manufactures
-        // confidence in work nobody has tried to break, which is worse than
-        // saying nothing — so this stops at `Checked`, and what carries a task
-        // past it is an attempt to show it is wrong that failed.
-        let _ = app.work.set_state(&task, work::State::Checked);
-        let _ = app
-            .work
-            .note(&task, &format!("checks passed: {}", names.join(", ")));
-        let refutations = app
-            .work
-            .get(&task)
-            .map(|t| t.refutes.clone())
-            .unwrap_or_default();
-        if refutations.is_empty() {
-            println!(
-                "{task} checked · {short} · {} passed. Not verified: nothing says what \
-                 wrong would look like (ironsight refute {task} <command>)",
-                names.join(", ")
-            );
-            app.work.flush();
-            return Ok(outcomes);
-        }
-        let proven: Vec<String> = app
-            .work
-            .get(&task)
-            .map(|t| t.proven.clone())
-            .unwrap_or_default();
-        let mut stood = 0;
-        let mut unproven: Vec<String> = Vec::new();
-        for command in &refutations {
-            let (verdict, ms) = checks::refute(command, &root, &env);
-            match verdict {
-                checks::Verdict::Stands => {
-                    // Standing is only evidence if this refutation has ever
-                    // been seen to catch anything. One that cannot fire stands
-                    // for ever and proves nothing.
-                    if proven.iter().any(|p| p == command) {
-                        stood += 1;
-                        println!("ok   refutation {ms:>6}ms · did not fire · {command}");
-                    } else {
-                        unproven.push(command.clone());
-                        println!(
-                            "??   refutation {ms:>6}ms · did not fire, and never has · {command}"
-                        );
-                    }
-                }
-                checks::Verdict::Refuted { how } => {
-                    // It caught something. That is bad news for the claim and
-                    // good news for the refutation: it is now a demonstrated
-                    // instrument, and standing later will mean something.
-                    app.work.proved(&task, command);
-                    let why = format!("refuted: {how} succeeded, and it was written to fail");
-                    let _ = app.work.set_state(&task, work::State::Working);
-                    let _ = app.work.note(&task, &why);
-                    println!("{task} refused · {short} · {why}");
-                    let ev = bus::Event::new(
-                        id,
-                        "foreman",
-                        bus::Kind::ChecksFailed {
-                            suite: "refutation".into(),
-                            first: how,
-                        },
-                    );
-                    app.publish(ev);
-                    app.work.flush();
-                    return Ok(outcomes);
-                }
-                checks::Verdict::Unrunnable { why } => {
-                    // Neither evidence for nor against. It stays checked, and
-                    // says why it got no further.
-                    let note = format!("could not run a refutation · {command} · {why}");
-                    let _ = app.work.note(&task, &note);
-                    println!("??   refutation {:>6}ms · {note}", ms);
-                }
-            }
-        }
-        if stood == refutations.len() {
-            let _ = app.work.set_state(&task, work::State::Verified);
-            let _ = app.work.note(
-                &task,
-                &format!("verified: {stood} demonstrated refutation(s) tried, none fired"),
-            );
-            println!("{task} verified · {short} · {stood} attempt(s) to break it failed");
-        } else if !unproven.is_empty() {
-            let note = format!(
-                "not verified: {} refutation(s) have never caught anything, so their \
-                 standing is not evidence — {}",
-                unproven.len(),
-                unproven.join(", ")
-            );
-            let _ = app.work.note(&task, &note);
-            println!("{task} checked · {short} · {note}");
-        } else {
-            println!(
-                "{task} checked · {short} · not verified: {} of {} refutations could not be run",
-                refutations.len() - stood,
-                refutations.len()
-            );
-        }
-    } else {
-        let refusal = checks::Suite::refusal(&outcomes).unwrap_or_else(|| "not verified".into());
-        // Back to working, not blocked: there is nothing to wait for, only
-        // something to fix.
-        let _ = app.work.set_state(&task, work::State::Working);
-        let _ = app.work.note(&task, &refusal);
-        println!("{task} refused · {short} · {refusal}");
-        for o in &outcomes {
-            if let checks::State::Failed { first } = &o.state {
-                let ev = bus::Event::new(
-                    id,
-                    "foreman",
-                    bus::Kind::ChecksFailed {
-                        suite: o.name.clone(),
-                        first: first.clone(),
-                    },
-                );
-                app.publish(ev);
-            }
-        }
+    let task = app
+        .work
+        .task_for(id)
+        .map(|t| t.id.clone())
+        .unwrap_or_else(|| short.to_string());
+    println!("{task} · {short} · {}", report.reached.say());
+    // Core reaches the verdict; only a front end journals it, because only one
+    // process may hold the publisher lock.
+    for ev in report.events {
+        app.publish(ev);
     }
-    app.work.flush();
-    Ok(outcomes)
+    Ok(report.outcomes)
 }
 
 /// Hand this terminal to a session, until the way-back key is pressed.

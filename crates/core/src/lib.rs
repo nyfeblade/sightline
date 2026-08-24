@@ -14,6 +14,7 @@ pub mod chief;
 pub mod control;
 pub mod daemon;
 pub mod event;
+pub mod gate;
 pub mod gateway;
 pub mod git;
 pub mod glue;
@@ -22,6 +23,8 @@ pub mod history;
 // surface is unused by design.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub mod host;
+pub mod kernel;
+pub mod ladder;
 pub mod limits;
 pub mod notify;
 pub mod owned;

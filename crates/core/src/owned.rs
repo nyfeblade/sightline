@@ -303,7 +303,13 @@ pub fn argv(spec: &Spec) -> Vec<String> {
     // simply refused, and the session spends its turn saying so. That is not
     // hypothetical: a chief with no grant could not run a single `ironsight`
     // command and correctly reported itself blocked.
-    if !spec.allow.is_empty() {
+    //
+    // Not passed when a policy is attached, and this is not a tidiness
+    // decision. A granted tool does not prompt, and what does not prompt does
+    // not reach `--permission-prompt-tool` — so every grant here is a hole in
+    // the boundary, silently, for exactly the calls somebody thought were
+    // important enough to name. With a policy the gate is what says yes.
+    if !spec.allow.is_empty() && spec.policy.is_none() {
         v.push("--allowedTools".into());
         for tool in &spec.allow {
             v.push(tool.clone());
@@ -317,8 +323,34 @@ pub fn argv(spec: &Spec) -> Vec<String> {
             v.push(tool.clone());
         }
     }
+    // The seam `claude --help` does not mention, and the reason any of this is
+    // more than advice: every permission decision is routed to a tool Ironsight
+    // serves in-process, so `gate::decide` runs before the call does.
+    if spec.policy.is_some() {
+        v.push("--permission-prompt-tool".into());
+        v.push(format!("mcp__{SERVER}__{APPROVE}"));
+    }
+    // Declaring the server in a config as well is what makes its *other* tools
+    // callable by the model. The permission tool does not need this; a tool the
+    // session is meant to reach for does.
+    if spec.kernel_tools {
+        v.push("--mcp-config".into());
+        v.push(
+            serde_json::json!({"mcpServers": {SERVER: {"type": "sdk", "name": SERVER}}})
+                .to_string(),
+        );
+    }
     v
 }
+
+/// The MCP server Ironsight serves to its own sessions, in this process.
+///
+/// In-process on purpose. A server on a socket, or a CLI on the session's PATH,
+/// is a second way to reach the kernel and therefore a second thing to secure.
+/// This one exists only for the length of a pipe.
+pub const SERVER: &str = "ironsight";
+/// The tool every permission decision arrives at.
+pub const APPROVE: &str = "approve";
 
 /// How an owned session is to be started.
 ///
@@ -353,6 +385,20 @@ pub struct Spec {
     /// no init line, so no conversation id, so nothing to see.
     #[serde(default)]
     pub opening: Option<String>,
+    /// What it may do, decided here rather than by the settings it inherited.
+    ///
+    /// With a policy the session is started with a permission tool Ironsight
+    /// serves itself, so every call stops at `gate::decide` before it happens.
+    /// Without one the session runs under whatever its permission mode allows,
+    /// which is the older behaviour and still what a one-shot wants.
+    #[serde(default)]
+    pub policy: Option<crate::gate::Policy>,
+    /// Whether Ironsight also offers this session tools of its own.
+    ///
+    /// This is how a supervisor creates work: not by starting a process, which
+    /// would put it outside everything below, but by asking the kernel to.
+    #[serde(default)]
+    pub kernel_tools: bool,
 }
 
 impl Spec {
@@ -459,12 +505,207 @@ pub struct OwnedSession {
     /// the write it was trying to abandon; with two, the kill closes the pipe
     /// and the blocked write ends with it.
     child: std::sync::Mutex<std::process::Child>,
-    stdin: std::sync::Mutex<Option<std::process::ChildStdin>>,
+    /// Shared with the reader thread, which answers control requests on it.
+    ///
+    /// The protocol is a conversation, not a broadcast: a `control_request`
+    /// arriving on stdout has to be answered on stdin, by whoever read it, and
+    /// a request left unanswered stalls the session with no error at all.
+    stdin: Input,
     session: String,
     /// Kept current by the reader thread, so asking what a session is doing
     /// costs neither of the locks above.
     state: std::sync::Arc<std::sync::Mutex<Owned>>,
 }
+
+/// The host side of Claude Code's control protocol.
+///
+/// Claude Code speaks two things down the same pipe. Most lines are the
+/// transcript — what the model said, what it called, what came back — and those
+/// go to `Parser`. Some are `control_request`, which are questions: the session
+/// blocks until each is answered, and an unanswered one is a session that hangs
+/// with nothing in the log to say why. That cost an evening, so this answers
+/// everything, including the ones it does not understand.
+///
+/// The one that matters is a permission request, which arrives wrapped twice:
+/// a `control_request` of subtype `mcp_message`, carrying a JSON-RPC
+/// `tools/call` for the tool named in `--permission-prompt-tool`. Unwrapping
+/// that is this type's real job; deciding is `gate`'s.
+struct Control {
+    policy: Option<crate::gate::Policy>,
+    serving: bool,
+    stdin: Input,
+}
+
+impl Control {
+    fn new(policy: Option<crate::gate::Policy>, serving: bool, stdin: Input) -> Self {
+        Control {
+            policy,
+            serving,
+            stdin,
+        }
+    }
+
+    /// Answer the line if it is a control request; say nothing if it is not.
+    fn consider(&mut self, line: &str, session: &str) -> Vec<Event> {
+        if !self.policy.is_some() && !self.serving {
+            return Vec::new();
+        }
+        // Cheap reject before parsing: most lines are transcript.
+        if !line.contains("\"control_request\"") {
+            return Vec::new();
+        }
+        let Ok(msg) = serde_json::from_str::<Value>(line) else {
+            return Vec::new();
+        };
+        if msg.get("type").and_then(Value::as_str) != Some("control_request") {
+            return Vec::new();
+        }
+        let Some(id) = msg.get("request_id").and_then(Value::as_str) else {
+            return Vec::new();
+        };
+        let request = msg.get("request").cloned().unwrap_or(Value::Null);
+        if request.get("subtype").and_then(Value::as_str) != Some("mcp_message") {
+            // Not ours to interpret, but still a question. Anything unanswered
+            // stalls the session.
+            self.respond(id, serde_json::json!({}));
+            return Vec::new();
+        }
+        self.mcp(
+            id,
+            request.get("message").cloned().unwrap_or(Value::Null),
+            session,
+        )
+    }
+
+    /// The JSON-RPC server Ironsight serves in this process.
+    fn mcp(&mut self, id: &str, inner: Value, session: &str) -> Vec<Event> {
+        let method = inner.get("method").and_then(Value::as_str).unwrap_or("");
+        let call_id = inner.get("id").cloned().unwrap_or(Value::Null);
+        let result = |r: Value| serde_json::json!({"jsonrpc": "2.0", "id": call_id, "result": r});
+
+        match method {
+            "initialize" => {
+                self.respond(
+                    id,
+                    serde_json::json!({"mcp_response": result(serde_json::json!({
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {"tools": {}},
+                        "serverInfo": {"name": SERVER, "version": env!("CARGO_PKG_VERSION")},
+                    }))}),
+                );
+                Vec::new()
+            }
+            "tools/list" => {
+                let mut tools = Vec::new();
+                if self.policy.is_some() {
+                    tools.push(serde_json::json!({
+                        "name": APPROVE,
+                        "description": "Decide whether a tool call may proceed",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "tool_name": {"type": "string"},
+                                "input": {"type": "object"},
+                            },
+                            "required": ["tool_name", "input"],
+                        },
+                    }));
+                }
+                if self.serving {
+                    tools.extend(crate::kernel::schemas());
+                }
+                self.respond(
+                    id,
+                    serde_json::json!({"mcp_response": result(serde_json::json!({"tools": tools}))}),
+                );
+                Vec::new()
+            }
+            "tools/call" => {
+                let params = inner.get("params").cloned().unwrap_or(Value::Null);
+                let name = params.get("name").and_then(Value::as_str).unwrap_or("");
+                let args = params
+                    .get("arguments")
+                    .cloned()
+                    .unwrap_or(serde_json::json!({}));
+                let (text, events) = if name == APPROVE {
+                    self.approve(&args, session)
+                } else {
+                    (
+                        match crate::kernel::call(session, name, &args) {
+                            Ok(said) => said,
+                            Err(why) => format!("refused: {why}"),
+                        },
+                        Vec::new(),
+                    )
+                };
+                self.respond(
+                    id,
+                    serde_json::json!({"mcp_response": result(serde_json::json!({
+                        "content": [{"type": "text", "text": text}],
+                    }))}),
+                );
+                events
+            }
+            // A notification has no id and wants no result — but the wrapper is
+            // still a request, and still has to be answered.
+            _ => {
+                self.respond(
+                    id,
+                    serde_json::json!({"mcp_response": result(serde_json::json!({}))}),
+                );
+                Vec::new()
+            }
+        }
+    }
+
+    /// One permission decision, and the record of it.
+    fn approve(&mut self, args: &Value, session: &str) -> (String, Vec<Event>) {
+        let tool = args.get("tool_name").and_then(Value::as_str).unwrap_or("");
+        let input = args.get("input").cloned().unwrap_or(serde_json::json!({}));
+        let policy = self.policy.clone().unwrap_or_default();
+        let (decision, by) = crate::gate::decide(&policy, session, tool, &input);
+
+        let reply = match &decision {
+            crate::gate::Decision::Allow => {
+                serde_json::json!({"behavior": "allow", "updatedInput": input})
+            }
+            crate::gate::Decision::Rewrite { input, .. } => {
+                serde_json::json!({"behavior": "allow", "updatedInput": input})
+            }
+            crate::gate::Decision::Deny { why } => {
+                serde_json::json!({"behavior": "deny", "message": why})
+            }
+        };
+        // The journal reads the same whether a person or a kernel answered,
+        // which is the honest shape: a decision was made, and this is who by.
+        let event = Event::new(
+            session,
+            "claude",
+            Kind::PermissionAnswered {
+                option: format!("{} {tool}", decision.option()),
+                by: crate::bus::By::Policy { name: by.into() },
+            },
+        );
+        (reply.to_string(), vec![event])
+    }
+
+    fn respond(&self, id: &str, payload: Value) {
+        use std::io::Write;
+        let line = serde_json::json!({
+            "type": "control_response",
+            "response": {"subtype": "success", "request_id": id, "response": payload},
+        });
+        let mut held = take(&self.stdin);
+        if let Some(stdin) = held.as_mut() {
+            let _ = writeln!(stdin, "{line}");
+            let _ = stdin.flush();
+        }
+    }
+}
+
+/// The session's input, shared between whoever is speaking to it and the
+/// reader thread that has to answer the protocol.
+type Input = std::sync::Arc<std::sync::Mutex<Option<std::process::ChildStdin>>>;
 
 /// Lock, and take the lock even if the last holder panicked. Nothing here is
 /// left half-written by a panic — a poisoned lock would only make a session
@@ -520,7 +761,7 @@ impl OwnedSession {
             })
             .spawn()?;
 
-        let stdin = child.stdin.take();
+        let stdin: Input = std::sync::Arc::new(std::sync::Mutex::new(child.stdin.take()));
         let stdout = child.stdout.take();
         let (session_owned, agent_owned) = (session.to_string(), agent.to_string());
         let state = std::sync::Arc::new(std::sync::Mutex::new(Owned {
@@ -537,6 +778,9 @@ impl OwnedSession {
             last: now_secs(),
         }));
         let watched = state.clone();
+        let answering = stdin.clone();
+        let policy = spec.policy.clone();
+        let serving = spec.kernel_tools;
         if let Some(stdout) = stdout {
             let spawned = std::thread::Builder::new()
                 .name("ironsight-owned-read".into())
@@ -544,8 +788,14 @@ impl OwnedSession {
                     // One parser for the whole session, so a failed result can
                     // name the tool that produced it.
                     let mut parser = Parser::new();
+                    let mut control = Control::new(policy, serving, answering);
                     for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                        let events = parser.feed(&line, &session_owned, &agent_owned);
+                        // The protocol first. A control request is a question
+                        // the session is blocked on, and answering it is this
+                        // thread's job because this thread is the one that saw
+                        // it. Anything it produces is an event like any other.
+                        let mut events = control.consider(&line, &session_owned);
+                        events.extend(parser.feed(&line, &session_owned, &agent_owned));
                         if let Ok(mut st) = watched.lock() {
                             st.last = now_secs();
                             if st.session_id.is_empty() {
@@ -582,6 +832,9 @@ impl OwnedSession {
                         st.busy = false;
                         st.tool.clear();
                     }
+                    // It ended on its own rather than being stopped, which is
+                    // the common case and the one `end` never sees.
+                    crate::gate::release(&session_owned);
                 });
             // A thread that would not start must not leave the agent running as
             // an orphan: Child has no Drop that kills, and the OwnedSession that
@@ -593,12 +846,18 @@ impl OwnedSession {
             }
         }
 
-        Ok(OwnedSession {
+        let held = OwnedSession {
             child: std::sync::Mutex::new(child),
-            stdin: std::sync::Mutex::new(stdin),
+            stdin,
             session: session.to_string(),
             state,
-        })
+        };
+        // Before anything else is said to it: tell it which servers we serve, so
+        // that the permission tool it was started with resolves to us.
+        if spec.policy.is_some() || spec.kernel_tools {
+            held.initialize()?;
+        }
+        Ok(held)
     }
 
     pub fn session(&self) -> &str {
@@ -643,6 +902,29 @@ impl OwnedSession {
     /// May block for as long as the agent takes to read it. Only the input is
     /// held while it does, so the session can still be asked about and still be
     /// stopped.
+    /// Tell the session which servers Ironsight serves, so the permission tool
+    /// it was started with resolves to this process.
+    ///
+    /// Sent before the opening message, because the first thing the session does
+    /// with that message may be to ask for permission.
+    fn initialize(&self) -> std::io::Result<()> {
+        use std::io::Write;
+        let line = serde_json::json!({
+            "type": "control_request",
+            "request_id": "ironsight-init",
+            "request": {"subtype": "initialize", "sdkMcpServers": [SERVER]},
+        });
+        let mut held = take(&self.stdin);
+        let Some(stdin) = held.as_mut() else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "the session's input is closed",
+            ));
+        };
+        writeln!(stdin, "{line}")?;
+        stdin.flush()
+    }
+
     pub fn send(&self, text: &str) -> std::io::Result<()> {
         use std::io::Write;
         let mut held = take(&self.stdin);
@@ -861,6 +1143,7 @@ pub fn start(
     }
     let state = session.state();
     held.insert(name, hold(session, pending));
+    note_size(&held);
     Ok(state)
 }
 
@@ -947,7 +1230,9 @@ pub fn stop(who: &str) -> Result<(), String> {
     let taken = {
         let mut fleet = locked();
         let key = find_key(&fleet, who).ok_or_else(|| format!("no owned session called {who}"))?;
-        fleet.remove(&key)
+        let taken = fleet.remove(&key);
+        note_size(&fleet);
+        taken
     };
     // Killing it happens with the fleet unlocked, for the same reason writing
     // does: it waits on the process, and nothing else should wait on that.
@@ -959,6 +1244,9 @@ pub fn stop(who: &str) -> Result<(), String> {
 
 /// Kill the process behind one, having already taken it out of the fleet.
 fn end(held: &Held) {
+    // Before the process: a file held against something that is no longer
+    // running is a file nobody else can work on.
+    crate::gate::release(held.session.session());
     held.session.stop();
 }
 
@@ -974,6 +1262,7 @@ pub fn reap() -> Vec<String> {
     for name in &dead {
         fleet.remove(name);
     }
+    note_size(&fleet);
     dead
 }
 
@@ -981,7 +1270,9 @@ pub fn reap() -> Vec<String> {
 pub fn stop_all() -> Vec<String> {
     let taken: Vec<(String, Held)> = {
         let mut fleet = locked();
-        fleet.drain().collect()
+        let taken = fleet.drain().collect();
+        note_size(&fleet);
+        taken
     };
     let mut names: Vec<String> = Vec::new();
     for (name, held) in taken {
@@ -997,8 +1288,60 @@ pub fn count() -> usize {
     locked().len()
 }
 
+/// The same number, without taking the fleet lock.
+///
+/// The ceiling is consulted on every tool call of every session, from the reader
+/// thread that has to answer it. Taking the fleet lock there would put a lock
+/// held by whoever is *starting* a session on the critical path of every
+/// permission decision — bounded, since nothing holds it forever, but a stall
+/// on the one path that must not stall. This is written under that lock at each
+/// mutation, so it is exact rather than approximate.
+pub fn running() -> usize {
+    LIVE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+static LIVE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Record the size of the fleet. Call while still holding the lock.
+fn note_size(fleet: &Fleet) {
+    LIVE.store(fleet.len(), std::sync::atomic::Ordering::Relaxed);
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_policed_session_is_never_handed_a_grant() {
+        // A granted tool does not prompt, and what does not prompt never
+        // reaches the permission tool. This is the refutation for the whole
+        // boundary: if `allow` survives alongside a policy, the gate is blind
+        // to precisely the calls someone cared enough to name.
+        let spec = Spec {
+            allow: vec!["Bash(rm *)".into(), "Write".into()],
+            policy: Some(crate::gate::Policy::default()),
+            ..Spec::default()
+        };
+        let args = argv(&spec);
+        assert!(
+            !args.iter().any(|a| a == "--allowedTools"),
+            "a grant slipped past the gate: {args:?}"
+        );
+        assert!(
+            args.iter().any(|a| a == "--permission-prompt-tool"),
+            "a policed session must route its decisions here: {args:?}"
+        );
+    }
+
+    #[test]
+    fn without_a_policy_grants_still_work_as_they_did() {
+        let spec = Spec {
+            allow: vec!["Bash(echo *)".into()],
+            ..Spec::default()
+        };
+        let args = argv(&spec);
+        assert!(args.iter().any(|a| a == "--allowedTools"));
+        assert!(!args.iter().any(|a| a == "--permission-prompt-tool"));
+    }
     use super::*;
     use std::path::PathBuf;
 
