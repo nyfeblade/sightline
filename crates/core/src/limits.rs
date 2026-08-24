@@ -150,6 +150,39 @@ fn stricter<T: PartialOrd>(machine: Option<T>, project: Option<T>) -> Option<T> 
     }
 }
 
+/// Write the machine's ceilings.
+///
+/// Here rather than in the command that used to do it, because setting a
+/// ceiling is not a terminal errand — it is the first thing anybody directing
+/// work has to do, and it belongs where they are.
+pub fn write_machine(limits: &Limits) -> Result<PathBuf, String> {
+    let path = machine_path();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    let mut text = [
+        "# What a fleet on this machine may do.",
+        "#",
+        "# Here rather than in a repository on purpose: a ceiling a supervised",
+        "# agent can edit is not a ceiling. A project may lower these in",
+        "# .ironsight/limits.toml, and may never raise them.",
+        "",
+        "",
+    ]
+    .join("\n");
+    if let Some(n) = limits.sessions {
+        text.push_str(&format!("sessions = {n}\n"));
+    }
+    if let Some(d) = limits.spend {
+        text.push_str(&format!("spend    = {d}\n"));
+    }
+    if let Some(h) = limits.window {
+        text.push_str(&format!("window   = {h}\n"));
+    }
+    std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(path)
+}
+
 /// The ceilings in force for work in a directory.
 pub fn in_force(cwd: &Path) -> Result<Limits, String> {
     let machine = read(&machine_path())?;

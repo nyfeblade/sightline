@@ -70,6 +70,8 @@ pub enum Prompt {
     Adopt,
     /// what a chief is to get done
     Chief,
+    /// how many sessions a fleet here may run at once
+    Ceiling,
 }
 
 /// Where things were drawn last frame, so a click can be turned back into the
@@ -134,6 +136,36 @@ pub struct NewSpec {
     /// JSON, with no terminal — rather than one running in a terminal.
     pub owned: bool,
 }
+
+/// What an empty constitution offers to be.
+///
+/// The headings are the ones the parser looks for, so what somebody writes here
+/// actually reaches a brief rather than sitting in a file nothing reads.
+pub const CONSTITUTION_TEMPLATE: &str = "\
+# Constitution
+
+## Mission
+What this project is for, in a sentence.
+
+## Architecture
+The shape of it, and what must not change.
+
+## Constraints
+- A standing rule every session here is held to.
+- [tag] A rule that applies only to tasks mentioning \"tag\".
+
+## Preferences
+- How things are done here when it is a matter of taste.
+
+## Rejected
+- An approach that was tried or considered, and why it was not taken.
+
+## Done means
+- What has to be true before work here counts as finished.
+
+## Open questions
+- Something undecided, so nobody decides it by accident.
+";
 
 /// A path, shortened the way the interface shortens them.
 fn short_path(path: &str) -> String {
@@ -1093,6 +1125,9 @@ impl App {
                     .unwrap_or_else(|| ".".into());
                 format!("what should a chief get done in {}", short_path(&where_))
             }
+            Prompt::Ceiling => {
+                "ceilings · sessions [spend], e.g. `6 20` — what a fleet here may do".into()
+            }
             Prompt::NewSession => {
                 "new session · path [--agent a] [--model m] [--effort e] [--mode p] [first message]"
                     .into()
@@ -1182,6 +1217,25 @@ impl App {
                 };
                 if let Err(e) = self.send_to(&id, &text) {
                     self.say(e);
+                }
+            }
+            Prompt::Ceiling => {
+                // `6` or `6 20`: a count, and optionally an amount. Two numbers
+                // is the whole of it, so a form would be four keystrokes of
+                // ceremony around two.
+                let mut words = text.split_whitespace();
+                let sessions = words.next().and_then(|w| w.parse::<usize>().ok());
+                let spend = words
+                    .next()
+                    .map(|w| w.trim_start_matches('$'))
+                    .and_then(|w| w.parse::<f64>().ok());
+                if sessions.is_none() && spend.is_none() {
+                    self.say("ceilings wants a number, e.g. `6` or `6 20`");
+                    return;
+                }
+                match self.set_ceilings(sessions, spend) {
+                    Ok(now) => self.say(format!("ceilings · {now}")),
+                    Err(e) => self.say(e),
                 }
             }
             Prompt::Broadcast => {
@@ -1529,6 +1583,127 @@ impl App {
             constitution: brief::Constitution::find(cwd).is_some(),
             limits: limits::in_force(cwd).map(|l| l.any()).unwrap_or(false),
         }
+    }
+
+    /// Write a project the two files that make supervised work mean anything.
+    ///
+    /// The friction this removes is the reason none of the layers above the
+    /// fleet were being used: four files and a trust ceremony before anything
+    /// happens is a good reason not to start. What it writes is a first draft
+    /// of the obvious answer, and it says so — the point is to have something
+    /// to correct rather than something to author.
+    ///
+    /// It never overwrites. A checks file that is already there arrived with
+    /// somebody's judgement in it, or with somebody else's code, and neither is
+    /// this function's to replace.
+    pub fn set_up_project(&mut self, cwd: &std::path::Path) -> Result<String, String> {
+        let root = git::repo_root(cwd).unwrap_or_else(|| cwd.to_path_buf());
+        let dir = root.join(".ironsight");
+        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        let mut did: Vec<String> = Vec::new();
+
+        let checks_path = root.join(checks::FILE);
+        let wrote_checks = if checks_path.exists() {
+            false
+        } else {
+            let Some((what, body)) = checks::guess_checks(&root) else {
+                return Err(format!(
+                    "cannot tell how {} is built, so there is nothing to guess.                      Write {} yourself — one [[check]] with a `run` is enough.",
+                    root.display(),
+                    checks::FILE
+                ));
+            };
+            let text = format!(
+                "# What finished means here. Guessed from this looking like a {what}
+                 # project — correct it, it is only a first draft.
+                 #
+                 # This is the floor, not the finish: everything below can do is refuse.
+
+{body}"
+            );
+            std::fs::write(&checks_path, text)
+                .map_err(|e| format!("{}: {e}", checks_path.display()))?;
+            did.push(format!("wrote {} for a {what} project", checks::FILE));
+            true
+        };
+
+        let constitution = root.join(brief::FILE);
+        if !constitution.exists() {
+            std::fs::write(&constitution, CONSTITUTION_TEMPLATE)
+                .map_err(|e| format!("{}: {e}", constitution.display()))?;
+            did.push(format!("wrote {}", brief::FILE));
+        }
+
+        // Trusted only when Ironsight wrote it. The gate exists because a checks
+        // file arrives with somebody else's code; one written here, this second,
+        // at your asking, is not that. One that was already there still has to
+        // be read and approved.
+        if wrote_checks {
+            if let Some((r, suite)) = checks::Suite::find(&root)? {
+                checks::trust(&r, &suite)?;
+                did.push("approved it, because Ironsight wrote it".into());
+            }
+        }
+
+        if did.is_empty() {
+            return Ok(format!("{} was already set up", root.display()));
+        }
+        Ok(did.join(" · "))
+    }
+
+    /// Run the project's invariants and say what happened, in one line.
+    pub fn run_invariants(&mut self, cwd: &std::path::Path) -> Result<String, String> {
+        let Some((root, suite)) = checks::Suite::find(cwd)? else {
+            return Err(format!("no {} anywhere above here", checks::FILE));
+        };
+        if suite.invariants.is_empty() {
+            return Err(format!("{} names no invariants", checks::FILE));
+        }
+        if !checks::trusted(&root, &suite) {
+            return Err(checks::untrusted_hint(&root, &suite));
+        }
+        let held = suite.hold(&root, &std::collections::HashMap::new());
+        let broke: Vec<&str> = held
+            .iter()
+            .filter(|h| h.broken())
+            .map(|h| h.name.as_str())
+            .collect();
+        if broke.is_empty() {
+            let unrunnable = held
+                .iter()
+                .filter(|h| matches!(h.verdict, checks::Verdict::Unrunnable { .. }))
+                .count();
+            return Ok(match unrunnable {
+                0 => format!("{} invariant(s) tried, none fired", held.len()),
+                n => format!(
+                    "{} tried, none fired · {n} could not be run and showed nothing",
+                    held.len()
+                ),
+            });
+        }
+        Err(format!(
+            "{} of {} broken — {}",
+            broke.len(),
+            held.len(),
+            broke.join(", ")
+        ))
+    }
+
+    /// Set the machine's ceilings.
+    pub fn set_ceilings(
+        &mut self,
+        sessions: Option<usize>,
+        spend: Option<f64>,
+    ) -> Result<String, String> {
+        let mut limits = limits::read(&limits::machine_path())?.unwrap_or_default();
+        if sessions.is_some() {
+            limits.sessions = sessions;
+        }
+        if spend.is_some() {
+            limits.spend = spend;
+        }
+        limits::write_machine(&limits)?;
+        Ok(limits.describe())
     }
 
     /// Start a chief on a folder, and return the id it is listed under.
@@ -3590,6 +3765,80 @@ mod tests {
         assert_eq!(app.sessions.len(), 1, "the door does add it back");
         app.apply_hidden();
         assert!(app.sessions.is_empty(), "and the filter takes it off again");
+    }
+
+    #[test]
+    fn setting_a_project_up_writes_a_draft_and_approves_only_what_it_wrote() {
+        let dir = std::env::temp_dir().join(format!("ironsight-setup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+
+        let mut app = bare_app();
+        let said = app
+            .set_up_project(&dir)
+            .expect("a Rust project is recognised");
+        assert!(said.contains("Rust"), "it says what it guessed: {said}");
+
+        let checks = std::fs::read_to_string(dir.join(checks::FILE)).unwrap();
+        assert!(
+            checks.contains("cargo test"),
+            "and the guess is the obvious one"
+        );
+        assert!(
+            checks.contains("first draft"),
+            "and it says it is a guess rather than an answer"
+        );
+        assert!(dir.join(brief::FILE).exists(), "a constitution to fill in");
+
+        let state = app.project_state(&dir);
+        assert!(
+            state.checks > 0 && state.trusted,
+            "approved, because it wrote it"
+        );
+        assert!(state.can_refuse(), "so work here can be told it is wrong");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn setting_up_never_overwrites_what_is_already_there() {
+        // A checks file that exists arrived with somebody's judgement in it, or
+        // with somebody else's code. Neither is this function's to replace, and
+        // the second must not be approved on their behalf.
+        let dir = std::env::temp_dir().join(format!("ironsight-setup2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".ironsight")).unwrap();
+        std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        let theirs = "[[check]]\nname = \"theirs\"\nrun = \"echo do not touch\"\n";
+        std::fs::write(dir.join(checks::FILE), theirs).unwrap();
+
+        let mut app = bare_app();
+        app.set_up_project(&dir)
+            .expect("it still writes what is missing");
+        assert_eq!(
+            std::fs::read_to_string(dir.join(checks::FILE)).unwrap(),
+            theirs,
+            "their checks are untouched"
+        );
+        assert!(
+            !app.project_state(&dir).trusted,
+            "and are not approved on their behalf — that is still a thing to read"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_project_nobody_can_guess_says_so_rather_than_writing_nonsense() {
+        let dir = std::env::temp_dir().join(format!("ironsight-setup3-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut app = bare_app();
+        let why = app.set_up_project(&dir).unwrap_err();
+        assert!(
+            why.contains("cannot tell how"),
+            "it does not invent a build system: {why}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

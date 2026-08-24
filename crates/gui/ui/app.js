@@ -950,9 +950,113 @@ async function drawWork() {
   const out = el("pane");
   clear(out);
   out.classList.remove("stream");
-  if (!tasks.length) {
-    return out.append(empty("nothing has been assigned yet — assign a session from its panel"));
+
+  // The other half of the Hub. Watching a fleet and directing one are different
+  // questions, and everything that answers the second — a chief, ceilings, what
+  // this project says done means — used to be a terminal command, in a program
+  // whose whole point is that you should not need one.
+  const w = await invoke("workflow").catch(() => null);
+  if (w) {
+    const box = make("div", "workflow");
+
+    const group = (title) => {
+      box.append(make("div", "group", title));
+    };
+    const fact = (ok, text) => {
+      const line = make("div", `wf-fact${ok ? " is-ok" : ""}`);
+      line.append(make("span", "wf-mark", ok ? "✓" : "·"));
+      line.append(make("span", null, text));
+      box.append(line);
+    };
+
+    group(`THIS PROJECT · ${shortPath(w.where)}`);
+    fact(
+      w.checks > 0,
+      w.checks
+        ? `${w.checks} check${w.checks === 1 ? "" : "s"} say what finished means`
+        : "no checks — nothing here can tell a worker it is wrong",
+    );
+    fact(w.trusted, w.trusted ? "approved to run" : "not approved yet");
+    fact(
+      w.invariants > 0,
+      w.invariants
+        ? `${w.invariants} invariant${w.invariants === 1 ? "" : "s"} that must never fire`
+        : "no invariants — a claim here can only ever reach checked",
+    );
+    fact(
+      w.constitution,
+      w.constitution
+        ? "a constitution, so a worker is briefed"
+        : "no constitution — a worker starts knowing only its task",
+    );
+
+    group("CEILINGS");
+    fact(w.hasCeilings, w.ceilings);
+    // Not always a tick: "a chief will not start without one" is a warning, and
+    // a green mark against it reads as something achieved.
+    fact(
+      w.hasCeilings,
+      w.hasCeilings
+        ? `${w.running} of Ironsight's own running now`
+        : "a chief will not start without one",
+    );
+
+    const actions = make("div", "actions");
+    action(actions, "Hand work to a chief…", "primary", async () => {
+      const intent = await ask("What should a chief get done here?");
+      if (!intent) return;
+      try {
+        say(`${await invoke("start_chief", { intent })} is supervising`);
+      } catch (e) {
+        say(String(e));
+      }
+      draw();
+    });
+    if (!w.canVerify) {
+      action(actions, "Set this project up", "ghost", async () => {
+        try {
+          say(await invoke("set_up_project"));
+        } catch (e) {
+          say(String(e));
+        }
+        draw();
+      });
+    }
+    action(actions, "Ceilings…", "ghost", async () => {
+      const line = await ask("Sessions, and optionally spend — e.g. `6 20`");
+      if (!line) return;
+      const [n, d] = line.split(/\s+/);
+      try {
+        say(
+          `ceilings · ${await invoke("set_ceilings", {
+            sessions: Number.isFinite(+n) && n !== "" ? +n : null,
+            spend: d !== undefined && Number.isFinite(+d) ? +d : null,
+          })}`,
+        );
+      } catch (e) {
+        say(String(e));
+      }
+      draw();
+    });
+    if (w.invariants > 0) {
+      action(actions, "Run the invariants", "ghost", async () => {
+        say("running the invariants…");
+        try {
+          say(await invoke("run_invariants"));
+        } catch (e) {
+          say(String(e));
+        }
+      });
+    }
+    box.append(actions);
+    out.append(box);
   }
+
+  if (!tasks.length) {
+    out.append(empty("nothing has been assigned yet — hand something to a chief, or assign a session from its panel"));
+    return;
+  }
+  out.append(make("div", "group", `WORK · ${tasks.length}`));
   for (const t of tasks) {
     const card = make("div", `task ${t.state}`);
     card.style.marginLeft = `${t.depth * 18}px`;
@@ -2238,5 +2342,6 @@ paneTick();
 // urgent arrives on the stream; this catches the measurements that nothing
 // publishes, and puts right anything the patching above got slightly wrong.
 setInterval(draw, 4000);
+
 
 

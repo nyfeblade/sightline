@@ -385,6 +385,24 @@ body.focused .context { display: block; }
 }
 #writing-body:focus { outline: none; border-color: var(--accent-soft); }
 
+/* The workflow face: what work is being directed, rather than what is running.
+   It sits above the task list in the Work pane, because the first question
+   anybody asks is whether anything here can tell a worker it is wrong. */
+.workflow { padding: 4px 2px 14px; border-bottom: 1px solid var(--line-soft); margin-bottom: 12px; }
+.wf-fact { display: flex; gap: 10px; align-items: baseline; padding: 3px 0; color: var(--body); }
+.wf-fact .wf-mark { color: var(--muted); width: 1em; flex: none; }
+.wf-fact.is-ok .wf-mark { color: var(--good); }
+.workflow .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.workflow .actions button {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--body);
+  padding: 6px 14px;
+}
+.workflow .actions button:hover { background: var(--raised); color: var(--text); }
+.workflow .actions button.primary { border-color: var(--accent-soft); color: var(--accent); }
+
 /* ── detail ─────────────────────────────────────────────────────────────── */
 
 /* The rail is a column flex container that scrolls, and flex children shrink

@@ -1056,6 +1056,92 @@ fn save_constitution(path: String, text: String) -> Result<String, String> {
     Ok(format!("saved {}", path.display()))
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkflowDto {
+    /// the project the Hub is pointed at
+    where_: String,
+    checks: usize,
+    invariants: usize,
+    trusted: bool,
+    constitution: bool,
+    /// what a fleet here may do, in words
+    ceilings: String,
+    has_ceilings: bool,
+    running: usize,
+    /// whether anything here can tell a worker it is wrong
+    can_refuse: bool,
+    can_verify: bool,
+}
+
+/// Everything the workflow face needs, in one ask.
+///
+/// One round trip rather than five, because it is drawn on a tick and five
+/// separate questions about the same folder is four more chances for the answer
+/// to be half of two different states.
+#[tauri::command]
+fn workflow(shared: State<Shared>) -> WorkflowDto {
+    shared.raw(|app| {
+        let here = app.here();
+        let state = app.project_state(&here);
+        let limits = ironsight_core::limits::in_force(&here).unwrap_or_default();
+        WorkflowDto {
+            where_: here.to_string_lossy().into_owned(),
+            checks: state.checks,
+            invariants: state.invariants,
+            trusted: state.trusted,
+            constitution: state.constitution,
+            ceilings: limits.describe(),
+            has_ceilings: limits.any(),
+            running: app.running_sessions(),
+            can_refuse: state.can_refuse(),
+            can_verify: state.can_verify(),
+        }
+    })
+}
+
+/// Write this project the two files that make supervised work mean anything.
+#[tauri::command]
+fn set_up_project(shared: State<Shared>) -> Result<String, String> {
+    shared.raw(|app| {
+        let here = app.here();
+        app.set_up_project(&here)
+    })
+}
+
+/// Try to break what must never stop being true here.
+#[tauri::command]
+fn run_invariants(shared: State<Shared>) -> Result<String, String> {
+    shared.raw(|app| {
+        let here = app.here();
+        app.run_invariants(&here)
+    })
+}
+
+/// What a fleet on this machine may do.
+#[tauri::command]
+fn set_ceilings(
+    shared: State<Shared>,
+    sessions: Option<usize>,
+    spend: Option<f64>,
+) -> Result<String, String> {
+    shared.raw(|app| app.set_ceilings(sessions, spend))
+}
+
+/// Hand work to a chief, in the folder the Hub is pointed at.
+#[tauri::command]
+fn start_chief(shared: State<Shared>, intent: String) -> Result<String, String> {
+    bootstrap::ensure_backend()?;
+    shared.raw(|app| {
+        let here = app.here();
+        let id = app.start_chief(&here, &intent, None)?;
+        Ok(app
+            .owned_of(&id)
+            .map(|o| o.name.clone())
+            .unwrap_or_else(|| id.clone()))
+    })
+}
+
 #[tauri::command]
 fn task_state(shared: State<Shared>, task: String, state: String) -> Result<(), String> {
     let wanted = match state.as_str() {
@@ -1187,6 +1273,11 @@ fn main() {
             assign,
             note,
             brief,
+            workflow,
+            set_up_project,
+            run_invariants,
+            set_ceilings,
+            start_chief,
             constitution,
             save_constitution,
             task_state,

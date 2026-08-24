@@ -2514,6 +2514,31 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                         app.menu = true;
                         app.menu_sel = 0;
                     }
+                    // Workflow's own keys. Guarded on the mode and placed above
+                    // the plain letters below, because match arms are ordered
+                    // and an unguarded arm swallows a guarded one written after
+                    // it — which is how the first two of these did nothing.
+                    KeyCode::Char('c') if app.mode == app::Mode::Workflow => {
+                        app.open_input(Prompt::Chief)
+                    }
+                    KeyCode::Char('l') if app.mode == app::Mode::Workflow => {
+                        app.open_input(Prompt::Ceiling)
+                    }
+                    KeyCode::Char('s') if app.mode == app::Mode::Workflow => {
+                        let here = app.here();
+                        match app.set_up_project(&here) {
+                            Ok(said) => app.say(said),
+                            Err(e) => app.say(e),
+                        }
+                    }
+                    KeyCode::Char('v') if app.mode == app::Mode::Workflow => {
+                        let here = app.here();
+                        app.say("running the invariants…");
+                        match app.run_invariants(&here) {
+                            Ok(said) => app.say(said),
+                            Err(e) => app.say(e),
+                        }
+                    }
                     KeyCode::Char('v') | KeyCode::Char('o') => {
                         let has = match app.view {
                             View::Files => !app.file_keys().is_empty(),
@@ -2556,9 +2581,6 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     // assignments, a chief, what this project says done means,
                     // what it may spend — lives there rather than in a terminal
                     // command, which is where it all started and was wrong.
-                    KeyCode::Char('c') if app.mode == app::Mode::Workflow => {
-                        app.open_input(Prompt::Chief)
-                    }
                     KeyCode::Char('x') => app.run_action('x'),
                     // Closing and removing are different things. `x` ends the
                     // process; these take rows off the list, and the

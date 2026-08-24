@@ -35,6 +35,88 @@ use std::time::{Duration, Instant};
 /// Where a project says what finished means.
 pub const FILE: &str = ".ironsight/checks.toml";
 
+/// What a project is built and tested with, worked out from what is lying in
+/// it, and the checks that follow.
+///
+/// A guess, and said to be one. Somebody who has to write a TOML file before
+/// anything happens mostly does not, so the useful thing is to offer a first
+/// draft of the obvious answer and let them correct it — not to be right about
+/// every project on the first try.
+pub fn guess_checks(root: &Path) -> Option<(&'static str, String)> {
+    let has = |name: &str| root.join(name).exists();
+    if has("Cargo.toml") {
+        return Some((
+            "Rust",
+            [
+                "[[check]]",
+                "name    = \"format\"",
+                "run     = \"cargo fmt --check\"",
+                "timeout = \"2m\"",
+                "",
+                "[[check]]",
+                "name    = \"tests\"",
+                "run     = \"cargo test\"",
+                "timeout = \"15m\"",
+                "",
+            ]
+            .join("\n"),
+        ));
+    }
+    if has("package.json") {
+        return Some((
+            "Node",
+            [
+                "[[check]]",
+                "name    = \"tests\"",
+                "run     = \"npm test\"",
+                "timeout = \"10m\"",
+                "",
+            ]
+            .join("\n"),
+        ));
+    }
+    if has("pyproject.toml") || has("setup.py") || has("pytest.ini") || has("tox.ini") {
+        return Some((
+            "Python",
+            [
+                "[[check]]",
+                "name    = \"tests\"",
+                "run     = \"python3 -m pytest -q\"",
+                "timeout = \"10m\"",
+                "",
+            ]
+            .join("\n"),
+        ));
+    }
+    if has("go.mod") {
+        return Some((
+            "Go",
+            [
+                "[[check]]",
+                "name    = \"tests\"",
+                "run     = \"go test ./...\"",
+                "timeout = \"10m\"",
+                "",
+            ]
+            .join("\n"),
+        ));
+    }
+    if has("Makefile") || has("makefile") {
+        return Some((
+            "make",
+            [
+                "[[check]]",
+                "name    = \"tests\"",
+                "run     = \"make test\"",
+                "timeout = \"10m\"",
+                "",
+            ]
+            .join("\n"),
+        ));
+    }
+    None
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Check {
     pub name: String,

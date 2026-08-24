@@ -1428,7 +1428,7 @@ fn draw_workflow(f: &mut Frame, app: &mut App, area: Rect) {
         .border_style(Style::new().fg(pal().dim))
         .title(Span::styled(" workflow ", Style::new().fg(pal().gold)))
         .title_bottom(Span::styled(
-            " c → hand work to a chief · ctrl+w → back to monitor ",
+            " c chief · s set up · l ceilings · v invariants · ctrl+w back ",
             muted(),
         ));
     let inner = block.inner(area);
@@ -1631,7 +1631,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     // Deliberately short: everything else is one keypress away behind the
     // actions menu and the help sheet.
     let keys = if app.mode == app::Mode::Workflow {
-        "  ctrl+w monitor · c hand work to a chief · j/k session · ? help"
+        "  c chief · s set up · l ceilings · v invariants · ctrl+w monitor · ? help"
     } else {
         "  j/k session · n new · s send · ctrl+w workflow · enter actions · ? help"
     };
@@ -1857,7 +1857,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
         .title(Span::styled(" keys ", Style::new().fg(pal().gold)));
     let inner = block.inner(rect);
     f.render_widget(block, rect);
-    let rows: [(&str, &str); 47] = [
+    let rows: [(&str, &str); 49] = [
         ("  look", ""),
         ("j / k, ↓ ↑", "select a session"),
         (
@@ -1922,8 +1922,19 @@ fn draw_help(f: &mut Frame, area: Rect) {
         ("", ""),
         ("  workflow", ""),
         ("ctrl+w", "turn the Hub round: monitoring ⇄ directing work"),
-        ("c", "in workflow, hand work to a chief"),
-        ("", "  it appears in the list like any other session"),
+        (
+            "c",
+            "hand work to a chief — it joins the list like any session",
+        ),
+        (
+            "s",
+            "set this project up: guess its checks, start its constitution",
+        ),
+        ("l", "ceilings — what a fleet here may run and spend"),
+        (
+            "v",
+            "run the invariants: what must never stop being true here",
+        ),
         ("", ""),
         ("  other", ""),
         ("$", "subscription view or API-equivalent cost"),
