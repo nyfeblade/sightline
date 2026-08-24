@@ -1511,3 +1511,155 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
    word. `margin-left: auto` needs the row to actually fill its column. */
 .detail details.actions { width: 100%; }
 .actions-head { width: 100%; }
+
+/* ── Raycast: one surface, not a grid of cards ──────────────────────────────
+   The look this is after is a single translucent panel floating over the
+   desktop, sectioned by hairlines rather than assembled from tiles. Three
+   things carry it: real glass where the compositor can do it, a search field
+   that is the top of the window rather than a control inside it, and an action
+   bar along the bottom that says what pressing return will do. */
+
+/* The window itself is the card. Everything inside shares its edge. */
+html, body { background: transparent; }
+body {
+  border-radius: 12px;
+  overflow: hidden;
+}
+/* Where the compositor blurs behind the window — macOS vibrancy, Windows
+   acrylic — the fill is left translucent and the desktop comes through graded.
+   On Linux there is no blur-behind protocol, so translucency would be the raw
+   desktop showing through; there it is opaque and the depth is done in CSS. */
+html[data-platform="mac"] body,
+html[data-platform="windows"] body { background: rgba(22, 22, 24, .72); }
+html[data-platform="linux"] body { background: #161618; }
+
+main { gap: 0; padding: 0; }
+.rail, .middle {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+#rail { border-right: 1px solid var(--hairline-soft); background: rgba(255, 255, 255, .022); }
+.rail.detail { border-left: 1px solid var(--hairline-soft); background: rgba(255, 255, 255, .022); }
+.middle { background: transparent; }
+
+/* The search is the top of the window: a large field with no box around it and
+   a hairline beneath, the way a command palette opens. */
+.bar {
+  height: 52px;
+  padding: 0 14px;
+  gap: 10px;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-bottom: 1px solid var(--hairline-soft);
+}
+.search {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  font-size: 15px;
+  font-weight: 400;
+  width: clamp(220px, 34vw, 520px);
+}
+.search:focus { border: 0; box-shadow: none; }
+.search::placeholder { color: var(--quaternary); }
+.mark { font-size: 13px; font-weight: 600; letter-spacing: .01em; color: var(--secondary); }
+
+/* Rows: a rounded translucent highlight that sits inside the rail's padding. */
+.agent { border-radius: 7px; padding: 7px 9px; }
+.agent.is-on { background: rgba(255, 255, 255, .085); }
+.agent:hover:not(.is-on) { background: rgba(255, 255, 255, .045); }
+
+/* The action bar. The signature of this kind of window: what you are looking
+   at on the left, what return will do on the right, and the keys that do it. */
+.status {
+  height: 42px;
+  padding: 0 12px;
+  gap: 10px;
+  background: rgba(255, 255, 255, .028);
+  border-top: 1px solid var(--hairline-soft);
+}
+.status .mark-dot {
+  width: 18px; height: 18px;
+  border-radius: 5px;
+  background: linear-gradient(180deg, #2a2a30, #131316);
+  border: 1px solid var(--hairline);
+  position: relative;
+  flex: none;
+}
+/* The icon's own mark, small: a line with something crossing it. */
+.status .mark-dot::before,
+.status .mark-dot::after { content: ""; position: absolute; background: var(--accent); border-radius: 1px; }
+.status .mark-dot::before { left: 3px; right: 3px; top: 5px; height: 1.5px; }
+.status .mark-dot::after { left: 3px; right: 7px; bottom: 5px; height: 1.5px; }
+.status .here {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--secondary);
+  white-space: nowrap;
+}
+.status .divider { width: 1px; height: 16px; background: var(--hairline); flex: none; }
+.status .does { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--secondary); }
+.metrics { background: none; border: 0; border-radius: 0; padding: 0; font-size: 11px; color: var(--tertiary); }
+
+/* Overlays float above the surface with their own edge. */
+dialog { background: rgba(30, 30, 33, .88); border-radius: 12px; }
+html[data-platform="mac"] dialog,
+html[data-platform="windows"] dialog { backdrop-filter: blur(40px) saturate(180%); -webkit-backdrop-filter: blur(40px) saturate(180%); }
+html[data-platform="linux"] dialog { background: #1e1e21; }
+
+/* Tabs sit under the search as a quiet row, not a toolbar. */
+.tabs { border-bottom: 1px solid var(--hairline-soft); }
+
+/* The search leads the window. */
+.bar .search { flex: 1 1 auto; width: auto; max-width: none; margin-left: 4px; }
+.bar .mark { flex: none; }
+
+/* A lit panel rather than a flat one.
+
+   Real glass is the compositor's job and only two of the three platforms will
+   do it. What is available everywhere is the *look* of a lit surface: a
+   highlight along the top edge where light catches, and a gradient falling away
+   from the top-left. Painted over the whole window rather than per panel, so it
+   reads as one piece of material with sections cut into it — which is the
+   difference between this and a grid of tiles. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 100;
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .045), rgba(255, 255, 255, 0) 22%),
+    radial-gradient(120% 80% at 12% -8%, rgba(255, 255, 255, .035), transparent 60%);
+  /* The bright edge, and a darker one under it, which is what makes a panel
+     look like it is in front of something rather than painted on it. */
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .10),
+    inset 0 0 0 1px rgba(255, 255, 255, .055);
+}
+
+/* Sections are cut into the material, so the seams are barely there. */
+#rail, .rail.detail { background: rgba(255, 255, 255, .018); }
+.tabs, .bar, .status { border-color: rgba(255, 255, 255, .05); }
+#rail { border-right-color: rgba(255, 255, 255, .05); }
+.rail.detail { border-left-color: rgba(255, 255, 255, .05); }
+
+/* Controls read as raised out of the surface, not drawn on it. */
+.ghost {
+  background: rgba(255, 255, 255, .07);
+  border: 1px solid rgba(255, 255, 255, .09);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06);
+}
+.ghost:hover { background: rgba(255, 255, 255, .11); }
+.composer input {
+  background: rgba(255, 255, 255, .05);
+  border: 1px solid rgba(255, 255, 255, .08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .03);
+}
+.primary { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .18), 0 1px 3px rgba(0, 0, 0, .4); }
+kbd { background: rgba(255, 255, 255, .10); border-color: rgba(255, 255, 255, .10); box-shadow: inset 0 1px 0 rgba(255,255,255,.07); }

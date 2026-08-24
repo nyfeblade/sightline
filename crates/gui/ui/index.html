@@ -11,9 +11,11 @@
        without you. -->
   <header class="bar">
     <span class="mark">SIGHTLINE</span>
-    <span class="grow"></span>
+    <!-- The search leads the window rather than sitting between the name and
+         the buttons: this is a thing you type into first. -->
     <input id="search" class="search" spellcheck="false" autocomplete="off"
-           placeholder="Search every session…  /" />
+           placeholder="Search every session…" />
+    <span class="grow"></span>
     <button class="ghost" id="resume">Resume…</button>
     <button class="ghost" id="more" title="Everything else">⋯</button>
     <button class="primary" id="new">New session</button>
@@ -76,7 +78,11 @@
 
   <!-- Everything that is a number rather than a control. A status line is where
        measurements belong; the bar at the top is for getting somewhere. -->
+  <!-- The action bar: what you are looking at, and what return will do. -->
   <footer class="status">
+    <span class="mark-dot" aria-hidden="true"></span>
+    <span class="here" id="here">Sightline</span>
+    <span class="divider" aria-hidden="true"></span>
     <span id="note"></span>
     <span class="grow"></span>
     <span class="metrics" id="counts"></span>

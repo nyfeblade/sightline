@@ -17,6 +17,16 @@ const text = (id, value) => {
   const node = el(id);
   if (node) node.textContent = value;
 };
+// Which platform this window is on, so the stylesheet can tell the difference
+// between a surface the compositor will blur behind and one it will not.
+// macOS vibrancy and Windows acrylic are real; Wayland has no blur-behind, so
+// a translucent window on Linux is just the desktop showing through, ungraded.
+document.documentElement.dataset.platform = /Mac OS X/.test(navigator.userAgent)
+  ? "mac"
+  : /Windows/.test(navigator.userAgent)
+    ? "windows"
+    : "linux";
+
 const make = (tag, cls, text) => {
   const node = document.createElement(tag);
   if (cls) node.className = cls;
