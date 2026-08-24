@@ -576,12 +576,17 @@ pub fn owned_all() -> Vec<crate::owned::Owned> {
 /// to the feed, the stats and the notifications until this existed.
 ///
 /// Destructive by design, and for one caller: whoever holds the publisher lock.
-pub fn owned_drain() -> (Vec<crate::bus::Event>, u64) {
+pub fn owned_drain() -> Result<(Vec<crate::bus::Event>, u64), String> {
     match owned_home() {
-        Home::Here => crate::owned::drain(),
-        Home::Daemon => match crate::daemon::ask(&crate::daemon::Request::Drain) {
-            Ok(crate::daemon::Reply::Drained { events, lost }) => (events, lost),
-            _ => (Vec::new(), 0),
+        Home::Here => Ok(crate::owned::drain()),
+        Home::Daemon => match crate::daemon::ask(&crate::daemon::Request::Drain)? {
+            crate::daemon::Reply::Drained { events, lost } => Ok((events, lost)),
+            // Most likely a daemon older than this binary: it is holding the
+            // sessions and does not know the word. Swallowing that returned an
+            // empty drain forever, which looks exactly like sessions that did
+            // nothing — the silent failure this whole path exists to avoid.
+            crate::daemon::Reply::Failed { why } => Err(why),
+            other => Err(format!("the daemon answered {other:?} to a drain")),
         },
     }
 }

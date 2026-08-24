@@ -641,6 +641,8 @@ pub struct App {
     gateway: Option<gateway::Gateway>,
     /// held for as long as this process is the one journalling
     publisher_lock: Option<bus::PublisherLock>,
+    /// The last complaint about collecting held sessions, so it is said once.
+    drain_trouble: Option<String>,
     /// the commit at each session's head, refreshed on its own slower clock
     heads: HashMap<String, stream::Commit>,
     /// the journal-loss figure last surfaced, so it is said when it changes
@@ -718,6 +720,7 @@ impl App {
             watcher: stream::Watcher::new(),
             gateway: None,
             publisher_lock: None,
+            drain_trouble: None,
             heads: HashMap::new(),
             journal_warned: 0,
             last_head_scan: Instant::now() - Duration::from_secs(60),
@@ -967,7 +970,26 @@ impl App {
         if self.publisher_lock.is_none() {
             return;
         }
-        let (events, lost) = control::owned_drain();
+        let (events, lost) = match control::owned_drain() {
+            Ok(got) => {
+                self.drain_trouble = None;
+                got
+            }
+            // Said once, not four times a second, and said at all: a front end
+            // that quietly stops collecting shows a fleet doing nothing.
+            Err(why) => {
+                let said = format!(
+                    "the sessions Sightline is holding cannot be collected — {why}. \
+                     This is usually a daemon older than this binary: stop it and it \
+                     will be restarted."
+                );
+                if self.drain_trouble.as_deref() != Some(said.as_str()) {
+                    self.say(said.clone());
+                    self.drain_trouble = Some(said);
+                }
+                return;
+            }
+        };
         if lost > 0 {
             self.say(format!(
                 "{lost} event(s) from Sightline's own sessions were dropped before \
