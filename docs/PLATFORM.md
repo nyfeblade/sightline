@@ -209,9 +209,11 @@ yourself, and decisions that stop being re-litigated every morning.
 
 ## Layer 6 — supervision and planning
 
-Status: half built. The foreman exists as a program — `ironsight foreman` watches
-for claimed work and runs its checks and refutations, refusing what does not
-pass. The chief — turning a paragraph of intent into assignments — is not built.
+Status: built. The foreman exists as a program — `ironsight foreman` watches for
+claimed work and runs its checks and refutations, refusing what does not pass.
+`ironsight chief` turns a paragraph of intent into assignments, and cannot
+exceed the ceilings `limits.rs` holds it to. Neither has been lived with; that
+is Layer 7's job, and it is the only honest next step.
 
 Two roles, deliberately separate because they fail differently.
 
@@ -320,7 +322,7 @@ with the cost visibility Ironsight already provides.
     3  lineage and task records      done
     4  verification                  done
     5  intent artifacts              done
-    6  foreman                       done · chief not built
+    6  foreman                       done · chief done · ceilings enforced
     7  measure, honestly             a fortnight of real use
     8  organisations                 only with evidence from 7
 
