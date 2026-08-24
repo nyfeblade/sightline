@@ -23,117 +23,100 @@
    refused or failed. A colour doing both brand and alarm is a colour you stop
    seeing, which is the opposite of what an alarm is for. */
 :root {
-  /* Space black. Cool by a few degrees so it is not a dead flat #000, which
-     shows every gradient banding artefact a compositor can produce. */
-  --void: #07080a;
-  --plane: #0b0d11;
-  --raised: #12151b;
-  --edge: #1b1f26;
-  --edge-soft: #121620;
+  /* macOS Human Interface. Depth by elevation, not by borders: each surface is
+     a step lighter than the one behind it, and the only lines are hairlines of
+     low-opacity white.
 
-  /* Four steps, meant to be obviously different. One mid-grey applied to
-     everything is what makes an interface look generated: nothing is
-     emphasised, so nothing is legible at a glance.
+     Every ink below is measured against the base rather than picked by eye.
+     Ratios on #181818:
 
-       ink    what you are here to read
-       body   secondary content, still content
-       muted  labels and metadata — deliberately quiet
-       faint  timestamps and furniture, nearly gone */
-  /* Measured, not eyeballed. Contrast against the ground, WCAG:
+       text       #f5f5f7   16.3 : 1
+       secondary  #d2d2d7   11.8 : 1
+       tertiary   #b0b0b6    8.2 : 1
+       quaternary #98989d    6.2 : 1
 
-       ink    #e8ebf0   16.8 : 1   passes AA for body text
-       body   #c3cad6   12.0 : 1   passes AA for body text
-       muted  #8b95a6    6.4 : 1   passes AA for body text
-       faint  #5f6878    3.4 : 1   passes AA for large text and UI furniture
+     The whole ramp was raised after the greys read as hard to see in use. The
+     lower two were Apple's own #8e8e93 and #6e6e73, at 5.5 and 3.5 — the second
+     of which is below the readable threshold outright, and the first of which
+     passed the threshold and still was not comfortable. A number that clears a
+     bar is not the same as text somebody can read all day. All four steps clear
+     AA for body text now, and there is still a visible step between each. */
+  --base: #181818;
+  --surface: #1e1e1e;
+  --overlay: #222222;
+  --raised: #2a2a2c;
+  --hairline: rgba(255, 255, 255, .09);
+  --hairline-soft: rgba(255, 255, 255, .055);
+  --highlight: rgba(255, 255, 255, .10);
 
-     The bottom two were #6d7686 (4.38) and #434a57 (2.25). The first missed the
-     4.5 body threshold and was carrying labels; the second failed everything and
-     was carrying timestamps, the keyboard hints and the status bar. Quiet is a
-     rank in a hierarchy, not a licence to be unreadable — and anything a person
-     is expected to read now clears the bar for reading. */
-  --ink: #e8ebf0;
-  --body: #c3cad6;
-  --muted: #8b95a6;
-  --faint: #5f6878;
+  --text: #f5f5f7;
+  --secondary: #d2d2d7;
+  --tertiary: #b0b0b6;
+  --quaternary: #98989d;
 
-  /* The interface, talking about itself — and it talks in white.
-     
-     Blue was the obvious choice and it is the wrong one twice over. Every dark
-     developer tool uses it, so it says nothing about this one; and spending the
-     only saturated colour on "the selected row" leaves the states that actually
-     matter competing for what is left. White costs nothing and is unmistakable
-     on this ground.
+  /* Two blues on purpose, which is what Apple ships. #007AFF is the system
+     accent and is used where it is a *fill* with white on top. As text it
+     measures 4.42:1 on this base — just under the readable threshold — so the
+     dark-mode variant #0A84FF carries any accent that is lettering. */
+  --accent: #007aff;
+  --accent-text: #0a84ff;
+  --accent-wash: rgba(0, 122, 255, .16);
+  --focus-ring: 0 0 0 2px rgba(0, 122, 255, .5);
 
-     What it buys is the rule below: on this screen, any colour at all means
-     something is happening. */
-  --signal: #f0f3f8;
-  --signal-dim: #4a515e;
-  --signal-wash: rgba(240, 243, 248, .07);
+  /* Native status colours. */
+  --running: #30d158;
+  --paused: #ffd60a;
+  --failed: #ff453a;
+  --idle: #a1a1a6;
 
-  /* State. Never the accent, and each means exactly one thing.
+  --ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+        "Inter", system-ui, "Segoe UI", sans-serif;
+  --code: "SF Mono", "JetBrains Mono", "JetBrainsMono NFM", "Fira Code",
+          ui-monospace, "Cascadia Mono", Consolas, monospace;
 
-     Blue is freed by the decision above, so it is spent on the verdict that had
-     no colour and needed one: a call the kernel let through in an altered form.
-     That is neither an approval nor a refusal and reading it as either is
-     wrong. */
-  --amend: #4c8dff;
-  --hold: #e0a93b;
-  --hold-dim: #6d5320;
-  --hold-wash: rgba(224, 169, 59, .09);
-  --live: #4fb477;
-  --stop: #e05c58;
-  --other: #9b7ce0;
-
-  /* Names and prose in a grotesque; every figure, path, tool and label in
-     monospace. Reading a fleet is reading an instrument, and setting the
-     numbers in a proportional face makes columns that do not line up. */
-  /* Named fonts first for the machines that have them, then each platform's own
-     system face. Nothing here is downloaded: this is a desktop window with no
-     network, so a stack that ends in `sans-serif` is the whole story.
-
-     The monospace list matters more than it looks. Almost every figure in this
-     window is set in it — ages, token counts, paths, tool names, the verdicts —
-     so a platform falling through to a default that is not actually fixed-width
-     would break the columns this design is built on. Consolas and Cascadia are
-     named for Windows, SF Mono and Menlo for macOS, rather than left to chance. */
-  --ui: "Adwaita Sans", Inter, system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", Roboto, sans-serif;
-  --data: "JetBrains Mono", "JetBrainsMono NFM", "GeistMono NFM", ui-monospace, "SF Mono", Menlo,
-          "Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace;
-
-  /* Compatibility: the rest of this file, and the highlighter, were written
-     against the older names. One palette, two vocabularies, rather than a
-     rename touching a thousand lines. */
-  --ground: var(--void);
-  --panel: var(--plane);
-  --line: var(--edge);
-  --line-soft: var(--edge-soft);
-  --text: var(--ink);
-  --accent: var(--signal);
-  --accent-soft: var(--signal-dim);
-  --accent-wash: var(--signal-wash);
-  --warn: var(--hold);
-  --warn-soft: var(--hold-dim);
-  --warn-wash: var(--hold-wash);
-  --good: var(--live);
-  --bad: var(--stop);
-  --info: var(--other);
+  /* The rest of this file was written against older names. One palette, two
+     vocabularies, rather than a rename touching a thousand lines. */
+  --void: var(--base);
+  --ground: var(--base);
+  --plane: var(--surface);
+  --panel: var(--surface);
+  --edge: var(--hairline);
+  --edge-soft: var(--hairline-soft);
+  --line: var(--hairline);
+  --line-soft: var(--hairline-soft);
+  --ink: var(--text);
+  --body: var(--secondary);
+  --muted: var(--tertiary);
+  --faint: var(--quaternary);
+  --signal: var(--accent);
+  --signal-dim: var(--accent);
+  --signal-wash: var(--accent-wash);
+  --amend: var(--accent-text);
+  --hold: var(--paused);
+  --warn: var(--paused);
+  --warn-soft: rgba(255, 214, 10, .3);
+  --warn-wash: rgba(255, 214, 10, .15);
+  --live: var(--running);
+  --good: var(--running);
+  --stop: var(--failed);
+  --bad: var(--failed);
+  --other: #bf5af2;
+  --info: #bf5af2;
   --sans: var(--ui);
-  --mono: var(--data);
+  --mono: var(--code);
+  --ui-font: var(--ui);
+  --data: var(--code);
+  --glass: rgba(255, 255, 255, .04);
+  --glass-lift: rgba(255, 255, 255, .08);
+  --glass-edge: var(--hairline);
+  --glass-spec: rgba(255, 255, 255, .06);
+  --glass-blur: blur(20px) saturate(180%);
+  --glass-drop: 0 8px 24px rgba(0, 0, 0, .5);
 
-  /* Kept so the older rules that reference them resolve to nothing rather than
-     to glass. Flat surfaces, stated once. */
-  --glass: transparent;
-  --glass-lift: rgba(255, 255, 255, .04);
-  --glass-edge: var(--edge);
-  --glass-spec: transparent;
-  --glass-blur: none;
-  --glass-drop: none;
-
-  /* The sixteen a terminal draws with, so a session's own colours are ours. */
-  --ansi-0: #12151b; --ansi-1: #e05c58; --ansi-2: #4fb477; --ansi-3: #c69026;
-  --ansi-4: #4c8dff; --ansi-5: #9b7ce0; --ansi-6: #39c5cf; --ansi-7: #b7bfcc;
-  --ansi-8: #545d68; --ansi-9: #f47067; --ansi-10: #6bc46d; --ansi-11: #daaa3f;
-  --ansi-12: #6cb6ff; --ansi-13: #b083f0; --ansi-14: #56d4dd; --ansi-15: #e8ebf0;
+  --ansi-0: #2a2a2c; --ansi-1: #ff453a; --ansi-2: #30d158; --ansi-3: #ffd60a;
+  --ansi-4: #0a84ff; --ansi-5: #bf5af2; --ansi-6: #5ac8fa; --ansi-7: #a1a1a6;
+  --ansi-8: #6e6e73; --ansi-9: #ff6961; --ansi-10: #5de37d; --ansi-11: #ffe14d;
+  --ansi-12: #4aa3ff; --ansi-13: #d08bf5; --ansi-14: #7fd8fc; --ansi-15: #f5f5f7;
 }
 
 /* Accent variants. The interface's own voice, and the only thing that changes.
@@ -156,14 +139,14 @@ body {
   /* Flat. The washes that used to be here read as atmosphere and behaved as
      noise: three coloured clouds under a grid of translucent tiles, tinting
      every neutral differently depending on where it happened to sit. */
-  background: var(--void);
-  color: var(--ink);
+  background: var(--base);
+  color: var(--text);
   font-family: var(--ui);
   /* Figures line up in columns even in a proportional face. */
   font-variant-numeric: tabular-nums;
   /* Grows with the window, and stops before it becomes a poster. */
-  font-size: clamp(13.5px, 0.6vw + 8.4px, 17px);
-  line-height: 1.65;
+  font-size: 13px;
+  line-height: 1.45;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto auto;
 }
@@ -1122,81 +1105,6 @@ dialog.wide[open] { display: flex; }
   border-radius: 8px;
   padding: 10px 12px;
 }
-
-/* ── flat ───────────────────────────────────────────────────────────────────
-   What used to be here was a glass recipe: every bar, pane, dialog and control
-   given a translucent fill, a blur, a lit top edge and a drop shadow, with
-   pill radii on the controls.
-
-   It is removed rather than tuned. Three reasons, in order of how much they
-   cost. Translucency over a dark ground turns every label grey-on-grey, and
-   this is an interface people read for hours. A blurred layer under a
-   constantly-updating list is repainted constantly, on a window that is already
-   tailing files. And a capsule with a highlight along the top is the single
-   most recognisable shape in generated interfaces — it says nothing about what
-   the control does, and it says it very loudly.
-
-   What replaces it: surfaces that differ by value, and edges that are a single
-   hairline. */
-.rail, .middle, .bar, .status, .ask { border-radius: 0; box-shadow: none; backdrop-filter: none; }
-
-/* Inputs read as a slot cut into the plane rather than a tile laid on it. */
-.composer input, .search, .menu-grid button, .chip, .answer {
-  background: var(--raised);
-  border: 1px solid var(--edge);
-  border-radius: 3px;
-  box-shadow: none;
-  backdrop-filter: none;
-  transition: border-color .12s ease, background .12s ease;
-}
-.composer input:focus, .search:focus { border-color: var(--signal); outline: none; }
-
-/* The detail panel's actions are a short menu, not a block of capsules: at rest
-   a list of things you could do, which is what they are. */
-.detail .actions { display: block; margin-top: 14px; border-top: 1px solid var(--edge-soft); padding-top: 4px; }
-.detail .actions button {
-  display: block;
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: 0;
-  border-radius: 2px;
-  box-shadow: none;
-  color: var(--body);
-  padding: 6px 8px;
-  margin: 1px 0 0;
-  font-size: .93em;
-}
-.detail .actions button:hover { background: var(--raised); color: var(--ink); }
-.detail .actions button.danger { color: var(--stop); }
-.detail .actions button.danger:hover { background: rgba(224, 92, 88, .12); }
-
-/* Inline toggles, not buttons: they take an edge only on hover or when on. */
-.icon {
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 3px;
-  box-shadow: none;
-  padding: 2px 8px;
-  font-family: var(--data);
-  font-size: .76rem;
-  letter-spacing: .04em;
-  color: var(--muted);
-  transition: background .12s ease, border-color .12s ease, color .12s ease;
-}
-.icon:hover { background: var(--raised); border-color: var(--edge); color: var(--ink); }
-.icon.is-on { background: var(--signal-wash); border-color: var(--signal-dim); color: var(--signal); }
-
-.ghost:hover, .chip:hover, .menu-grid button:hover, .answer:hover {
-  background: var(--raised);
-  border-color: var(--muted);
-  color: var(--ink);
-}
-.expand { border-radius: 0; box-shadow: none; background: transparent; border: 0; border-top: 1px solid var(--edge-soft); }
-
-dialog { border-radius: 4px; border: 1px solid var(--edge); background: var(--plane); box-shadow: 0 24px 64px rgba(0,0,0,.6); }
-dialog::backdrop { background: rgba(4, 5, 7, .62); }
-
 /* ── the boundary ───────────────────────────────────────────────────────────
    The record of what was decided, and the only view here that is about
    Sightline rather than about the agents. Set as an instrument: figures large
@@ -1371,106 +1279,218 @@ details[open] > .actions-head::after { content: "−"; }
    captures are twice the CSS width, so a breakpoint that looked generous was
    firing all the time. */
 
-/* ── legibility pass ────────────────────────────────────────────────────────
-   From a review of the redraw. The parts that were right were right: the two
-   quietest inks were below the readable threshold, the one primary action had
-   become indistinguishable from the buttons beside it, and the controls were
-   smaller than a target ought to be.
+/* ── macOS components ───────────────────────────────────────────────────────
+   Depth by elevation. Cards on a base, hairlines instead of borders, a 4/8px
+   spacing grid, and one system accent that is only ever the interface talking
+   about itself. */
 
-   The parts that were not: body text was never dim (16.8:1 and 12:1 against the
-   ground), state is not signalled by colour alone — every dot carries its word
-   beside it — and the suggested replacement for the muted ink measured 4.15:1,
-   which is dimmer than the 4.38:1 it was meant to fix. */
+/* Panels float on the base with the light coming from above. */
+main { gap: 8px; padding: 8px; }
+.rail, .middle {
+  background: var(--overlay);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .4), inset 0 1px 0 rgba(255, 255, 255, .04);
+}
+#rail { border-right: 1px solid var(--hairline); }
+.rail.detail { border-left: 1px solid var(--hairline); padding: 12px; }
+.rail { padding: 8px; }
+.middle { background: var(--surface); }
 
-/* The one action that starts something is white on the plane, edged brightly
-   enough to find without hunting. It had drifted to within a hair of `.ghost`,
-   which made "Send" and "Queue" read as the same kind of thing. */
+/* Title bar: translucent, hairline beneath, name set as a name. */
+.bar {
+  height: 44px;
+  padding: 0 12px;
+  gap: 8px;
+  background: rgba(30, 30, 30, .72);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid var(--hairline);
+}
+.mark {
+  font-family: var(--ui);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+  color: var(--text);
+}
+
+/* Controls. 6px small, 8px containers, 12px overlays. */
+.ghost, .primary {
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all .15s ease-in-out;
+}
+.ghost {
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid var(--hairline);
+  color: var(--text);
+}
+.ghost:hover { filter: brightness(1.15); background: rgba(255,255,255,.09); border-color: var(--hairline); color: var(--text); }
 .primary {
-  background: var(--raised);
-  border: 1px solid var(--ink);
-  color: var(--ink);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: #fff;
   font-weight: 600;
 }
-.primary:hover { background: var(--ink); color: var(--void); border-color: var(--ink); }
+.primary:hover { filter: brightness(1.15); background: var(--accent); color: #fff; }
 
-/* Targets you can hit. 5px of vertical padding made a control about 28px tall;
-   these are 38 and the composer's are 40. */
-.ghost, .primary { padding: 9px 15px; line-height: 1.25; }
-.composer .ghost, .composer .primary, .composer button { padding: 11px 17px; }
-.composer input { padding: 11px 14px; }
-
-/* An active tab should be findable at a glance rather than on inspection: the
-   rule under it is thicker, the label is brighter than its neighbours, and the
-   whole strip is given room so the words are not a single mass. */
-.tab { padding: 12px 15px 10px; font-size: .82rem; }
-.tab.is-on { border-bottom-width: 3px; font-weight: 600; }
-.tabs { padding: 3px 10px 0; }
-
-/* Anything a person actually reads is at body weight, whatever its rank. The
-   empty state is the clearest case: it is the only thing on the screen, and it
-   was set in the dimmest ink on the palette. */
-.empty { color: var(--body); font-size: 1.02rem; }
-.hint, .metrics { font-size: .78rem; color: var(--muted); }
-
-
-/* Keyboard focus, visibly. */
-:focus-visible {
-  outline: 2px solid var(--ink);
-  outline-offset: 2px;
-  border-radius: 2px;
+.composer input, .search, .menu-grid button, .chip, .answer {
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--ui);
+  font-size: 13px;
+  transition: all .15s ease-in-out;
 }
+.composer input, .search { padding: 7px 10px; }
+.composer .ghost, .composer .primary { padding: 7px 14px; }
+.search::placeholder, .composer input::placeholder { color: var(--quaternary); }
+.composer input:focus, .search:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
 
-/* The legibility pass above made the tabs bigger, and twelve bigger tabs do not
-   fit: the last two scrolled out of sight, which is worse than small. The
-   active state is what carries the affordance — a thicker rule and a heavier
-   label — so the size goes back and the emphasis stays. */
-.tab { padding: 11px 11px 9px; font-size: .79rem; }
-.tab-split { margin: 8px 7px 8px 11px; }
+/* The system focus halo, everywhere a keyboard can land. */
+:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: 6px; }
 
-/* The status line has to hold its figures and its hints at the same time. It
-   wraps nothing and hides nothing until there is genuinely no room. */
-.status { gap: 14px; font-size: .76rem; }
-/* `overflow: hidden` on a flex item with no basis lets it shrink to nothing,
-   which is what happened: the hints did not truncate, they disappeared. */
-.hint { font-size: .74rem; flex: none; }
-@media (max-width: 1250px) { .hint { display: none; } }
+/* Sidebar: dense rows, the selected one a rounded translucent highlight. */
+.agent { border-radius: 6px; padding: 6px 8px; margin: 1px 0; border-left: 0; transition: background .15s ease-in-out; }
+.agent:hover { background: rgba(255, 255, 255, .05); }
+.agent.is-on { background: var(--highlight); border-left: 0; }
+.agent.is-on .name { color: var(--text); }
+.agent .name { font-size: 13px; font-weight: 500; }
+.agent .age, .agent .ctx { font-size: 11px; color: var(--quaternary); }
+.rail-head { font-size: 11px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--tertiary); padding: 6px 8px; }
 
-/* ── reading, spacing, motion ───────────────────────────────────────────────
-   From a second review. These are the parts that make the thing easier to read
-   without reversing what it is.
-
-   A line of text is hard to follow past roughly 80 characters, and the middle
-   pane is as wide as the window. Conversation gets a measure; tables, diffs and
-   logs keep the full width, because those are scanned in columns rather than
-   read in lines. */
-.pane { padding: 20px 26px; }
-.pane.talk > *, .pane.boundary .decisions { max-width: 92ch; }
-.pane.talk { padding-left: 32px; }
-
-/* Rows you can pick out at a glance and hit without aiming. */
-.agent { padding: 9px 12px; }
-.agent .name { font-size: .98rem; }
-
-/* Label left, figure right, and the figures in monospace so they form a column
-   rather than a ragged edge. */
-.detail .fact {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 6px 0;
-  border-bottom: 1px solid var(--edge-soft);
+/* Badges: fully rounded, low-opacity fill, high-contrast text. */
+.agent .pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 9999px;
+  padding: 1px 8px;
+  background: rgba(255, 255, 255, .07);
+  color: var(--tertiary);
+  font-family: var(--ui);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: .01em;
 }
+.agent .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; box-shadow: none; }
+.agent .pill.working { background: rgba(48, 209, 88, .15); color: var(--running); }
+.agent .pill.needs { background: rgba(255, 214, 10, .15); color: var(--paused); }
+.agent .pill.ended { background: rgba(255, 255, 255, .05); color: var(--quaternary); }
+
+/* Tabs: the active one takes the accent, as a label and a rule. */
+.tabs { padding: 0 8px; border-bottom: 1px solid var(--hairline); }
+.tab {
+  font-family: var(--ui);
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--tertiary);
+  padding: 10px 10px 8px;
+  border-bottom: 2px solid transparent;
+  transition: color .15s ease-in-out;
+}
+.tab:hover { color: var(--text); }
+.tab.is-on { color: var(--accent-text); border-bottom-color: var(--accent); font-weight: 500; }
+.tab.wide { color: var(--quaternary); }
+.tab.wide:hover { color: var(--secondary); }
+.tab.wide.is-on { color: var(--accent-text); }
+.tab-split { background: var(--hairline); margin: 8px 8px 8px 12px; }
+
+/* Detail panel: label left, value right, hairline between. */
+.detail h3 { font-size: 15px; font-weight: 600; margin: 4px 0 2px; }
+.detail .sub { font-size: 12px; color: var(--tertiary); }
+.detail .fact { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--hairline-soft); }
 .detail .fact:last-of-type { border-bottom: 0; }
-.detail .fact .v { font-family: var(--data); text-align: right; color: var(--ink); }
-.detail .fact .k { color: var(--muted); }
+.detail .fact .k { font-size: 12px; color: var(--tertiary); }
+.detail .fact .v { font-size: 12px; font-family: var(--code); color: var(--text); text-align: right; }
+.group { font-size: 11px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--tertiary); margin: 16px 0 4px; }
 
-/* State carries a shape as well as a colour, so it survives being printed,
-   dimmed, or seen by someone who does not separate red from green: running is
-   filled, waiting on a person is ringed, ended is hollow. The word is beside it
-   either way — that was always true and stays true. */
-.agent .pill.needs::before { background: none; box-shadow: 0 0 0 2px currentColor inset; width: 7px; height: 7px; }
-.agent .pill.ended::before { background: none; box-shadow: inset 0 0 0 1px currentColor; }
+/* Actions fold away behind one row. */
+.detail details.actions { margin-top: 12px; border-top: 1px solid var(--hairline-soft); }
+.actions-head { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 8px 6px; font-size: 11px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--tertiary); }
+.actions-head::-webkit-details-marker { display: none; }
+.actions-head::after { content: "+"; margin-left: auto; color: var(--quaternary); }
+details[open] > .actions-head::after { content: "−"; }
+.actions-head:hover { color: var(--text); }
+.detail .actions button { display: block; width: 100%; text-align: left; background: none; border: 0; border-radius: 6px; box-shadow: none; color: var(--text); padding: 6px 8px; margin: 1px 0 0; font-size: 13px; font-weight: 400; transition: background .15s ease-in-out; }
+.detail .actions button:hover { background: rgba(255, 255, 255, .07); }
+.detail .actions button.danger { color: var(--failed); }
+.detail .actions button.danger:hover { background: rgba(255, 69, 58, .15); }
+
+/* Inline toggles. */
+.icon { background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 3px 8px; font-family: var(--ui); font-size: 11px; font-weight: 500; color: var(--tertiary); transition: all .15s ease-in-out; }
+.icon:hover { background: rgba(255,255,255,.07); border-color: transparent; color: var(--text); }
+.icon.is-on { background: var(--accent-wash); border-color: transparent; color: var(--accent-text); }
+
+/* Keyboard cues, in the grey key badges the system asks for. */
+.key, kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, .09);
+  border: 1px solid var(--hairline);
+  color: var(--secondary);
+  font-family: var(--ui);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+/* Status bar: figures as pills, hints as keys. */
+.status { height: 34px; padding: 0 12px; gap: 8px; background: transparent; border-top: 1px solid var(--hairline-soft); align-items: center; }
+.metrics {
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid var(--hairline);
+  border-radius: 9999px;
+  padding: 2px 10px;
+  font-family: var(--ui);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--secondary);
+}
+.metrics.quiet:hover { filter: brightness(1.15); color: var(--text); }
+.hint { flex: none; font-family: var(--ui); font-size: 11px; color: var(--quaternary); }
+
+/* Panes and reading. */
+.pane { padding: 16px; }
+.pane.talk > * { max-width: 78ch; }
+.empty { max-width: 44ch; margin: 12vh auto 0; text-align: center; color: var(--secondary); font-size: 13px; line-height: 1.5; }
+.whose { display: flex; align-items: baseline; gap: 8px; margin-bottom: 12px; }
+.whose-name { font-size: 15px; font-weight: 600; color: var(--text); }
+.whose-where { font-family: var(--code); font-size: 11px; color: var(--tertiary); }
+
+/* Overlays: 12px, floating, with the base dimmed behind them. */
+dialog {
+  border-radius: 12px;
+  border: 1px solid var(--hairline);
+  background: rgba(34, 34, 34, .92);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, .6);
+  color: var(--text);
+}
+dialog::backdrop { background: rgba(0, 0, 0, .45); }
+
+/* The boundary view, in the system's terms. */
+.verdicts { border-bottom: 1px solid var(--hairline); margin: -16px -16px 12px; }
+.verdict { padding: 12px 16px; border-right: 1px solid var(--hairline-soft); }
+.verdict .figure { font-family: var(--ui); font-size: 26px; font-weight: 600; letter-spacing: -.02em; color: var(--text); }
+.verdict .label { font-size: 11px; font-weight: 500; letter-spacing: .06em; color: var(--tertiary); }
+.verdict.deny .figure { color: var(--failed); }
+.verdict.asked .figure { color: var(--paused); }
+.verdict.rewrite .figure { color: var(--accent-text); }
+.decisions { font-family: var(--code); font-size: 12px; }
+.decision { border-bottom: 1px solid var(--hairline-soft); padding: 6px 0; }
+.decision .at { color: var(--quaternary); }
+.decision.deny .verdict-mark { color: var(--failed); }
+.decision.rewrite .verdict-mark { color: var(--accent-text); }
 
 /* Someone who has asked the system to stop moving things has asked this too. */
 @media (prefers-reduced-motion: reduce) {
@@ -1480,3 +1500,14 @@ details[open] > .actions-head::after { content: "−"; }
     transition-duration: .001ms !important;
   }
 }
+
+/* Keyboard cues: the key you press, then what it does. */
+.hint { display: flex; align-items: center; gap: 12px; }
+.cue { display: inline-flex; align-items: center; gap: 5px; }
+.cue-what { color: var(--quaternary); font-size: 11px; }
+@media (max-width: 1180px) { .hint { display: none; } }
+
+/* The disclosure marker belongs at the far edge of the row, not against the
+   word. `margin-left: auto` needs the row to actually fill its column. */
+.detail details.actions { width: 100%; }
+.actions-head { width: 100%; }

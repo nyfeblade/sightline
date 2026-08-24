@@ -2236,7 +2236,39 @@ function ask(title, value = "") {
 // Deliberately none of the meaning colours: amber (--warn), green (--good) and
 // red (--bad) each say something, and a colour that means something cannot also
 // be a preference — picking one would collapse "needs you" onto "selected".
-const ACCENTS = ["#539bf5", "#986ee2", "#39c5cf", "#e879a6", "#7f96c4", "#adbac7"];
+// macOS system colours. Green, yellow and red are deliberately absent: they mean
+// running, needs-you and failed, and a colour that means something cannot also
+// be a preference.
+const ACCENTS = ["#007aff", "#bf5af2", "#ff375f", "#5e5ce6", "#40c8e0", "#98989d"];
+
+// The palette above changed, so the key does too. A stored pick from the old
+// palette would otherwise sit on top of the new colours and make the change look
+// like it never happened — which is exactly what it did once already.
+const ACCENT_KEY = "accent.macos";
+
+/// Lift a colour until it is readable on `ground`, and no further.
+///
+/// Mixing towards white in small steps rather than jumping to a fixed tint: the
+/// hue survives, and a colour that was already readable is returned untouched.
+function readableOn(hex, ground, want) {
+  const chan = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const lin = (c) => {
+    c /= 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  const lum = (rgb) => 0.2126 * lin(rgb[0]) + 0.7152 * lin(rgb[1]) + 0.0722 * lin(rgb[2]);
+  const back = lum(chan(ground));
+  const contrast = (rgb) => {
+    const a = lum(rgb);
+    const [hi, lo] = a > back ? [a, back] : [back, a];
+    return (hi + 0.05) / (lo + 0.05);
+  };
+  let rgb = chan(hex);
+  for (let step = 0; step < 24 && contrast(rgb) < want; step++) {
+    rgb = rgb.map((c) => Math.min(255, Math.round(c + (255 - c) * 0.08)));
+  }
+  return `#${rgb.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+}
 
 function dim(hex, amount) {
   const n = parseInt(hex.slice(1), 16);
@@ -2253,7 +2285,7 @@ function dim(hex, amount) {
 function chosenAccent() {
   let saved = null;
   try {
-    saved = localStorage.getItem("accent");
+    saved = localStorage.getItem(ACCENT_KEY);
   } catch {
     saved = null;
   }
@@ -2272,7 +2304,14 @@ function useAccent(hex) {
   root.setProperty("--accent", hex);
   root.setProperty("--accent-soft", dim(hex, 0.6));
   root.setProperty("--accent-wash", `${hex}1f`);
-  localStorage.setItem("accent", hex);
+  // The accent is used two ways and they have different requirements. As a fill
+  // it carries white on top, so any of these work. As *lettering* it has to be
+  // readable on the base, and #007AFF measures 4.42:1 there — under the line.
+  // This is why macOS ships a second blue for dark mode, and why the text form
+  // is lifted here until it clears rather than assumed to be fine.
+  root.setProperty("--accent-text", readableOn(hex, "#181818", 4.5));
+  root.setProperty("--focus-ring", `0 0 0 2px ${hex}80`);
+  localStorage.setItem(ACCENT_KEY, hex);
   for (const s of el("swatches").children) s.classList.toggle("is-on", s.dataset.hex === hex);
 }
 
@@ -2403,7 +2442,26 @@ function writing(title, where, text) {
 on("code-close", "click", () => el("code").close());
 useAccent(chosenAccent());
 
-el("hint").textContent = "1…9 panes · n new · / search · f fill · y accept · ⋯ for the rest";
+// Shortcuts read as keys rather than as a sentence: the thing you press is set
+// in a key badge, and what it does is beside it in plain words.
+{
+  const hint = el("hint");
+  clear(hint);
+  const cues = [
+    ["1…9", "panes"],
+    ["n", "new"],
+    ["/", "search"],
+    ["f", "fill"],
+    ["y", "accept"],
+    ["⋯", "the rest"],
+  ];
+  for (const [press, does] of cues) {
+    const cue = make("span", "cue");
+    cue.append(make("kbd", null, press));
+    cue.append(make("span", "cue-what", does));
+    hint.append(cue);
+  }
+}
 wireDragging();
 
 // Two rhythms. Everything around the edges — the list, the counts, the detail —
