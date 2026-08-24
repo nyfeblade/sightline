@@ -77,23 +77,70 @@ same stream-json pipes Ironsight already uses. Extracted from
     responses are: { subtype: "success" | "error", request_id, response }
     interrupt carries: cancel_queued
 
-**This has not been driven yet.** It was read out of the binary, not exercised.
-Verifying it is the first task in any plan below, because two prior conclusions
-in this project were wrong for exactly the reason that this one might be: they
-were drawn from `--help` and from observed behaviour rather than from trying the
-thing.
+**This has been driven, and it works.** A permission request was routed out of a
+headless session, answered by the host, and the tool call went through — on a
+subscription, from plain JSON over the pipes Ironsight already uses, with no SDK,
+no Node and no API key.
 
-If it works, it means:
+### What was actually exercised
 
-- a permission can be routed to a human watching a fleet, on a subscription,
-  from Rust, with no Node SDK and no API key
-- a turn can be interrupted mid-flight
-- permission mode can be changed while a session runs
-- hooks and MCP can be driven from the host
+    client → {"type":"control_request", request_id, request:{
+                 subtype:"initialize", hooks:{}, sdkMcpServers:["ironsight"]}}
+    CLI    → control_response success, carrying the session's command list
 
-That is most of what "own the loop" was going to buy, without writing a model
-client. It does not give model choice, and it does not give a scheduler — those
-still have to be built.
+    CLI    → control_request mcp_message: JSON-RPC "initialize"
+    client → control_response with the MCP server's capabilities
+    CLI    → control_request mcp_message: "notifications/initialized"
+    client → control_response (empty)
+    CLI    → control_request mcp_message: "tools/list"
+    client → control_response listing one tool, `approve`
+
+    ... the model decides to call Write ...
+
+    CLI    → control_request mcp_message: "tools/call" → approve
+             arguments: { tool_name: "Write",
+                          input: { file_path: ..., content: "yes\n" } }
+    client → control_response: { content:[{ type:"text",
+                 text:"{\"behavior\":\"allow\",\"updatedInput\":{...}}" }] }
+
+    ... the write succeeds, the file exists, the turn completes ...
+
+The session was started with:
+
+    claude -p --verbose --input-format stream-json --output-format stream-json \
+           --permission-prompt-tool mcp__ironsight__approve
+
+### Two traps, each of which cost a run
+
+**`--permission-prompt-tool` is not in `--help`.** It exists in the binary and
+works. An earlier conclusion in this project that the flag "does not exist in
+2.1.241" was drawn from the help text and was wrong.
+
+**Every `control_request` needs a `control_response`, including the ones wrapping
+JSON-RPC notifications.** A notification needs no JSON-RPC reply, but the control
+envelope around it still does. Miss that and the session stalls silently after
+the handshake — no error, no output, nothing in stderr.
+
+### What it means
+
+- Permissions can be Ironsight's, routed to Sightline, on a subscription
+- Turns can be interrupted (`interrupt`, with `cancel_queued`)
+- Permission mode can be changed mid-session (`set_permission_mode`)
+- **Ironsight can host MCP tools inside every session it starts.** This is the
+  syscall interface from the changes list below, already available. An agent
+  asking Ironsight for something stops being "shell out to `ironsight` and hope
+  it was granted permission" and becomes a tool call over a channel Ironsight
+  owns — which removes the grant-list problem rather than working around it.
+
+This is most of what "own the loop" was going to buy, without writing a model
+client. It does **not** give model choice, and it does **not** give a scheduler.
+Those are the remaining reasons to go native, and they are weaker reasons than
+permissions were.
+
+Note the mechanism: `canUseTool` in the Node SDK and `--permission-prompt-tool`
+are alternatives — the binary refuses both at once — and the SDK almost certainly
+implements the former using the latter plus an in-process MCP server. Ironsight
+does not need the SDK to reach it.
 
 ## The proposed shape
 
@@ -130,9 +177,10 @@ belongs in the heart" is this.
 
 **A syscall interface.** An agent that wants something from Ironsight currently
 shells out to `ironsight` and hopes it has been granted permission. That is not
-an interface. A socket with a defined request set and an identity per session
-makes the permission question answerable and removes the grant-list problem
-entirely.
+an interface. It should be MCP tools that Ironsight hosts inside each session it
+starts — verified as working above — so the request arrives over a channel
+Ironsight owns, with the session's identity attached, and no grant list to get
+wrong.
 
 **A permission model of Ironsight's own.** Currently delegated to whichever
 vendor binary is running, which is why a worker can be refused something you
@@ -149,9 +197,10 @@ interface; delete the session.
 
 ## The changes, itemised
 
-1. **Verify the control protocol.** Drive `claude -p --input-format stream-json`,
-   answer a `can_use_tool` request, and interrupt a turn. Everything else is
-   contingent on this. Half a day.
+1. ~~**Verify the control protocol.**~~ Done — see above. A permission was
+   routed to the host and answered, and the tool call went through. What remains
+   unexercised is `interrupt` and `set_permission_mode`; both are present in the
+   binary and ride the same envelope, so the risk is low but not zero.
 
 2. **Promote `agent::Adapter` from a launcher to an engine interface.** Today it
    says what to run and how to read a transcript. It should say: start a session,
@@ -212,9 +261,12 @@ These are genuinely undecided and are the most useful things to argue about.
    ability" is unbounded. The difference between those two is whether this ships.
 
 2. **Does a native API engine exist in the plan at all**, or is delegating the
-   turn to a vendor binary the permanent architecture? Owning the model turn
-   costs an edit tool and context management — years of accumulated tuning, and
-   most of the quality gap. Owning the session costs neither.
+   turn to a vendor binary the permanent architecture? This is the most important
+   open question, and the control-protocol result moved it: permissions and
+   interrupt no longer require going native, so the remaining reasons are model
+   choice and owning the scheduler. Owning the model turn costs an edit tool and
+   context management — years of accumulated tuning, and most of the quality gap.
+   Owning the session costs neither.
 
 3. **Tree depth.** Super Chief → project chief → agents is three levels. "A chief
    may create a chief" is unbounded, and unbounded is where cost, ceilings and
@@ -239,11 +291,29 @@ in `PLATFORM.md` — a fortnight of measured use — and it has never been run.
 Everything above Layer 4 rests on it. Building a kernel on the assumption raises
 the stakes on finding out.
 
-**Quota.** Subscription usage is not a separate pool. A fleet and the session
-you are typing in draw from the same allowance.
+**Quota is the binding constraint, not capability or money.** Subscription usage
+is not a separate pool: a fleet and the session you are typing in draw from the
+same allowance. This is observed, not predicted — the one real chief run in this
+project died mid-flight with "You've hit your session limit · resets 11:50pm".
+It was not a design failure, it was the plan's ceiling.
 
-**Two prior conclusions in this project were confidently wrong** and were only
+That promotes two items above. Ceilings stop being a safety feature and become
+the thing that stops one project eating a day's allowance. And model-per-role
+stops being an optimisation: a foreman reading exit codes does not need a
+frontier model, and the difference between running a whole fleet on the largest
+model and running only the judgement on it is the difference between a few hours
+and a day.
+
+**Nothing here requires API keys.** The subscription already powers Ironsight
+today — `--owned` sessions run `claude -p` as you. What was missing was never
+model access; it was control over the session, which the protocol above
+provides.
+
+**Three prior conclusions in this project were confidently wrong** and were only
 caught by driving the real thing: that `--allowedTools` restricts (it grants),
-and that stream-json has no permission seam (it has one, undocumented). Any
-claim in this document that has not been exercised should be treated the same
-way.
+that `--permission-prompt-tool` does not exist (it does, hidden from `--help`),
+and that stream-json has no permission seam (it has a whole control protocol).
+All three came from reading help text and watching behaviour rather than
+exercising the interface. Any claim in this document that has not been exercised
+should be treated the same way — including the parts of the control protocol
+that have only been read out of the binary.
