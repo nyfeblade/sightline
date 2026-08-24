@@ -7,23 +7,23 @@ and what to do next".
 
 ## One line
 
-The buildable roadmap is complete through Layer 5. Layers 0–5 are built, the
-foreman half of Layer 6 is built, plus two things off the original roadmap (a
-self-contained daemon backend and owned sessions over stream-json). Everything
-is green; the next real work is making owned sessions first-class.
+Layers 0–6 are built as far as code can build them, plus the two things that
+were off the roadmap (a self-contained daemon, and sessions Ironsight drives
+over stream-json) — and those sessions are now a first-class kind rather than a
+one-shot command. Everything is green. What is left is not another layer; it is
+the experiment.
 
 ## Where the code is
 
-The full, current tip is the local branch **`solidify`** (everything stacks up
-to it). `master`/`main` are the published `v0.4.1` base (`aa01afa`) and are
-untouched. The stack, bottom to top:
+The full, current tip is the local branch **`solidify`**. `master`/`main` are the
+published `v0.4.1` base (`aa01afa`) and are untouched. The stack, bottom to top:
 
     master (v0.4.1)
       └─ review/1-platform     event model, verification, daemon, hardening
           └─ review/2-gui      Talk view, redesign, icon
               └─ review/3-stream-json  owned sessions   (== ironsight-integration)
                   └─ layer-5-intent    constitution + brief, tasks --json
-                      └─ solidify      engine panic-resilience   ← full tip
+                      └─ solidify      engine panic-resilience, then this work
 
 Three PRs are open on GitHub (`nyfeblade/ironsight`), each reviewing exactly one
 slice (base is the slice below):
@@ -32,14 +32,18 @@ slice (base is the slice below):
 - PR #2 `review/2-gui → review/1-platform`
 - PR #3 `review/3-stream-json → review/2-gui`
 
-All three had a cloud ultrareview; **20 findings across them, all real, all
-fixed with tests** (the fix commits are the branch tips). `ironsight-integration`
-is stale — it sits at the PR #3 tip and does NOT include Layer 5 / tasks --json /
-solidify. `solidify` is the one to build from and to base any new branch on.
+All three had a cloud ultrareview; 20 findings across them, all real, all fixed
+with tests. `ironsight-integration` is stale — it sits at the PR #3 tip.
+`solidify` is the one to build from and to base any new branch on.
 
-Layer 5 and later are not yet in a review PR. Consider opening a PR #4
+Layer 5 and everything after it is **not yet in a review PR**, and that is now
+the largest untested-by-adversary surface. Worth opening PR #4
 (`layer-5-intent → review/3-stream-json`) and PR #5 (`solidify → layer-5-intent`)
-if you want them to get the same adversarial pass.
+before anything else.
+
+**The work below is committed on `solidify`?** Check `git log --oneline -3` and
+`git status`. If it is still uncommitted, that is deliberate — the standing rule
+here is to commit only when asked — and it is the first thing to ask about.
 
 ## What is built (layers)
 
@@ -49,79 +53,105 @@ if you want them to get the same adversarial pass.
   written to show the work wrong was run, did not fire, and has been seen to
   fire at least once. Nothing runs from a repo's `.ironsight/checks.toml` until
   `ironsight trust` approves those exact commands.
-- **5 intent** — `.ironsight/checks.toml`'s sibling `.ironsight/constitution.md`,
-  parsed into fixed sections; `ironsight brief <who>` renders a task-focused
-  packet (constraints that bear on the task via `[tag]` scoping, success,
-  escalation). `ironsight new --task` briefs the session as its opening message.
-- **6 supervision** — foreman built; **chief not built** (it is a methodology/
-  skill — "a session with ironsight on its path and a brief" — not new runtime;
-  the CLI it needs is done).
-- **Off-roadmap:** a daemon (`ironsight serve`, control socket, chosen via
-  `IRONSIGHT_BACKEND=daemon`) so sessions outlive the window without tmux; and
-  owned sessions (`ironsight run`) that drive Claude Code over
-  `--input-format stream-json` with no terminal.
+- **5 intent** — `.ironsight/constitution.md`, parsed into fixed sections;
+  `ironsight brief <who>` renders a task-focused packet. `--task` briefs a
+  session as its opening message. Both halves are now in the window: a session's
+  brief, and the constitution read and edited in place.
+- **6 supervision** — foreman built; **chief not built** (it is a methodology —
+  "a session with ironsight on its path and a brief" — not new runtime).
+- **Off-roadmap:** the daemon (`ironsight serve`), and owned sessions.
 
-176 test functions; `cargo test`, `node crates/gui/ui/tokenize.test.mjs`,
-`cargo fmt --check`, and `cargo check --target x86_64-pc-windows-msvc -p
-ironsight-core -p ironsight` are all clean on the tip.
+## Owned sessions, which is what changed most recently
 
-## What to build next (recommended order)
+`ironsight new <path> --owned` starts a session Ironsight holds itself, spoken to
+over Claude Code's stream-json with no terminal. It takes the same folder, model,
+permission mode, name, task, parent and brief as any other session.
 
-1. **Owned sessions as first-class.** They exist only in the one-shot `ironsight
-   run` today (`crates/core/src/owned.rs`, `OwnedSession`). Make them a real
-   session type: started, persistent, in the session list, watchable and
-   talkable in the GUI Talk view. This is what makes the daemon + stream-json
-   investment pay off, and it is the substrate a chief drives.
-2. **Interactive permissions for owned sessions.** The documented gap — route
-   each permission through Claude Code's `--permission-prompt-tool` so an owned
-   session can be answered from one place instead of running under fixed
-   settings. Pairs with #1.
-3. **Wire the Aider adapter.** Oldest loose end: `agent/aider.rs::conversations()`
-   is built and tested but nothing calls it, so an Aider session shows as a bare
-   screen. Small; proves the adapter layer means something.
-4. **Surface the brief/constitution in the GUI** — a session's brief in its
-   panel; the constitution read/edited in the window.
+The design turns on one fact, which was checked against the real tool before a
+line was written: **a headless stream-json session writes an ordinary
+transcript**, at the usual `~/.claude/projects/<slug>/<id>.jsonl`. So every view
+already works on it, and Ironsight only supplies the two things a watched session
+gets for free — liveness (no registry entry is ever written for one) and a way in
+(no pane to type into). See `## A second kind of session` in `STATE.md`.
 
-Then the research tier (not "build"): the chief, organisations (Layer 7), and
-the experiment — does supervised orchestration beat one person driving the same
-agents by hand (Layer 7/8 of `PLATFORM.md`). That is a bet to run, not code.
+What it cannot do, and why, is worth reading before you try to fix it:
+**Claude Code 2.1.241 has no `--permission-prompt-tool`.** The passoff before
+this one assumed that seam existed. It does not; `claude --help` has no such
+flag. In this mode a tool the settings do not allow is refused outright — the
+stream carries `system/permission_denied` and the call returns an error — so
+there is no request to route to a person. What was done instead: the permission
+mode is chosen at start and shown in `ironsight owned`, and a refusal is
+published as `PermissionAnswered` by a `Policy` named after that mode. If a later
+Claude Code adds a permission seam, `owned::Parser` is where it lands.
+
+## What to build next
+
+There is no obvious next layer, which is itself the finding. In rough order of
+what would actually be worth the effort:
+
+1. **Get Layer 5 and this work adversarially reviewed** (PR #4 and #5 above).
+   Everything below the line has had a cloud ultrareview; this has had tests and
+   one pair of eyes.
+2. **Run the experiment.** Does supervised orchestration beat one person driving
+   the same agents by hand (Layer 7/8 of `PLATFORM.md`)? Owned sessions exist
+   now, so a chief has something to drive and the comparison is finally
+   possible. This is a bet to run, not code to write.
+3. **Live with the daemon.** It survived crashes and 400 concurrent requests and
+   now holds owned sessions too, but not a week of real use. Sustained daily use
+   on `IRONSIGHT_BACKEND=daemon` is the only thing that will find what is left.
+4. **The chief**, once 2 has said whether it is worth having.
 
 ## The honest gaps (cannot be closed from this Linux box)
 
 - Windows has never been *run* on Windows; the macOS app has never been *run* on
   macOS. Both compile, cross-check clean, and are unit-tested — not the same as
-  working there. Needs a real Windows box and a Mac.
-- The daemon survived crashes and 400 concurrent requests, but not a week of
-  real use. Sustained daily use on the daemon backend is unproven.
+  working there. Needs a real Windows box and a Mac. Note that owned sessions
+  fall back to being held in-process there, because the daemon needs a Unix
+  socket, so they end with the window.
+- The daemon has not been lived with for a week.
+- Aider is wired but was proved with a stand-in binary and a real recorded
+  history, not by driving actual Aider against a model. The reading is tested
+  against a real run's output; the *pane discovery* was tested with a shim.
 
 ## Gotchas that will cost you time
 
-- **NEVER `pkill`/`killall` by process name** (`ironsight`, `ironsight-gui`).
-  It kills the user's own running TUI/app, and a killed TUI strands their
-  terminal in mouse-reporting mode (every mouse move types garbage). This
-  happened three times in one session. Kill only specific pids you recorded,
-  and run test processes in an isolated `IRONSIGHT_DATA_DIR`. `pkill -f` also
-  matches the Bash-tool's own shell → bare `Exit code 144`. To rescue a stranded
-  terminal: `printf '\033[?1003l\033[?1002l\033[?1000l\033[?1006l\033[?25h' >
-  /dev/pts/N`, or have the user Ctrl+C then `reset`.
+- **NEVER `pkill`/`killall` by process name** (`ironsight`, `ironsight-gui`,
+  `claude`). It kills the user's own running TUI/app, and a killed TUI strands
+  their terminal in mouse-reporting mode. Kill only specific pids you recorded,
+  and `tmux kill-session -t <exact name>` for tmux. `pkill -f` also matches the
+  Bash-tool's own shell → bare `Exit code 144`. To rescue a stranded terminal:
+  `printf '\033[?1003l\033[?1002l\033[?1000l\033[?1006l\033[?25h' > /dev/pts/N`.
+- **Run tests and experiments under `IRONSIGHT_DATA_DIR=<scratch>`.** The daemon
+  socket, journal and task store all live there, so an experiment cannot then
+  touch the user's real fleet — and the daemon you start is one you can kill by
+  the pid you recorded.
 - **The user runs the RELEASE binaries** (`target/release/`), launched from the
   desktop entry. Rebuilding only `debug` means your changes never reach them.
-  After meaningful changes: `cargo build --release`, and the app is current on
-  next launch. This bit twice.
+  After meaningful changes: `cargo build --release`.
 - **The GUI UI is compiled into the binary** (Tauri `frontendDist`). Editing
-  `crates/gui/ui/*` does nothing until you rebuild the gui crate. Bit once.
+  `crates/gui/ui/*` does nothing until you rebuild the gui crate. It does rebuild
+  correctly on a UI-only change — verified — but `strings` on the binary will not
+  find your CSS, because the assets are compressed. Do not conclude from that
+  that the rebuild failed.
+- **`cargo test` runs doctests.** An indented block in a `//!` comment is a Rust
+  doctest and will fail to compile; fence it as ```` ```text ````. One had been
+  failing on the tip unnoticed, which means somebody had been reading
+  `cargo test --lib` and calling it green.
 - **The stack is a real dependency chain.** review/1-platform builds as
-  `-p ironsight-core -p ironsight` only (the GUI crate needs a `control::WHERE`
-  rename that lands in review/2-gui). Fixes flow bottom-up: fix a lower branch,
-  then `git rebase` the upper branches onto it, then force-push with
-  `--force-with-lease`.
-- **Screenshotting the GUI:** use the `screenshot-gui-app` skill; can only
-  capture an app launched under XWayland, never the user's existing Wayland
-  windows. Rebuild the gui crate before capturing or you screenshot the old UI.
+  `-p ironsight-core -p ironsight` only. Fixes flow bottom-up: fix a lower
+  branch, rebase the upper ones, force-push with `--force-with-lease`.
+- **Screenshotting the GUI:** use the `screenshot-gui-app` skill; you can only
+  capture an app you launched under XWayland, and there is no `xdotool` on this
+  box, so you cannot click. To see a dialog, temporarily open it from a
+  `setTimeout` at the end of `app.js`, capture, then remove it. To choose which
+  session is selected, write `order.json` in the scratch data dir — the window
+  selects the first live session in that order.
 - **Verify against the artifact that ships, assert the truth not the shape.**
-  This codebase has repeatedly had tests pass while a field carried wrong data,
-  a redaction masked the wrong thing, or a refutation could never fire. Every
-  fix here got a test that would have failed before it.
+  This codebase has repeatedly had tests pass while a field carried wrong data.
+  Every fix here got a test that would have failed before it.
+- **Check the tool before designing around it.** Two of the assumptions in the
+  previous passoff were wrong in ways ten minutes with `claude --help` and a
+  Python driver would have caught. Drive the real thing and read what comes out.
 
 ## Working style the user asked for
 

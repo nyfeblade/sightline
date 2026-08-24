@@ -4,7 +4,8 @@
 more perishable document: what is true right now, what is half-done, and what
 would trip someone up if nobody said so.
 
-Last updated 22 August 2026, at v0.4.1, after Phase 1.
+Last updated 23 August 2026, at v0.4.1, after Phase 2 and the two layers above
+it: sessions Ironsight holds itself, and intent in the window.
 
 ## What works
 
@@ -64,14 +65,86 @@ The load-bearing one is the round trip. A highlighter that loses or reorders a
 character is worse than none, because the code being read is then not the code
 that is there.
 
-## What is built but not yet wired
+## A second kind of session
+
+A session Ironsight holds itself, driven over Claude Code's structured JSON with
+no terminal in the way. `ironsight new <path> --owned` starts one; it takes the
+same folder, model, permission mode, name, task, parent and brief as any other
+session, and only the way in is different.
+
+The thing that makes it a session rather than a second sort of object is that
+Claude Code in this mode writes an *ordinary* transcript — the same
+`~/.claude/projects/<slug>/<id>.jsonl` every watched session writes. So the feed,
+the files, the plan, the tree, the cost, the Talk view and the stream all work
+for it already: Ironsight only has to say which transcript is which session, and
+that it is alive. The conversation id comes off the wire on the agent's first
+line, and everything downstream keys on it.
+
+Two things it needs that a watched session does not:
+
+- **Liveness.** A session driven over pipes never writes a Claude Code registry
+  entry, so nothing else on the machine knows it is running. Ironsight says so
+  itself, in the registry's own shape (`registry::Live::owned`), which is why
+  every judgement downstream — working, waiting, ended — is made by the same
+  code for both kinds.
+- **A way in.** There is no pane to type into. `App::deliver` routes a message
+  either to a terminal or down the pipe, and every path that sends one —
+  typing, queueing, broadcasting, a foreman — goes through it, so what "sent"
+  means cannot differ between the two.
+
+They are held by the daemon wherever there can be one, so they outlive every
+window: that is the whole reason for owning a session rather than shelling out.
+`control::owned_home` is the rule, and it is separate from where
+pseudo-terminals live, because tmux cannot hold a pipe.
+
+    ironsight new <path> --owned [--task WHAT] [--permission-mode P]
+    ironsight owned                 what is held, and what each is doing
+    ironsight send <who> <text>     the same command for both kinds
+    ironsight stop <who>            and the same for stopping one
+
+Proved end to end: started with a task, briefed from the project's constitution
+as its opening message, answered, spoken to again from a *different* process
+minutes later, both turns in one transcript, listed in the terminal view and
+talked to in the window — then stopped by name.
+
+### What it cannot do, and why
+
+Nobody can be asked anything mid-run. Claude Code 2.1.241 has no
+`--permission-prompt-tool`, and in `--input-format stream-json` a tool the
+session's settings do not allow is refused outright: the stream carries a
+`system/permission_denied` and the call comes back as an error. There is no
+request to answer, so there is nothing for Ironsight to route to a person.
+
+What there is instead is honesty about it. The permission mode is chosen when
+the session starts (`--permission-mode`, the same flag a terminal session takes)
+and shown in `ironsight owned`, because it decides every tool call for the life
+of the session. And a refusal is published as `PermissionAnswered` by a
+`Policy` named after that mode — the first thing to produce that event, and the
+truthful reading of it: a decision was made on your behalf, by settings, and you
+were not asked. Without it a session getting nothing done looked like a session
+with bad luck.
+
+Interrupting is the other absence: there is no Escape to press and no interrupt
+in the input format, so the window and the terminal view both say so rather than
+sending a key nowhere.
+
+## Aider, read rather than watched
 
 The Aider adapter reads `.aider.chat.history.md` — what was asked, what came
-back, the model, tokens and cost — and every part of it is tested against a real
-Aider run. Nothing calls `conversations()` yet, and the session reader has no
-branch for a markdown record, so an Aider session currently shows as a screen
-and nothing more. Wiring it is the next obvious piece of work and the first
-demonstration that the adapter layer means something.
+back, the model, tokens and cost — and is tested against a real Aider run. It is
+now called: a pane running `aider` in a folder that has a record becomes a
+session identified by that folder, which is how Aider itself resumes one, and
+`Session::pump` reads markdown rather than JSON for it.
+
+The two things markdown needs that JSON does not: an answer runs over as many
+lines as it takes, so consecutive lines are joined into one thing that was said
+rather than a dozen feed entries; and only the "chat started" line carries a
+time, so how recently the session was active is taken from the record's own
+mtime — otherwise a session working now reports its age from when it opened.
+
+Cost is added up per exchange rather than read from the running session total
+aider prints beside it, because a second run of aider in the same folder starts
+that total again from zero.
 
 ## Known rough edges
 
@@ -86,7 +159,16 @@ resident size elsewhere, because only Linux keeps the shared figure. The second
 number undercounts; it does not overcount, which is the failure that matters.
 
 Sessions created before the rename are named `scope-N`. They are still
-recognised, and new ones are `ironsight-N`.
+recognised, and new ones are `ironsight-N`. Sessions Ironsight holds by pipe are
+`owned-N` — a name space of their own on purpose, so that typing the name of a
+terminal session cannot reach one of these.
+
+A session is matched to the pane it runs in partly by looking for its id in the
+pane's command line, which is how a conversation adopted seconds ago is found
+before it has registered itself. A path that happens to contain a session id
+therefore matches too. Nothing real does that — it takes a 36-character uuid in
+a command line — but a test that puts a fixture under a directory named after
+the running session will watch it claim the wrong pane, which cost an hour once.
 
 Cross-checking the app crate for Windows from Linux needs `llvm-rc`. Everything
 else checks from here:
@@ -112,6 +194,16 @@ prefix scopes a constraint to tasks that mention it, so a database worker is not
 handed the front-end rules. Starting a session with `--task` briefs it this way
 as its opening message. Nothing here asks a model anything — intent paraphrased
 on the way in is intent you can no longer trust.
+
+Both halves are in the window now. A session with a task offers its brief, and
+it is rendered when asked rather than stored — the constitution as it stands
+plus the task as it stands, which answers "what would this session be told
+today", the question worth asking when its work has drifted. Any session offers
+its project's constitution, read and edited in place; a project without one is
+handed the empty document, with the headings the parser actually looks for, so
+what someone writes reaches a brief instead of sitting in a file nothing reads.
+It is the only thing in the window that writes into your repository, and it
+writes exactly the path it showed you.
 
 ## Hardening, and what each fix actually guarantees
 
@@ -205,6 +297,12 @@ terminal that happened to start it cannot hang it up.
     ironsight serve          run it yourself, to watch it
     ironsight attach <who>   hand this terminal to a session it holds
 
+Owned sessions are held by the daemon too, and by a rule of their own
+(`control::owned_home`): the daemon wherever there can be one, this process
+where there cannot — Windows, or a run that asked for `hosted`. Where
+pseudo-terminals live says nothing about where a pipe lives, and tmux cannot
+hold one.
+
 `attach` exists because tmux gave that for free, and losing it would mean no way
 back in when the window is the problem. It polls rather than streams: the daemon
 answers questions and does not push, which costs a frame of latency and buys a
@@ -266,4 +364,12 @@ The vocabulary is already reserved — `ChecksPassed` and `ChecksFailed` are in
 the stream's version 1 and nothing emits them yet — so a consumer written today
 does not change when they start arriving.
 
-Still outstanding from before, and still small: wiring the Aider adapter.
+Phase 2 is built: checks, fire-once refutations, the foreman, and the intent
+layer above them. Owned sessions are the substrate for what comes next, and the
+Aider adapter is wired, so neither is outstanding any more.
+
+What is left is not more of the same shape. The honest next questions are the
+ones no more code answers by itself: whether supervised orchestration actually
+beats one person driving the same agents by hand, and what a chief — a session
+with Ironsight on its path and a brief — does with a fleet of owned sessions now
+that there is one to drive.

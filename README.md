@@ -96,6 +96,7 @@ ironsight waiting              # what is blocked, and what it is asking
 ironsight approve api-7c       # answer it (option 1 by default)
 ironsight adopt nyfe-32        # (re)open a conversation in tmux so it can be steered
 ironsight prune                # close Ironsight sessions whose process has exited
+ironsight owned                # the sessions Ironsight is holding itself
 ```
 
 ## Managing sessions
@@ -186,6 +187,34 @@ you empty ones.
 ```
 ~/api --agent codex --name refactor fix the auth tests
 ```
+
+Aider is the one that keeps its record somewhere else — `.aider.chat.history.md`,
+beside the code rather than in a central store — and Ironsight reads it, so an
+Aider session shows what was asked, what came back, its model and what it cost,
+the same as any other.
+
+### Sessions Ironsight holds itself
+
+Everything above watches a session running in a terminal. Ironsight can also
+*hold* one: started by it, spoken to over Claude Code's structured JSON, with no
+terminal in the way.
+
+```sh
+ironsight new ~/api --owned --task "make the auth tests pass"
+ironsight owned                     # what is held, and what each is doing
+ironsight send owned-1 "try the other approach"
+ironsight stop owned-1
+```
+
+It is a session like any other — it appears in the list, it has a feed and files
+and a cost, you talk to it in the window, and `--task` briefs it from the
+project's constitution as its opening message. Two differences are worth knowing.
+It outlives every window, because a process of Ironsight's own is holding it
+rather than a terminal. And nothing can be asked of it mid-run: Claude Code in
+this mode refuses a tool its settings do not allow rather than prompting, so what
+it may do is settled when it starts, with the same `--permission-mode` a terminal
+session takes. A refusal shows up as a permission answered by policy, so a
+session getting nothing done says why.
 
 ### Naming and closing
 
