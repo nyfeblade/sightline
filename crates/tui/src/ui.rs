@@ -1,6 +1,6 @@
 //! Rendering. Nyfe palette: midnight ground, gold accent, everything else muted.
 
-use ironsight_core::app::{App, View};
+use ironsight_core::app::{self, App, View};
 use ironsight_core::event::{Ev, Kind};
 use ironsight_core::session::{Session, Status};
 use ratatui::Frame;
@@ -214,6 +214,29 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Layout::vertical([Constraint::Min(4), Constraint::Length(card_rows)]).areas(left);
 
     draw_header(f, app, header);
+
+    // The Hub's other face. The session list stays — what is running is still
+    // the thing you are directing — and the right-hand side answers the other
+    // question instead: what work is being done here, what this project says
+    // done means, and what may be spent doing it.
+    if app.mode == app::Mode::Workflow {
+        draw_sessions(f, app, list);
+        draw_card(f, app, card);
+        draw_workflow(f, app, right);
+        if blocked {
+            draw_approval(f, app, strip);
+        }
+        draw_footer(f, app, footer);
+        app.regions.menu = None;
+        if app.menu {
+            draw_menu(f, app, area);
+        }
+        if app.help {
+            draw_help(f, area);
+        }
+        return;
+    }
+
     draw_sessions(f, app, list);
     draw_card(f, app, card);
     match app.view {
@@ -1390,6 +1413,160 @@ fn draw_approval(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
+/// What work is being directed here, rather than what is happening right now.
+///
+/// Three questions, in the order somebody actually asks them: can anything here
+/// tell a worker it is wrong, what has been asked for, and what is it allowed
+/// to cost.
+fn draw_workflow(f: &mut Frame, app: &mut App, area: Rect) {
+    let here = app.here();
+    let state = app.project_state(&here);
+    let limits = ironsight_core::limits::in_force(&here).unwrap_or_default();
+    let rows = app.work_rows();
+
+    let block = Block::bordered()
+        .border_style(Style::new().fg(pal().dim))
+        .title(Span::styled(" workflow ", Style::new().fg(pal().gold)))
+        .title_bottom(Span::styled(
+            " c → hand work to a chief · ctrl+w → back to monitor ",
+            muted(),
+        ));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let w = inner.width as usize;
+    let mut lines: Vec<Line> = Vec::new();
+    let head = |lines: &mut Vec<Line>, text: &str| {
+        lines.push(Line::from(Span::styled(
+            format!(" {text}"),
+            Style::new().fg(pal().muted).add_modifier(Modifier::BOLD),
+        )));
+    };
+    let row = |lines: &mut Vec<Line>, mark: &str, text: String, ok: bool| {
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("  {mark} "),
+                Style::new().fg(if ok { pal().ok } else { pal().muted }),
+            ),
+            Span::styled(
+                clip_to(&text, w.saturating_sub(6)),
+                Style::new().fg(pal().body),
+            ),
+        ]));
+    };
+
+    head(
+        &mut lines,
+        &format!(
+            "THIS PROJECT · {}",
+            clip_to(&shorten(&here.to_string_lossy()), w.saturating_sub(16))
+        ),
+    );
+    row(
+        &mut lines,
+        if state.checks > 0 { "✓" } else { "·" },
+        match state.checks {
+            0 => "no checks — nothing here can tell a worker it is wrong".into(),
+            n => format!("{n} check(s) say what finished means"),
+        },
+        state.checks > 0,
+    );
+    row(
+        &mut lines,
+        if state.trusted { "✓" } else { "·" },
+        if state.trusted {
+            "approved to run".into()
+        } else {
+            "not approved yet — ironsight trust".into()
+        },
+        state.trusted,
+    );
+    row(
+        &mut lines,
+        if state.invariants > 0 { "✓" } else { "·" },
+        match state.invariants {
+            0 => "no invariants — a claim here can only ever reach checked".into(),
+            n => format!("{n} invariant(s) that must never fire"),
+        },
+        state.invariants > 0,
+    );
+    row(
+        &mut lines,
+        if state.constitution { "✓" } else { "·" },
+        if state.constitution {
+            "a constitution, so a worker is briefed".into()
+        } else {
+            "no constitution — a worker starts knowing only its task".into()
+        },
+        state.constitution,
+    );
+
+    lines.push(Line::from(""));
+    head(&mut lines, "CEILINGS");
+    row(
+        &mut lines,
+        if limits.any() { "✓" } else { "·" },
+        limits.describe(),
+        limits.any(),
+    );
+    if limits.any() {
+        row(
+            &mut lines,
+            " ",
+            format!("{} running now", app.running_sessions()),
+            true,
+        );
+    } else {
+        row(
+            &mut lines,
+            " ",
+            "a chief will not start without one".into(),
+            false,
+        );
+    }
+
+    lines.push(Line::from(""));
+    head(&mut lines, &format!("WORK · {}", rows.len()));
+    if rows.is_empty() {
+        row(
+            &mut lines,
+            " ",
+            "nothing is assigned. c hands something to a chief.".into(),
+            false,
+        );
+    }
+    for (id, state_label, who, what) in rows.iter().take(inner.height as usize) {
+        let tone = match state_label.as_str() {
+            "verified" => pal().ok,
+            "checked" => pal().text,
+            "blocked" => pal().gold,
+            "abandoned" => pal().dim,
+            _ => pal().body,
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!("  {id:<4}"), Style::new().fg(pal().dim)),
+            Span::styled(format!("{state_label:<10}"), Style::new().fg(tone)),
+            Span::styled(format!("{:<14} ", clip_to(who, 14)), muted()),
+            Span::styled(
+                clip_to(what, w.saturating_sub(32)),
+                Style::new().fg(pal().body),
+            ),
+        ]));
+    }
+
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+/// A path with home written the way a person writes it.
+fn shorten(path: &str) -> String {
+    let home = std::env::var("HOME").unwrap_or_default();
+    match (home.is_empty(), path.strip_prefix(&home)) {
+        (false, Some(rest)) if rest.is_empty() => "~".into(),
+        (false, Some(rest)) => format!("~{rest}"),
+        _ => path.to_string(),
+    }
+}
+
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     if let Some(input) = &app.input {
         f.render_widget(
@@ -1453,7 +1630,11 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     }
     // Deliberately short: everything else is one keypress away behind the
     // actions menu and the help sheet.
-    let keys = "  j/k session · n new · s send · - remove · enter actions · / search · ? help";
+    let keys = if app.mode == app::Mode::Workflow {
+        "  ctrl+w monitor · c hand work to a chief · j/k session · ? help"
+    } else {
+        "  j/k session · n new · s send · ctrl+w workflow · enter actions · ? help"
+    };
     let state = format!(
         "{} · {} · {} ",
         app.view.label(),
@@ -1676,7 +1857,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
         .title(Span::styled(" keys ", Style::new().fg(pal().gold)));
     let inner = block.inner(rect);
     f.render_widget(block, rect);
-    let rows: [(&str, &str); 37] = [
+    let rows: [(&str, &str); 47] = [
         ("  look", ""),
         ("j / k, ↓ ↑", "select a session"),
         (
@@ -1733,6 +1914,16 @@ fn draw_help(f: &mut Frame, area: Rect) {
         ("", "  the conversation stays on disk — R still finds it"),
         ("+", "put back everything taken off the list"),
         ("F2", "rename the selected session"),
+        ("", ""),
+        ("  workflow", ""),
+        ("ctrl+w", "turn the Hub round: monitoring ⇄ directing work"),
+        ("c", "hand work to a chief, in workflow"),
+        ("", "  it appears in the list like any other session"),
+        ("", ""),
+        ("  workflow", ""),
+        ("ctrl+w", "turn the Hub round: monitoring ⇄ directing work"),
+        ("c", "in workflow, hand work to a chief"),
+        ("", "  it appears in the list like any other session"),
         ("", ""),
         ("  other", ""),
         ("$", "subscription view or API-equivalent cost"),

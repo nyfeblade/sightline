@@ -2492,6 +2492,12 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                             app.list_top_right = 0;
                         }
                     }
+                    // Before the plain `w` below: match arms are ordered, and
+                    // an unguarded `Char('w')` swallows the modified one, so
+                    // this read as ctrl+w doing nothing but cycle the view.
+                    KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        app.switch_mode()
+                    }
                     KeyCode::Char('w') => {
                         app.view = app.view.next();
                         app.list_sel = 0;
@@ -2546,6 +2552,13 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     KeyCode::Char('A') => app.run_action('A'),
                     KeyCode::Char('R') => app.run_action('R'),
                     KeyCode::F(2) => app.run_action('N'),
+                    // The Hub's other face. Everything about directing work —
+                    // assignments, a chief, what this project says done means,
+                    // what it may spend — lives there rather than in a terminal
+                    // command, which is where it all started and was wrong.
+                    KeyCode::Char('c') if app.mode == app::Mode::Workflow => {
+                        app.open_input(Prompt::Chief)
+                    }
                     KeyCode::Char('x') => app.run_action('x'),
                     // Closing and removing are different things. `x` ends the
                     // process; these take rows off the list, and the

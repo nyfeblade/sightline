@@ -1,6 +1,8 @@
 //! Discovery, refresh, and view state.
 
 use crate::agent;
+use crate::brief;
+use crate::checks;
 use crate::control::{self, Approval, Pane};
 use crate::event::{Ev, Filter};
 use crate::git;
@@ -14,6 +16,39 @@ use crate::{bus, gateway, stream, work};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
+
+/// The two things the Hub is for.
+///
+/// Watching a fleet and directing one are different jobs with different
+/// questions, and mixing them into one screen made the second invisible: every
+/// piece of supervision built on top of this — chiefs, ceilings, what a project
+/// says done means — arrived as a terminal command, in a program whose whole
+/// purpose is that you should not need one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Mode {
+    /// What is happening right now, and how to reach into it. Present tense.
+    #[default]
+    Monitor,
+    /// What work is being directed, and by whom. The layers above the fleet:
+    /// assignments, chiefs, what done means here, and what may be spent.
+    Workflow,
+}
+
+impl Mode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Mode::Monitor => "monitor",
+            Mode::Workflow => "workflow",
+        }
+    }
+
+    pub fn other(self) -> Mode {
+        match self {
+            Mode::Monitor => Mode::Workflow,
+            Mode::Workflow => Mode::Monitor,
+        }
+    }
+}
 
 /// What a typed line will do when it is submitted.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -33,6 +68,8 @@ pub enum Prompt {
     /// what to call the session about to start
     NameIt,
     Adopt,
+    /// what a chief is to get done
+    Chief,
 }
 
 /// Where things were drawn last frame, so a click can be turned back into the
@@ -96,6 +133,38 @@ pub struct NewSpec {
     /// Start it as a session Ironsight holds itself — driven over structured
     /// JSON, with no terminal — rather than one running in a terminal.
     pub owned: bool,
+}
+
+/// A path, shortened the way the interface shortens them.
+fn short_path(path: &str) -> String {
+    let home = dirs_home().to_string_lossy().into_owned();
+    match path.strip_prefix(&home) {
+        Some(rest) if rest.is_empty() => "~".into(),
+        Some(rest) => format!("~{rest}"),
+        None => path.to_string(),
+    }
+}
+
+/// What a project has written down, for the Hub to say so.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ProjectState {
+    pub checks: usize,
+    pub invariants: usize,
+    pub trusted: bool,
+    pub constitution: bool,
+    pub limits: bool,
+}
+
+impl ProjectState {
+    /// Whether work here can be refused by something other than an opinion.
+    pub fn can_refuse(&self) -> bool {
+        self.checks > 0 && self.trusted
+    }
+
+    /// Whether a claim here can ever get past "checked".
+    pub fn can_verify(&self) -> bool {
+        self.can_refuse() && self.invariants > 0
+    }
 }
 
 /// Where Ironsight keeps what it knows between runs: the order you chose, the
@@ -433,6 +502,8 @@ pub struct App {
     pub sel: usize,
     pub filter: Filter,
     pub view: View,
+    /// which of the Hub's two faces is showing
+    pub mode: Mode,
     /// false = subscription (no dollar figures), true = show API-equivalent cost
     pub show_cost: bool,
     pub file_sel: usize,
@@ -540,6 +611,7 @@ impl App {
             sel: 0,
             filter: Filter::All,
             view: View::Feed,
+            mode: Mode::default(),
             show_cost: false,
             file_sel: 0,
             file_top: 0,
@@ -1013,6 +1085,14 @@ impl App {
                 None => return,
             },
             Prompt::Broadcast => format!("send to all {} steerable", self.steer.len()),
+            Prompt::Chief => {
+                let where_ = self
+                    .current()
+                    .map(|s| s.cwd.clone())
+                    .filter(|c| !c.is_empty())
+                    .unwrap_or_else(|| ".".into());
+                format!("what should a chief get done in {}", short_path(&where_))
+            }
             Prompt::NewSession => {
                 "new session · path [--agent a] [--model m] [--effort e] [--mode p] [first message]"
                     .into()
@@ -1107,6 +1187,24 @@ impl App {
             Prompt::Broadcast => {
                 let n = self.broadcast(&text);
                 self.say(format!("sent to {n} sessions"));
+            }
+            Prompt::Chief => {
+                let where_ = self
+                    .current()
+                    .map(|s| s.cwd.clone())
+                    .filter(|c| !c.is_empty())
+                    .unwrap_or_else(|| ".".into());
+                let cwd = PathBuf::from(expand(&where_));
+                match self.start_chief(&cwd, &text, None) {
+                    Ok(id) => {
+                        let name = self
+                            .owned_of(&id)
+                            .map(|o| o.name.clone())
+                            .unwrap_or_else(|| id.clone());
+                        self.say(format!("{name} is supervising — it appears in the list"));
+                    }
+                    Err(e) => self.say(e),
+                }
             }
             Prompt::Queue => {
                 let Some(id) = input.target.clone() else {
@@ -1359,6 +1457,132 @@ impl App {
         }
         // The rate limit exists to stop a held key starting a hundred sessions;
         // it must not stop the one just started from appearing.
+        self.last_owned_scan = Instant::now() - Duration::from_secs(60);
+        self.discover();
+        Ok(id)
+    }
+
+    /// Turn the Hub round to its other face.
+    pub fn switch_mode(&mut self) {
+        self.mode = self.mode.other();
+        let mode = self.mode;
+        self.say(match mode {
+            Mode::Monitor => "monitor · what is happening now".to_string(),
+            Mode::Workflow => "workflow · what work is being directed".to_string(),
+        });
+    }
+
+    /// The folder the Hub is currently pointed at: the selected session's, or
+    /// wherever Ironsight was started.
+    pub fn here(&self) -> PathBuf {
+        let cwd = self
+            .current()
+            .map(|s| s.cwd.clone())
+            .filter(|c| !c.is_empty())
+            .unwrap_or_else(|| {
+                std::env::current_dir()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| ".".into())
+            });
+        PathBuf::from(expand(&cwd))
+    }
+
+    /// Every task, newest first, for the workflow face.
+    pub fn work_rows(&self) -> Vec<(String, String, String, String)> {
+        let mut rows: Vec<(String, String, String, String)> = self
+            .work
+            .tasks()
+            .iter()
+            .map(|t| {
+                let who = self
+                    .sessions
+                    .iter()
+                    .find(|s| s.id == t.session)
+                    .map(|s| s.label())
+                    .unwrap_or_else(|| t.session[..t.session.len().min(8)].to_string());
+                (
+                    t.id.clone(),
+                    t.state.label().to_string(),
+                    who,
+                    t.assignment.clone(),
+                )
+            })
+            .collect();
+        rows.reverse();
+        rows
+    }
+
+    /// Whether a project has said enough for supervised work to mean anything.
+    ///
+    /// Not a gate — a chief will run without any of it — but the difference
+    /// between a worker that can be told it is wrong and one that can only be
+    /// believed, so the Hub says which you have.
+    pub fn project_state(&self, cwd: &std::path::Path) -> ProjectState {
+        let suite = checks::Suite::find(cwd).ok().flatten();
+        ProjectState {
+            checks: suite.as_ref().map(|(_, s)| s.checks.len()).unwrap_or(0),
+            invariants: suite.as_ref().map(|(_, s)| s.invariants.len()).unwrap_or(0),
+            trusted: suite
+                .as_ref()
+                .map(|(root, s)| checks::trusted(root, s))
+                .unwrap_or(false),
+            constitution: brief::Constitution::find(cwd).is_some(),
+            limits: limits::in_force(cwd).map(|l| l.any()).unwrap_or(false),
+        }
+    }
+
+    /// Start a chief on a folder, and return the id it is listed under.
+    ///
+    /// Here rather than in the terminal command it started life as, because a
+    /// front end may not grow logic the other needs — and directing work is the
+    /// one thing the Hub exists for, so it cannot be something only a command
+    /// line can do.
+    pub fn start_chief(
+        &mut self,
+        cwd: &std::path::Path,
+        intent: &str,
+        model: Option<&str>,
+    ) -> Result<String, String> {
+        if intent.trim().is_empty() {
+            return Err("a chief needs to be told what is wanted, in your words".into());
+        }
+        if !cwd.is_dir() {
+            return Err(format!("{} is not a folder", cwd.display()));
+        }
+        // Ceilings are not optional here and this is the one place that says so.
+        // Granting something else the power to start sessions is exactly the
+        // case they exist for.
+        let limits = limits::in_force(cwd)?;
+        if !limits.any() {
+            return Err(
+                "a chief starts sessions on your behalf, so it does not start without a                  ceiling. Set one first."
+                    .into(),
+            );
+        }
+        self.with_state();
+        let constitution = brief::Constitution::find(cwd).map(|(_, c)| c);
+        let packet = crate::chief::brief(
+            intent,
+            &cwd.to_string_lossy(),
+            constitution.as_ref(),
+            &limits,
+            &self.work,
+        );
+        let it = control::own(
+            cwd,
+            &owned::Spec::default()
+                .with_model(model)
+                .allowing(crate::chief::GRANTED)
+                .denying(crate::chief::DENIED)
+                .opening(Some(&packet)),
+        )?;
+        let id = if it.session_id.is_empty() {
+            it.name.clone()
+        } else {
+            it.session_id.clone()
+        };
+        // A chief's own work is work, and is tracked like anyone else's.
+        self.assign(&id, &format!("supervise: {intent}"));
         self.last_owned_scan = Instant::now() - Duration::from_secs(60);
         self.discover();
         Ok(id)
