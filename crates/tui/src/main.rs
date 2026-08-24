@@ -2434,7 +2434,6 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     }
                     KeyCode::Char('j') | KeyCode::Down => app.select_session(1),
                     KeyCode::Char('k') | KeyCode::Up => app.select_session(-1),
-                    KeyCode::Tab => app.select_session(1),
                     KeyCode::BackTab => app.select_session(-1),
                     KeyCode::Char('J') => app.move_right(1),
                     KeyCode::Char('K') => app.move_right(-1),
@@ -2456,6 +2455,12 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     // Before the plain `w` below: match arms are ordered, and
                     // an unguarded `Char('w')` swallows the modified one, so
                     // this read as ctrl+w doing nothing but cycle the view.
+                    // Two keys, because one key that a terminal might eat is how
+                    // a feature becomes "it just broke". Tab was a second way to
+                    // do what j already does; turning the Hub round is a better
+                    // use of it, and it is the key anyone reaches for to switch
+                    // between two faces.
+                    KeyCode::Tab | KeyCode::BackTab => app.switch_mode(),
                     KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         app.switch_mode()
                     }

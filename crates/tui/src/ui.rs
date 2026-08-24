@@ -437,6 +437,9 @@ fn draw_sessions(f: &mut Frame, app: &mut App, area: Rect) {
         .iter()
         .map(|s| app.steer.contains_key(&s.id))
         .collect();
+    // Worked out once for the list rather than per row: it reads the task store
+    // each time, and the list is redrawn on every frame.
+    let chiefs: Vec<bool> = app.sessions.iter().map(|s| app.is_chief(&s.id)).collect();
     let mut lines: Vec<Line> = Vec::new();
     for (i, s) in app
         .sessions
@@ -466,6 +469,7 @@ fn draw_sessions(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             ""
         };
+        let chief = *chiefs.get(i).unwrap_or(&false);
         let label_w = w.saturating_sub(age.chars().count() + steer.chars().count() + 5);
         lines.push(row(
             vec![
@@ -474,7 +478,20 @@ fn draw_sessions(f: &mut Frame, app: &mut App, area: Rect) {
                     Style::new().fg(pal().gold),
                 ),
                 Span::styled(format!("{dot} "), Style::new().fg(color)),
-                Span::styled(clip_to(&s.label(), label_w), label_style),
+                // A chief is the one you talk to; the workers are its business.
+                // Without saying which, a fleet is a list of names and the
+                // supervising one is wherever your ordering happens to put it.
+                Span::styled(
+                    clip_to(
+                        &if chief {
+                            format!("chief · {}", s.label())
+                        } else {
+                            s.label()
+                        },
+                        label_w,
+                    ),
+                    label_style,
+                ),
             ],
             vec![
                 Span::styled(
@@ -1462,6 +1479,18 @@ fn draw_workflow(f: &mut Frame, app: &mut App, area: Rect) {
             clip_to(&shorten(&here.to_string_lossy()), w.saturating_sub(16))
         ),
     );
+    // A folder that is not a project at all gets a sentence rather than four
+    // dots. Selecting a session that happens to live in your home directory and
+    // being shown a wall of "no" reads as the screen being broken.
+    if ironsight_core::git::repo_root(&here).is_none() && state.checks == 0 {
+        row(
+            &mut lines,
+            "·",
+            "not a project — select a session in one, or start one there".into(),
+            false,
+        );
+        lines.push(Line::from(""));
+    }
     row(
         &mut lines,
         if state.checks > 0 { "✓" } else { "·" },

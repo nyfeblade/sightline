@@ -764,6 +764,13 @@ impl App {
     /// Pick up sessions that appeared since the last pass, and drop ones whose
     /// file is gone.
     pub fn discover(&mut self) {
+        // What is selected, by name rather than by position. This rebuilds the
+        // list — sessions arrive, ended ones fall out of the window, owned ones
+        // change the id they are listed under when their transcript appears —
+        // and `sel` is an index. Left alone it goes on pointing at whatever
+        // moves into that slot, which in a program where the selected session
+        // is the one you send messages to is the worst drift available.
+        let was = self.sessions.get(self.sel).map(|s| s.id.clone());
         let want = self.candidates();
         let live = registry::scan(&self.sessions_dir);
         let keep: Vec<String> = want
@@ -777,6 +784,14 @@ impl App {
                 // transcript under the projects root and no registry entry, so
                 // neither test above can see it. Its file is the test.
                 || (s.record == agent::Record::AiderMarkdown && s.path.exists())
+                // A session Ironsight is holding by pipe has no transcript
+                // until its agent writes one and never has a registry entry, so
+                // neither test above can see it. Dropping it here and relying on
+                // the owned pass to put it back does not work: that pass is rate
+                // limited, so when it has just run the row simply disappears for
+                // a tick — long enough for the selection to lose it and land on
+                // whatever moved into its place.
+                || self.owned.contains_key(&s.id)
         });
         for path in want {
             let id = path
@@ -810,6 +825,14 @@ impl App {
         self.rescan_panes();
         self.rescan_owned();
         self.apply_hidden();
+        if let Some(id) = was {
+            if let Some(i) = self.sessions.iter().position(|s| s.id == id) {
+                self.sel = i;
+            }
+        }
+        if self.sel >= self.sessions.len() {
+            self.sel = self.sessions.len().saturating_sub(1);
+        }
         self.last_discover = Instant::now();
     }
 
@@ -1266,12 +1289,16 @@ impl App {
                     .unwrap_or_else(|| ".".into());
                 let cwd = PathBuf::from(expand(&where_));
                 match self.start_chief(&cwd, &text, None) {
+                    // Only claim you are looking at it if you are. `show` says
+                    // its own piece when it cannot find the session, and saying
+                    // this over the top would be the interface telling you
+                    // something it has just discovered to be untrue.
                     Ok(id) => {
-                        let name = self
-                            .owned_of(&id)
-                            .map(|o| o.name.clone())
-                            .unwrap_or_else(|| id.clone());
-                        self.say(format!("{name} is supervising — it appears in the list"));
+                        if self.sessions.get(self.sel).map(|s| s.id.as_str()) == Some(id.as_str()) {
+                            self.say(
+                                "this is the chief — talk to it with s, and it will report back",
+                            );
+                        }
                     }
                     Err(e) => self.say(e),
                 }
@@ -1530,6 +1557,38 @@ impl App {
         self.last_owned_scan = Instant::now() - Duration::from_secs(60);
         self.discover();
         Ok(id)
+    }
+
+    /// Select a session and turn to the face where you can talk to it.
+    ///
+    /// Used after starting something. The list is in the order you put it in,
+    /// so a new session lands wherever that order puts it — which is not where
+    /// you are looking.
+    pub fn show(&mut self, id: &str) -> bool {
+        if let Some(i) = self.sessions.iter().position(|s| s.id == id) {
+            self.sel = i;
+            self.follow = true;
+            self.feed_top = 0;
+            self.mode = Mode::Monitor;
+            return true;
+        }
+        // Silently doing nothing is how "it started something" and "I cannot
+        // see it" become the same screen. Say which session could not be found.
+        self.say(format!(
+            "started, but {} is not on the list yet — it will appear",
+            &id[..id.len().min(12)]
+        ));
+        false
+    }
+
+    /// Whether this session is supervising others rather than doing the work.
+    ///
+    /// It is the one you talk to, so the list says which it is.
+    pub fn is_chief(&self, id: &str) -> bool {
+        self.work
+            .task_for(id)
+            .map(|t| t.assignment.starts_with("supervise:"))
+            .unwrap_or(false)
     }
 
     /// Turn the Hub round to its other face.
@@ -1864,6 +1923,11 @@ impl App {
         self.assign(&id, &format!("supervise: {intent}"));
         self.last_owned_scan = Instant::now() - Duration::from_secs(60);
         self.discover();
+        // And you are put in front of it. Telling somebody a chief exists and
+        // leaving them to find it in a list they ordered themselves is most of
+        // the way to not having started one: the whole point is the
+        // conversation, and the conversation is on the other face.
+        self.show(&id);
         Ok(id)
     }
 
@@ -3869,6 +3933,84 @@ mod tests {
         assert_eq!(app.sessions.len(), 1, "the door does add it back");
         app.apply_hidden();
         assert!(app.sessions.is_empty(), "and the filter takes it off again");
+    }
+
+    #[test]
+    fn starting_something_puts_you_in_front_of_it() {
+        // Telling somebody a chief exists and leaving them to find it in a list
+        // they ordered themselves is most of the way to not having started one.
+        let mut app = bare_app();
+        app.fold_owned(vec![
+            an_owned("owned-1", "a-worker", true),
+            an_owned("owned-2", "the-chief", true),
+        ]);
+        app.sel = 0;
+        app.mode = Mode::Workflow;
+
+        app.show("the-chief");
+        assert_eq!(
+            app.sessions[app.sel].id, "the-chief",
+            "the thing just started is the thing selected"
+        );
+        assert_eq!(
+            app.mode,
+            Mode::Monitor,
+            "and on the face where you can talk to it"
+        );
+    }
+
+    #[test]
+    fn the_selection_survives_the_next_refresh_pass() {
+        // The list is rebuilt four times a second. A selection that only holds
+        // until the next tick is not a selection.
+        let mut app = bare_app();
+        app.fold_owned(vec![
+            an_owned("owned-1", "a-worker", true),
+            an_owned("owned-2", "the-chief", true),
+        ]);
+        app.show("the-chief");
+        let chosen = app.sessions[app.sel].id.clone();
+
+        app.last_owned_scan = Instant::now() - Duration::from_secs(60);
+        app.fold_owned(vec![
+            an_owned("owned-1", "a-worker", true),
+            an_owned("owned-2", "the-chief", true),
+        ]);
+        app.apply_hidden();
+        assert_eq!(
+            app.sessions.get(app.sel).map(|s| s.id.as_str()),
+            Some(chosen.as_str()),
+            "still on it after the pass that re-adds owned sessions"
+        );
+    }
+
+    #[test]
+    fn a_rebuilt_list_does_not_move_what_you_had_selected() {
+        // `discover` rebuilds the list every three seconds and `sel` is an
+        // index. Left alone it goes on pointing at whatever moves into that
+        // slot — and the selected session is the one messages are sent to, so
+        // this is the drift that puts a message in the wrong conversation.
+        let mut app = bare_app();
+        app.fold_owned(vec![
+            an_owned("owned-1", "first", true),
+            an_owned("owned-2", "second", true),
+            an_owned("owned-3", "third", true),
+        ]);
+        app.show("third");
+        assert_eq!(app.sessions[app.sel].id, "third");
+
+        // The one above it ends and falls out of the window, so everything
+        // below shifts up by one.
+        let was = app.sessions[app.sel].id.clone();
+        app.sessions.retain(|s| s.id != "first");
+        app.owned.remove("first");
+        if let Some(i) = app.sessions.iter().position(|s| s.id == was) {
+            app.sel = i;
+        }
+        assert_eq!(
+            app.sessions[app.sel].id, "third",
+            "still the session you were looking at, not the one now at its index"
+        );
     }
 
     #[test]
