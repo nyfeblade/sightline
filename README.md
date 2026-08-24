@@ -196,6 +196,39 @@ beside the code rather than in a central store — and Ironsight reads it, so an
 Aider session shows what was asked, what came back, its model and what it cost,
 the same as any other.
 
+### Directing work, not just watching it
+
+Ironsight has two faces. `ctrl+w` turns it round, and in the app the Work tab is
+the same thing.
+
+The one you know is monitoring: what is running, what it is doing, what it is
+asking. The other is workflow, and it answers the question you have when you are
+about to hand something over rather than watch it — whether anything in this
+project can tell a worker it is wrong, what a fleet here may spend, and what has
+been asked for so far.
+
+The first time you point it at a project it will mostly say no: no checks, not
+approved, no invariants, no constitution. One key fixes that. `s`, or "Set this
+project up" in the window, looks at what is in the folder, works out how the
+project is built, and writes a first draft of its checks and a constitution to
+fill in. It says it is a guess, because it is. It never overwrites anything you
+already wrote, and it only approves the checks when it wrote them itself — a
+checks file that arrived with somebody else's code still has to be read.
+
+Then `c` hands work to a chief: a session with Ironsight on its path, a brief
+drawn from your constitution, and a ceiling it cannot raise. It appears in the
+session list like anything else, and you watch it work in the Talk view.
+
+    ctrl+w   turn the Hub round
+    c        hand work to a chief
+    s        set this project up
+    l        ceilings — what a fleet here may run and spend
+    v        run the invariants
+
+Ceilings are not optional for a chief, and that is the one place Ironsight
+insists: something that starts sessions on your behalf does not start without a
+number it cannot change.
+
 ### Reconciling a fork
 
 If you have forked this and customised it, `ironsight glue <version>` brings your

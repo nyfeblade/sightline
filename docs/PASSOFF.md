@@ -61,6 +61,11 @@ before building on top of it.
   and a ceiling it cannot raise. It will not start without ceilings in force,
   because granting something else the power to start sessions is exactly the
   case they exist for.
+- **The Hub's two faces** — `ctrl+w` in the terminal view, the Work tab in the
+  window. Everything above the fleet is reachable from the interface rather than
+  only from a command: hand work to a chief, set a project up, ceilings, run the
+  invariants. `App::start_chief`, `set_up_project`, `run_invariants` and
+  `set_ceilings` live in the engine and the commands call them.
 - **Ceilings** — `limits.rs`. A count of Ironsight's own running sessions and an
   amount of spend, checked at both doors, in a file outside every worktree. A
   project may lower them and never raise them.
@@ -158,6 +163,11 @@ what would actually be worth the effort:
 - **The stack is a real dependency chain.** review/1-platform builds as
   `-p ironsight-core -p ironsight` only. Fixes flow bottom-up: fix a lower
   branch, rebase the upper ones, force-push with `--force-with-lease`.
+- **Match arms are ordered, and this bit three times in one afternoon.** An
+  unguarded `KeyCode::Char('w')` swallows a guarded `Char('w') if ctrl` written
+  below it, and the build says nothing. Every mode-guarded key must be written
+  *above* the plain one. The symptom is a key that silently does the other
+  thing, and it is only visible by looking at the screen.
 - **Screenshotting the GUI:** use the `screenshot-gui-app` skill; you can only
   capture an app you launched under XWayland, and there is no `xdotool` on this
   box, so you cannot click. To see a dialog, temporarily open it from a

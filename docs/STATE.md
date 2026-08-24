@@ -259,6 +259,37 @@ and a daemon built before `owned::Spec` had an `allow` field silently dropped it
 which is why `Spec` is now `deny_unknown_fields` and any change to it bumps the
 wire version.
 
+## The Hub has two faces
+
+Watching a fleet and directing one are different jobs with different questions,
+and mixing them into one screen made the second invisible. Every layer built on
+top of the fleet — a chief, ceilings, what a project says done means, what must
+never stop being true — arrived as a terminal command, in a program whose whole
+purpose is that you should not need one.
+
+`ctrl+w` turns the terminal view round; in the window the Work tab is the same
+thing. The session list stays either way, because what is running is still what
+you are directing. What changes is the question the rest of the screen answers:
+
+    THIS PROJECT   checks, whether they are approved, invariants, a constitution
+                   — that is, whether anything here can tell a worker it is wrong
+    CEILINGS       what a fleet here may do, and how much is in use
+    WORK           every assignment, and how far it got
+
+with `c` to hand work to a chief, `s` to set the project up, `l` for ceilings
+and `v` to run the invariants. All four exist as commands too; the commands now
+call the same engine functions rather than holding the logic themselves, because
+neither front end may grow what the other needs.
+
+Setting a project up is the one that mattered most. Four files and a trust
+ceremony before anything happens is a good reason not to start, and it was the
+reason none of this was being used. `set_up_project` reads what is lying in the
+folder, guesses the build system, writes a first draft of the checks and a
+constitution with the headings the parser looks for, and says it is a guess. It
+never overwrites, and it approves only what it wrote: the trust gate exists
+because a checks file arrives with a clone, and one written at your asking a
+second ago is not that.
+
 ## Invariants: guarantees that can fire
 
 `.ironsight/checks.toml` takes `[[invariant]]` beside `[[check]]`, and they point
