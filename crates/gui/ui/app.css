@@ -75,8 +75,18 @@
   /* Names and prose in a grotesque; every figure, path, tool and label in
      monospace. Reading a fleet is reading an instrument, and setting the
      numbers in a proportional face makes columns that do not line up. */
-  --ui: "Adwaita Sans", Inter, "SF Pro Text", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --data: "JetBrains Mono", "JetBrainsMono NFM", "GeistMono NFM", ui-monospace, "DejaVu Sans Mono", Menlo, monospace;
+  /* Named fonts first for the machines that have them, then each platform's own
+     system face. Nothing here is downloaded: this is a desktop window with no
+     network, so a stack that ends in `sans-serif` is the whole story.
+
+     The monospace list matters more than it looks. Almost every figure in this
+     window is set in it — ages, token counts, paths, tool names, the verdicts —
+     so a platform falling through to a default that is not actually fixed-width
+     would break the columns this design is built on. Consolas and Cascadia are
+     named for Windows, SF Mono and Menlo for macOS, rather than left to chance. */
+  --ui: "Adwaita Sans", Inter, system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", Roboto, sans-serif;
+  --data: "JetBrains Mono", "JetBrainsMono NFM", "GeistMono NFM", ui-monospace, "SF Mono", Menlo,
+          "Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace;
 
   /* Compatibility: the rest of this file, and the highlighter, were written
      against the older names. One palette, two vocabularies, rather than a
