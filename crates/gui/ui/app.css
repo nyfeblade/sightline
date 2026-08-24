@@ -1,89 +1,142 @@
-/* GitHub Dark Dimmed, and one deliberate change to it.
+/* Sightline — an instrument panel, not a dashboard.
 
-   Dimmed rather than near-black on purpose: a lifted ground with slightly
-   softened text is what makes a dark interface bearable for a whole day, where
-   bright text on true black glares and smears.
+   This window watches a fleet of coding agents and stands at the moment one of
+   them asks whether it may do something. That is the subject, and the surface
+   is built for it: flat black planes divided by hairlines, figures set in
+   monospace so columns line up, and colour that means exactly one thing each.
 
-   The change is that colour here means exactly one thing each. The accent is
-   blue and is only ever the interface talking about itself — the active tab,
-   the selected row, a primary button, a progress fill. Amber is only ever "this
-   needs you". Green is running or passed, red is failed. One colour doing both
-   brand and alarm is a colour you stop seeing, which is the opposite of what an
-   alarm is for. */
+   Three rules the previous version broke, and why they matter here.
+
+   The ground is black rather than lifted navy. A control surface should read as
+   instruments on a dark plane, and a blue-cast ground tints every neutral on
+   top of it — nothing is quite grey, so nothing is quite quiet.
+
+   Nothing floats. Panels are planes that meet at a hairline, not cards with
+   radii and shadows scattered on a gradient. Rounded translucent tiles are the
+   house style of every generated interface; more to the point they add a second
+   edge to every region, and an interface read for hours should have as few
+   edges as possible.
+
+   Colour is reserved. The accent is only ever the interface talking about
+   itself — the selected row, the active tab, the one primary action. Amber is
+   only ever "a person has to settle this". Green is running or passed, red is
+   refused or failed. A colour doing both brand and alarm is a colour you stop
+   seeing, which is the opposite of what an alarm is for. */
 :root {
-  --ground: #0f172a;
-  --panel: #131c2e;
-  --raised: #1e293b;
-  --line: #334155;
-  --line-soft: #1f2b3e;
+  /* Space black. Cool by a few degrees so it is not a dead flat #000, which
+     shows every gradient banding artefact a compositor can produce. */
+  --void: #07080a;
+  --plane: #0b0d11;
+  --raised: #12151b;
+  --edge: #1b1f26;
+  --edge-soft: #121620;
 
-  /* Four steps, and they are meant to be obviously different. One mid-grey
-     applied to everything is what makes an interface look generated: nothing
-     is emphasised, so nothing is legible at a glance.
+  /* Four steps, meant to be obviously different. One mid-grey applied to
+     everything is what makes an interface look generated: nothing is
+     emphasised, so nothing is legible at a glance.
 
-       text   what you are here to read
+       ink    what you are here to read
        body   secondary content, still content
        muted  labels and metadata — deliberately quiet
        faint  timestamps and furniture, nearly gone */
-  --text: #e2e8f0;
-  --body: #cbd5e1;
-  --muted: #64748b;
-  --faint: #475569;
+  --ink: #e8ebf0;
+  --body: #b7bfcc;
+  --muted: #6d7686;
+  --faint: #434a57;
 
-  /* the interface, talking about itself */
-  --accent: #539bf5;
-  --accent-soft: #316dca;
-  --accent-wash: rgba(83, 155, 245, .12);
+  /* The interface, talking about itself — and it talks in white.
+     
+     Blue was the obvious choice and it is the wrong one twice over. Every dark
+     developer tool uses it, so it says nothing about this one; and spending the
+     only saturated colour on "the selected row" leaves the states that actually
+     matter competing for what is left. White costs nothing and is unmistakable
+     on this ground.
 
-  /* something only a person can settle */
-  --warn: #d29922;
-  --warn-soft: #7d5e18;
-  --warn-wash: rgba(210, 153, 34, .10);
+     What it buys is the rule below: on this screen, any colour at all means
+     something is happening. */
+  --signal: #f0f3f8;
+  --signal-dim: #4a515e;
+  --signal-wash: rgba(240, 243, 248, .07);
 
-  --good: #57ab5a;
-  --bad: #e5534b;
-  --info: #986ee2;
+  /* State. Never the accent, and each means exactly one thing.
 
-  /* Sans for the furniture, monospace for anything that is content: code,
-     output, timings, figures. Reading a list of sessions is not reading code,
-     and setting both in the same face makes neither look deliberate. */
-  /* ── glass ────────────────────────────────────────────────────────────────
-     The iPhone in-call buttons: a translucent surface that blurs and slightly
-     saturates whatever is behind it, a bright edge along the top where light
-     catches, a darker one along the bottom, and a soft shadow underneath so it
-     sits above the page rather than in it.
+     Blue is freed by the decision above, so it is spent on the verdict that had
+     no colour and needed one: a call the kernel let through in an altered form.
+     That is neither an approval nor a refusal and reading it as either is
+     wrong. */
+  --amend: #4c8dff;
+  --hold: #e0a93b;
+  --hold-dim: #6d5320;
+  --hold-wash: rgba(224, 169, 59, .09);
+  --live: #4fb477;
+  --stop: #e05c58;
+  --other: #9b7ce0;
 
-     The fill has to stay dark. Glass that is too light turns every label on it
-     into grey-on-grey, and this is an interface people read for hours. */
-  --glass: rgba(255, 255, 255, .055);
-  --glass-lift: rgba(255, 255, 255, .10);
-  --glass-edge: rgba(255, 255, 255, .10);
-  --glass-spec: rgba(255, 255, 255, .16);
-  --glass-blur: blur(26px) saturate(150%);
-  --glass-drop: 0 10px 30px rgba(0, 0, 0, .38);
+  /* Names and prose in a grotesque; every figure, path, tool and label in
+     monospace. Reading a fleet is reading an instrument, and setting the
+     numbers in a proportional face makes columns that do not line up. */
+  --ui: "Adwaita Sans", Inter, "SF Pro Text", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --data: "JetBrains Mono", "JetBrainsMono NFM", "GeistMono NFM", ui-monospace, "DejaVu Sans Mono", Menlo, monospace;
 
-  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --mono: ui-monospace, "JetBrains Mono", "Fira Code", "SF Mono", "DejaVu Sans Mono", Menlo, monospace;
+  /* Compatibility: the rest of this file, and the highlighter, were written
+     against the older names. One palette, two vocabularies, rather than a
+     rename touching a thousand lines. */
+  --ground: var(--void);
+  --panel: var(--plane);
+  --line: var(--edge);
+  --line-soft: var(--edge-soft);
+  --text: var(--ink);
+  --accent: var(--signal);
+  --accent-soft: var(--signal-dim);
+  --accent-wash: var(--signal-wash);
+  --warn: var(--hold);
+  --warn-soft: var(--hold-dim);
+  --warn-wash: var(--hold-wash);
+  --good: var(--live);
+  --bad: var(--stop);
+  --info: var(--other);
+  --sans: var(--ui);
+  --mono: var(--data);
+
+  /* Kept so the older rules that reference them resolve to nothing rather than
+     to glass. Flat surfaces, stated once. */
+  --glass: transparent;
+  --glass-lift: rgba(255, 255, 255, .04);
+  --glass-edge: var(--edge);
+  --glass-spec: transparent;
+  --glass-blur: none;
+  --glass-drop: none;
 
   /* The sixteen a terminal draws with, so a session's own colours are ours. */
-  --ansi-0: #22272e; --ansi-1: #e5534b; --ansi-2: #57ab5a; --ansi-3: #c69026;
-  --ansi-4: #539bf5; --ansi-5: #986ee2; --ansi-6: #39c5cf; --ansi-7: #adbac7;
+  --ansi-0: #12151b; --ansi-1: #e05c58; --ansi-2: #4fb477; --ansi-3: #c69026;
+  --ansi-4: #4c8dff; --ansi-5: #9b7ce0; --ansi-6: #39c5cf; --ansi-7: #b7bfcc;
   --ansi-8: #545d68; --ansi-9: #f47067; --ansi-10: #6bc46d; --ansi-11: #daaa3f;
-  --ansi-12: #6cb6ff; --ansi-13: #b083f0; --ansi-14: #56d4dd; --ansi-15: #cdd9e5;
+  --ansi-12: #6cb6ff; --ansi-13: #b083f0; --ansi-14: #56d4dd; --ansi-15: #e8ebf0;
+}
+
+/* Accent variants. The interface's own voice, and the only thing that changes.
+   State colours are deliberately untouched by these. */
+html[data-accent="white"] {
+  --signal: #f2f5fa;
+  --signal-dim: #4a515e;
+  --signal-wash: rgba(242, 245, 250, .08);
+}
+html[data-accent="deep"] {
+  --signal: #2d6bff;
+  --signal-dim: #21458f;
+  --signal-wash: rgba(45, 107, 255, .12);
 }
 
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; overflow: hidden; }
 
 body {
-  background:
-    radial-gradient(1100px 780px at 8% -12%, rgba(83, 155, 245, .085), transparent 62%),
-    radial-gradient(950px 700px at 94% 112%, rgba(152, 110, 226, .075), transparent 62%),
-    radial-gradient(760px 560px at 62% 46%, rgba(57, 197, 207, .035), transparent 64%),
-    var(--ground);
-  background-attachment: fixed;
-  color: var(--text);
-  font-family: var(--sans);
+  /* Flat. The washes that used to be here read as atmosphere and behaved as
+     noise: three coloured clouds under a grid of translucent tiles, tinting
+     every neutral differently depending on where it happened to sit. */
+  background: var(--void);
+  color: var(--ink);
+  font-family: var(--ui);
   /* Figures line up in columns even in a proportional face. */
   font-variant-numeric: tabular-nums;
   /* Grows with the window, and stops before it becomes a poster. */
@@ -100,12 +153,21 @@ button { font: inherit; cursor: pointer; }
 .bar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 14px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--line);
+  gap: 10px;
+  padding: 0 14px;
+  height: 46px;
+  background: var(--void);
+  border-bottom: 1px solid var(--edge);
 }
-.mark { color: var(--accent); font-weight: 700; letter-spacing: .18em; }
+/* The name is set in the same monospace as the instruments, because it is one
+   of them: this window is the thing doing the deciding. */
+.mark {
+  color: var(--ink);
+  font-family: var(--data);
+  font-size: .78rem;
+  font-weight: 600;
+  letter-spacing: .26em;
+}
 .version { color: var(--faint); }
 .counts, .spend { color: var(--muted); white-space: nowrap; }
 .counts { border-left: 1px solid var(--line); padding-left: 12px; }
@@ -115,21 +177,24 @@ button { font: inherit; cursor: pointer; }
 
 .ghost, .primary {
   background: transparent;
-  border: 1px solid var(--line);
-  border-radius: 6px;
+  border: 1px solid var(--edge);
+  border-radius: 3px;
   color: var(--body);
-  padding: 5px 11px;
+  padding: 5px 12px;
+  font-size: .9em;
+  transition: border-color .12s, color .12s, background .12s;
 }
-.ghost:hover { border-color: var(--accent-soft); color: var(--text); }
-.primary { border-color: var(--accent); color: var(--accent); }
-.primary:hover { background: var(--accent-wash); }
+.ghost:hover { border-color: var(--muted); color: var(--ink); }
+/* One primary action in the window at a time. It is filled rather than
+   outlined so it is the only thing competing with the content for attention. */
+.primary { border-color: var(--signal); background: var(--signal); color: var(--void); font-weight: 600; }
+.primary:hover { filter: brightness(1.12); }
+html[data-accent="white"] .primary { color: #06070a; }
 
 /* ── three columns ──────────────────────────────────────────────────────── */
 main {
   display: grid;
-  grid-template-columns: clamp(248px, 18vw, 360px) minmax(0, 1fr) clamp(224px, 17vw, 340px);
-  gap: 11px;
-  padding: 11px;
+  grid-template-columns: clamp(248px, 18vw, 358px) minmax(0, 1fr) clamp(228px, 17vw, 336px);
   min-height: 0;
 }
 /* Below this there is no room for three, so the detail folds away rather than
@@ -139,15 +204,18 @@ main {
   .rail.detail { display: none; }
 }
 
+/* Planes, not cards. One hairline between neighbours rather than an edge on
+   each of them, so the window has three seams instead of twelve. */
 .rail, .middle {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  background: var(--void);
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
-.rail { overflow-y: auto; overflow-x: hidden; padding: 11px 12px; }
+.rail { overflow-y: auto; overflow-x: hidden; padding: 0; }
+#rail { border-right: 1px solid var(--edge); }
+.rail.detail { border-left: 1px solid var(--edge); padding: 0 16px 18px; }
+.middle { background: var(--plane); }
 
 .rail-head {
   display: flex;
@@ -223,27 +291,34 @@ main {
 /* A dot is enough to find a row; it is not enough to read one. The state gets
    a pill so that "needs you" and "working" separate at a glance from the
    folder and branch sitting beside them on the same line. */
+/* A state, not a badge. The rounded filled capsule is the single most
+   recognisable tell of a generated interface, and it costs a border, a fill and
+   a radius to say one word that a colour and a word already say. */
 .agent .pill {
-  display: inline-block;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  padding: 0 7px;
-  font-size: .82em;
-  line-height: 1.5;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  border-radius: 0;
+  font-family: var(--data);
+  font-size: .76em;
+  letter-spacing: .04em;
   color: var(--muted);
-  background: var(--raised);
 }
-.agent .pill.needs {
-  color: var(--warn);
-  border-color: var(--warn-soft);
-  background: var(--warn-wash);
+.agent .pill::before {
+  content: "";
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
 }
-.agent .pill.working {
-  color: var(--good);
-  border-color: rgba(34, 197, 94, .4);
-  background: rgba(34, 197, 94, .1);
-}
-.agent .pill.ended { color: var(--faint); background: transparent; border-color: var(--line-soft); }
+/* Only the one that wants a person is allowed to be loud. */
+.agent .pill.needs { color: var(--hold); }
+.agent .pill.working { color: var(--live); }
+.agent .pill.ended { color: var(--faint); }
+.agent .pill.ended::before { background: none; box-shadow: inset 0 0 0 1px currentColor; }
 
 /* ── middle ─────────────────────────────────────────────────────────────── */
 .tabs {
@@ -264,12 +339,14 @@ main {
   border: 0;
   border-bottom: 2px solid transparent;
   color: var(--muted);
-  padding: 6px 11px;
-  flex: none;
+  font-family: var(--data);
+  font-size: .78rem;
+  letter-spacing: .04em;
+  padding: 11px 12px 9px;
   white-space: nowrap;
 }
 .tab:hover { color: var(--body); }
-.tab.is-on { color: var(--text); border-bottom-color: var(--accent); }
+.tab.is-on { color: var(--ink); border-bottom-color: var(--signal); }
 .context {
   display: none;
   color: var(--faint);
@@ -1024,162 +1101,248 @@ dialog.wide[open] { display: flex; }
   padding: 10px 12px;
 }
 
-/* Panes sit apart from each other rather than sharing an edge. */
-.rail, .middle { border-radius: 10px; }
+/* ── flat ───────────────────────────────────────────────────────────────────
+   What used to be here was a glass recipe: every bar, pane, dialog and control
+   given a translucent fill, a blur, a lit top edge and a drop shadow, with
+   pill radii on the controls.
 
+   It is removed rather than tuned. Three reasons, in order of how much they
+   cost. Translucency over a dark ground turns every label grey-on-grey, and
+   this is an interface people read for hours. A blurred layer under a
+   constantly-updating list is repainted constantly, on a window that is already
+   tailing files. And a capsule with a highlight along the top is the single
+   most recognisable shape in generated interfaces — it says nothing about what
+   the control does, and it says it very loudly.
 
-/* ── liquid glass ───────────────────────────────────────────────────────────
-   One recipe, applied to the surfaces that should float: the bars, the three
-   panes, the dialogs, and every control.
+   What replaces it: surfaces that differ by value, and edges that are a single
+   hairline. */
+.rail, .middle, .bar, .status, .ask { border-radius: 0; box-shadow: none; backdrop-filter: none; }
 
-   `backdrop-filter` is what does the work. Where it is unsupported the fill
-   alone still reads as a darker translucent panel, which is worse-looking and
-   not broken — so nothing here depends on it. */
-.bar,
-.status,
-.rail,
-.middle,
-.ask,
-dialog {
-  background: var(--glass);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--glass-edge);
-  box-shadow:
-    inset 0 1px 0 var(--glass-spec),
-    inset 0 -1px 0 rgba(0, 0, 0, .22),
-    var(--glass-drop);
+/* Inputs read as a slot cut into the plane rather than a tile laid on it. */
+.composer input, .search, .menu-grid button, .chip, .answer {
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 3px;
+  box-shadow: none;
+  backdrop-filter: none;
+  transition: border-color .12s ease, background .12s ease;
 }
-.rail, .middle { border-radius: 14px; }
-.bar { border-radius: 0; border-left: 0; border-right: 0; border-top: 0; }
-.status { border-radius: 0; border-left: 0; border-right: 0; border-bottom: 0; box-shadow: none; }
-dialog { border-radius: 18px; }
-dialog::backdrop { background: rgba(10, 12, 15, .55); backdrop-filter: blur(6px); }
+.composer input:focus, .search:focus { border-color: var(--signal); outline: none; }
 
-/* The controls. This is the call-button shape: a pill, lit along the top,
-   brighter while it is being pressed. */
-.ghost,
-.primary,
-.answer,
-.chip,
-.menu-grid button,
-.composer input,
-.search {
-  background: var(--glass);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--glass-edge);
-  box-shadow:
-    inset 0 1px 0 var(--glass-spec),
-    0 2px 8px rgba(0, 0, 0, .28);
-  transition: background .14s ease, box-shadow .14s ease, border-color .14s ease;
-}
-.ghost, .primary, .answer, .chip, .icon { border-radius: 999px; }
-
-/* The panel's actions read as a short menu rather than five identical capsules
-   in a block. They are still buttons — hover says so — but at rest they are a
-   list of things you could do, which is what they are. */
-.detail .actions { display: block; margin-top: 16px; border-top: 1px solid var(--line-soft); padding-top: 6px; }
+/* The detail panel's actions are a short menu, not a block of capsules: at rest
+   a list of things you could do, which is what they are. */
+.detail .actions { display: block; margin-top: 14px; border-top: 1px solid var(--edge-soft); padding-top: 4px; }
 .detail .actions button {
   display: block;
   width: 100%;
   text-align: left;
   background: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
   border: 0;
-  border-radius: 8px;
+  border-radius: 2px;
   box-shadow: none;
   color: var(--body);
-  padding: 7px 10px;
+  padding: 6px 8px;
   margin: 1px 0 0;
+  font-size: .93em;
 }
-.detail .actions button:hover { background: var(--raised); color: var(--text); }
-.detail .actions button.danger { color: var(--bad); }
-.detail .actions button.danger:hover { background: rgba(229, 83, 75, .12); }
+.detail .actions button:hover { background: var(--raised); color: var(--ink); }
+.detail .actions button.danger { color: var(--stop); }
+.detail .actions button.danger:hover { background: rgba(224, 92, 88, .12); }
 
-/* Inline toggles, not buttons. Glass at rest made them louder than the heading
-   they sit beside; they take it only when the pointer is on them, or when they
-   are on. */
+/* Inline toggles, not buttons: they take an edge only on hover or when on. */
 .icon {
   background: transparent;
   border: 1px solid transparent;
+  border-radius: 3px;
   box-shadow: none;
   padding: 2px 8px;
-  transition: background .14s ease, border-color .14s ease, color .14s ease;
+  font-family: var(--data);
+  font-size: .76rem;
+  letter-spacing: .04em;
+  color: var(--muted);
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
 }
-.icon:hover {
-  background: var(--glass);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
-  border-color: var(--glass-edge);
-}
-.icon.is-on {
-  background: var(--accent-wash);
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.composer input, .search { border-radius: 12px; }
-.menu-grid button { border-radius: 12px; }
-.expand { border-radius: 0; box-shadow: none; background: transparent; border: 0; border-top: 1px solid var(--line-soft); }
-.menu-grid button { border-radius: 12px; }
+.icon:hover { background: var(--raised); border-color: var(--edge); color: var(--ink); }
+.icon.is-on { background: var(--signal-wash); border-color: var(--signal-dim); color: var(--signal); }
 
-.ghost:hover, .icon:hover, .chip:hover, .menu-grid button:hover, .answer:hover {
-  background: var(--glass-lift);
-  border-color: rgba(255, 255, 255, .18);
-  color: var(--text);
+.ghost:hover, .chip:hover, .menu-grid button:hover, .answer:hover {
+  background: var(--raised);
+  border-color: var(--muted);
+  color: var(--ink);
 }
-.ghost:active, .primary:active, .answer:active, .icon:active {
-  background: rgba(255, 255, 255, .17);
-  box-shadow: inset 0 1px 0 var(--glass-spec), 0 1px 4px rgba(0, 0, 0, .3);
-}
+.expand { border-radius: 0; box-shadow: none; background: transparent; border: 0; border-top: 1px solid var(--edge-soft); }
 
-/* On, rather than pressed: the fill takes the accent instead of getting
-   brighter, so "this is selected" and "you are touching this" never look the
-   same. */
-.primary, .chip.is-on, .icon.is-on {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: var(--accent-wash);
-}
-.primary:hover, .chip.is-on:hover { background: var(--accent-wash); border-color: var(--accent); }
+dialog { border-radius: 4px; border: 1px solid var(--edge); background: var(--plane); box-shadow: 0 24px 64px rgba(0,0,0,.6); }
+dialog::backdrop { background: rgba(4, 5, 7, .62); }
 
-.composer input:focus, .search:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: inset 0 1px 0 var(--glass-spec), 0 0 0 3px var(--accent-wash);
+/* ── the boundary ───────────────────────────────────────────────────────────
+   The record of what was decided, and the only view here that is about
+   Sightline rather than about the agents. Set as an instrument: figures large
+   and in monospace, their labels small and quiet, the log below in fixed
+   columns so a run of decisions reads as a column rather than as prose. */
+.verdicts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-bottom: 1px solid var(--edge);
+  margin: -13px -15px 14px;
 }
+.verdict {
+  padding: 16px 18px 15px;
+  border-right: 1px solid var(--edge-soft);
+}
+.verdict:last-child { border-right: 0; }
+.verdict .figure {
+  display: block;
+  font-family: var(--data);
+  font-size: 1.9rem;
+  font-weight: 300;
+  line-height: 1.1;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.verdict .label {
+  display: block;
+  margin-top: 3px;
+  font-family: var(--data);
+  font-size: .68rem;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+/* Only a refusal is coloured. An interface where every figure is a different
+   colour is one where none of them mean anything. */
+.verdict.deny .figure { color: var(--stop); }
+.verdict.asked .figure { color: var(--hold); }
 
-/* Rows and cards inside a pane are on the glass, not more glass: stacking
-   blurred surfaces muddies everything under them and costs a lot to draw. */
-.card, .act, .task, .asking-card, .inline-code, .code.fenced {
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-.agent.is-on {
-  background: var(--glass-lift);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08);
-}
-
-/* A figure you can press, without looking like a button. */
-.metrics.quiet {
-  background: none;
-  border: 0;
-  box-shadow: none;
-  padding: 0;
-  cursor: pointer;
-}
-.metrics.quiet:hover { color: var(--muted); }
-
-/* Whose conversation this is. Quiet, and always the first thing in the pane,
-   because the window chooses a session for you and nothing else says which. */
-.whose {
-  display: flex;
+.decisions { font-family: var(--data); font-size: .82rem; }
+.decision {
+  display: grid;
+  grid-template-columns: 62px 74px minmax(90px, 1fr) minmax(0, 2fr) auto;
+  gap: 12px;
   align-items: baseline;
-  gap: 10px;
-  padding-bottom: 10px;
-  margin-bottom: 6px;
-  border-bottom: 1px solid var(--line-soft);
+  padding: 5px 0;
+  border-bottom: 1px solid var(--edge-soft);
+  color: var(--body);
 }
-.whose-name { color: var(--text); font-weight: 600; }
-.whose-where { color: var(--muted); font-size: .9em; font-family: var(--mono); }
+.decision .at { color: var(--faint); }
+.decision .verdict-mark { color: var(--muted); }
+.decision.deny .verdict-mark { color: var(--stop); }
+.decision.rewrite .verdict-mark { color: var(--signal); }
+.decision .swho { color: var(--ink); overflow: hidden; text-overflow: ellipsis; }
+.decision .tool { color: var(--body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.decision .by { color: var(--faint); text-align: right; }
+
+/* The two groups in the tab strip: what this session is doing, and what the
+   machine is doing. The rule is the whole device — no label, because the gap
+   already says it. */
+.tab-split {
+  width: 1px;
+  align-self: stretch;
+  margin: 8px 10px 8px 14px;
+  background: var(--edge);
+}
+.tab.wide { color: var(--faint); }
+.tab.wide:hover { color: var(--body); }
+.tab.wide.is-on { color: var(--ink); }
+
+/* A context meter is a measurement, not a lozenge. */
+.bar-line, .bar-line i { border-radius: 0; }
+
+/* WebKitGTK draws native widget chrome for form controls whose background it
+   does not consider set, which put a pale system-grey slab behind the search
+   field, the composer and the cost readout. Every control here is drawn by this
+   stylesheet, so none of them want the platform's. */
+input, button, select, textarea {
+  appearance: none;
+  -webkit-appearance: none;
+  background-clip: padding-box;
+}
+.search {
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 3px;
+  color: var(--ink);
+  font-family: var(--data);
+  font-size: .84rem;
+}
+.search::placeholder, .composer input::placeholder { color: var(--faint); }
+.composer input { color: var(--ink); font-family: var(--ui); }
+.metrics, .metrics.quiet { background: none; border: 0; color: var(--muted); font-family: var(--data); }
+.metrics.quiet:hover { color: var(--ink); }
+
+/* The fleet group is quieter than the session views, not disabled-looking. */
+.tab.wide { color: var(--muted); }
+
+/* The name a session is called, and where it is, are two facts — not one run-on
+   string. */
+.whose { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+.whose-name { font-size: 1.02rem; color: var(--ink); }
+.whose-where { font-family: var(--data); font-size: .78rem; color: var(--muted); }
+
+/* An empty pane is an invitation, not a shrug: it sits in the space rather than
+   hugging the top-left corner of it. */
+.empty {
+  max-width: 46ch;
+  margin: 12vh auto 0;
+  text-align: center;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+/* Actions fold away. The rail is for facts; the things you can do to a session
+   are one row, opened when wanted. */
+.detail details.actions { margin-top: 16px; border-top: 1px solid var(--edge-soft); padding-top: 0; }
+.actions-head {
+  list-style: none;
+  cursor: pointer;
+  padding: 9px 8px;
+  font-family: var(--data);
+  font-size: .68rem;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.actions-head::-webkit-details-marker { display: none; }
+.actions-head::after { content: "+"; margin-left: auto; color: var(--faint); font-size: .9rem; }
+details[open] > .actions-head::after { content: "−"; }
+.actions-head:hover { color: var(--ink); }
+
+/* The one primary action is a slab of the interface's own colour — but white at
+   full strength is brighter than anything it sits beside, and a button should
+   not be the most emphatic thing in a window whose job is to show you what your
+   agents are doing. It is lettered in white on the raised plane instead, with a
+   hairline that brightens when the pointer is on it. */
+.primary {
+  background: var(--raised);
+  border: 1px solid var(--muted);
+  color: var(--ink);
+  font-weight: 500;
+}
+.primary:hover { background: #1a1f27; border-color: var(--ink); filter: none; }
+
+/* An amended call: allowed, but not as asked. */
+.decision.rewrite .verdict-mark { color: var(--amend); }
+.verdict.rewrite .figure { color: var(--amend); }
+
+/* The keyboard hints were one unbroken run of six shortcuts pushed against the
+   right edge, which is a line nobody reads twice. Spaced, quietened, and the
+   first thing on it is the one people actually want. */
+.hint {
+  font-family: var(--data);
+  font-size: .72rem;
+  letter-spacing: .02em;
+  color: var(--faint);
+  white-space: nowrap;
+}
+.status {
+  gap: 18px;
+  padding: 0 14px;
+  height: 30px;
+  align-items: center;
+  border-top: 1px solid var(--edge);
+  background: var(--void);
+}
+@media (max-width: 1400px) { .hint { display: none; } }

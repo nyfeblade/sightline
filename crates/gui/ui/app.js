@@ -885,6 +885,72 @@ async function startStream() {
   window.__TAURI__.event.listen("sightline://event", (msg) => pushEvent(msg.payload));
 }
 
+/* Every tool call an agent makes stops here before it happens, and this is the
+   record of what was decided. It is the one view that is about Sightline rather
+   than about the agents: the kernels are the reason a fleet can be left running.
+
+   Read from the same stream everything else reads. A decision is published the
+   moment it is made, so nothing here is reconstructed. */
+function drawBoundary() {
+  const out = el("pane");
+  const follow = keepingUp(out);
+  clear(out);
+  out.classList.add("boundary");
+
+  const calls = streamEvents.filter((e) => e.kind.type === "permissionAnswered");
+  const verdicts = { allow: 0, rewrite: 0, deny: 0, asked: 0 };
+  for (const e of calls) {
+    const word = (e.kind.option || "").split(" ")[0];
+    if (word in verdicts) verdicts[word]++;
+    else verdicts.asked++;
+  }
+
+  const tally = make("div", "verdicts");
+  // A count of nothing is not an event. Colouring a zero red says something was
+  // refused when nothing was, and an interface where the alarm colour is on by
+  // default is one where the alarm means nothing.
+  const cell = (n, label, tone) => {
+    const b = make("div", `verdict ${n ? tone : ""}`);
+    b.append(make("span", "figure", String(n)));
+    b.append(make("span", "label", label));
+    return b;
+  };
+  tally.append(cell(calls.length, "decided", ""));
+  tally.append(cell(verdicts.rewrite, "amended", "rewrite"));
+  tally.append(cell(verdicts.deny, "refused", "deny"));
+  tally.append(cell(verdicts.asked, "asked you", "asked"));
+  out.append(tally);
+
+  if (!calls.length) {
+    out.append(
+      empty(
+        "No calls have reached the boundary yet. Sessions Sightline starts are " +
+          "decided here before anything happens; sessions you start yourself " +
+          "in a terminal are watched, not governed.",
+      ),
+    );
+    return;
+  }
+
+  const list = make("div", "decisions");
+  for (const ev of calls) {
+    const [word, ...rest] = (ev.kind.option || "").split(" ");
+    const tool = rest.join(" ");
+    const row = make("div", `decision ${word}`);
+    row.append(make("span", "at", clock(ev.at)));
+    row.append(make("span", "verdict-mark", word === "deny" ? "refused" : word === "rewrite" ? "amended" : "allowed"));
+    row.append(make("span", "swho", nameOf(ev.session)));
+    row.append(make("span", "tool", tool || "—"));
+    // Which kernel had the opinion. `abstain` means none did, so nothing here
+    // objected rather than something here approved — worth the distinction.
+    const by = ev.kind.name || "";
+    row.append(make("span", "by", by === "abstain" ? "no objection" : by));
+    list.append(row);
+  }
+  out.append(list);
+  if (follow) out.scrollTop = out.scrollHeight;
+}
+
 function drawStream() {
   const out = el("pane");
   const follow = keepingUp(out);
@@ -1545,13 +1611,14 @@ const painters = {
   stats: (s) => drawStats(s),
   errors: (s) => drawErrors(s.id),
   stream: () => drawStream(),
+  boundary: () => drawBoundary(),
   work: () => drawWork(),
   fleet: () => drawFleet(),
 };
 
 // Two of these are about the machine rather than about one session, so they are
 // drawn whether or not anything is selected.
-const FLEETWIDE = ["stream", "work", "fleet"];
+const FLEETWIDE = ["stream", "work", "fleet", "boundary"];
 
 // ── the selected session, and what can be done to it ───────────────────────
 function fact(parent, key, value) {
@@ -1581,8 +1648,12 @@ function drawDetail(s) {
   fact(box, "held in", s.pane || "not steerable");
   // Two different questions, and reporting one of them as "age" made a busy
   // session look like it kept restarting.
-  fact(box, "started", s.started_secs >= 0 ? `${age(s.started_secs)} ago` : "—");
-  fact(box, "last active", `${age(s.age_secs)} ago`);
+  const began = s.started_secs >= 0 ? age(s.started_secs) : null;
+  fact(box, "started", began ? (began === "new" ? "just now" : `${began} ago`) : "—");
+  // `age` says "new" for a session that has not spoken yet, and "new ago" is
+  // not a length of time.
+  const last = age(s.age_secs);
+  fact(box, "last active", last === "new" ? "not yet" : `${last} ago`);
 
   box.append(make("div", "group", "CONTEXT"));
   const track = make("div", "bar-line");
@@ -1594,7 +1665,7 @@ function drawDetail(s) {
 
   // Not the machine's numbers — what this one session is costing it. The
   // heading used to say MACHINE, which invited exactly the wrong reading.
-  box.append(make("div", "group", "THIS SESSION IS USING"));
+  box.append(make("div", "group", "RESOURCES"));
   const share = s.cpu === null || s.cpu === undefined ? null : s.cpu / (s.cores || 1);
   fact(box, "processor", share === null ? "—" : `${share.toFixed(1)}% of ${s.cores} cores`);
   fact(box, "memory", s.memory ? bytes(s.memory) : "—");
@@ -1626,7 +1697,28 @@ function drawDetail(s) {
     }
   });
 
-  const actions = make("div", "actions");
+  // A detail panel is for facts. Seven buttons stacked under them competed with
+  // the thing they describe and made the rail read as a toolbar, so they fold
+  // away behind one row — still one click, and no longer the loudest thing on
+  // the right of the window.
+  // What the kernels decided for this session. Only shown when there is
+  // something to show: a watched session never reaches the boundary, and a row
+  // of zeroes would say it had been governed and found clean.
+  const mine = streamEvents.filter(
+    (e) => e.session === s.id && e.kind.type === "permissionAnswered",
+  );
+  if (mine.length) {
+    const refused = mine.filter((e) => (e.kind.option || "").startsWith("deny")).length;
+    const amended = mine.filter((e) => (e.kind.option || "").startsWith("rewrite")).length;
+    const group = make("div", "group", "AT THE BOUNDARY");
+    box.append(group);
+    fact(box, "decided", String(mine.length));
+    if (amended) fact(box, "amended", String(amended));
+    if (refused) fact(box, "refused", String(refused));
+  }
+
+  const actions = make("details", "actions");
+  actions.append(make("summary", "actions-head", "Actions"));
   // Assigning does not need a terminal: a task is a record about a session,
   // and it outlives the session it is about.
   action(actions, s.task ? "Reassign" : "Assign…", "ghost", async () => {

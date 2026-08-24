@@ -41,9 +41,14 @@
         <button class="tab" data-pane="agents">Subagents</button>
         <button class="tab" data-pane="stats">Stats</button>
         <button class="tab" data-pane="errors">Errors</button>
-        <button class="tab" data-pane="stream">Stream</button>
-        <button class="tab" data-pane="work">Work</button>
-        <button class="tab" data-pane="fleet">Fleet</button>
+        <span class="tab-split" aria-hidden="true"></span>
+        <!-- These four are about the machine rather than about the session on
+             the left, which is why they sit apart. Eleven tabs in an undivided
+             row read as eleven equal choices; they are two kinds of thing. -->
+        <button class="tab wide" data-pane="boundary">Boundary</button>
+        <button class="tab wide" data-pane="work">Work</button>
+        <button class="tab wide" data-pane="fleet">Fleet</button>
+        <button class="tab wide" data-pane="stream">Stream</button>
         <span class="grow"></span>
         <span class="context" id="context"></span>
         <button class="icon" id="focus" title="Fill the window with this session (f)">⤢</button>
