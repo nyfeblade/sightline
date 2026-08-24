@@ -990,6 +990,8 @@ fn main() -> Result<()> {
                 // It has to edit code to write an adapter, and nothing can be
                 // asked of it while it runs.
                 .with_mode(Some("acceptEdits"))
+                // And it has to be able to run the gate the brief points it at.
+                .allowing(glue::GRANTED)
                 .opening(Some(&packet)),
         )
         .map_err(|e| anyhow::anyhow!(e))?;

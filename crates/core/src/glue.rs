@@ -50,6 +50,16 @@ pub const ABILITY: &str = include_str!("../../../.claude/skills/ironsight-glue/S
 /// What the ability is called, and where a fork keeps it.
 pub const ABILITY_NAME: &str = "ironsight-glue";
 
+/// What a reconciling session is granted without being asked.
+///
+/// The brief tells it to run the project's checks and invariants through
+/// `ironsight`, and a headless session cannot be asked for permission — so a
+/// command the machine's settings do not already cover is refused outright and
+/// the session spends its turn saying so. A chief was blocked by exactly this,
+/// before anyone noticed the brief was asking for something the session had not
+/// been allowed to do.
+pub const GRANTED: &[&str] = &["Bash(ironsight:*)", "Bash(ironsight *)"];
+
 /// Where it installs to, relative to the fork's root.
 pub fn ability_path(root: &Path) -> std::path::PathBuf {
     root.join(".claude")
@@ -239,11 +249,11 @@ pub fn brief(
     let mut out = String::new();
 
     out.push_str(
-        "You are reconciling this fork of Ironsight onto a newer upstream release.\n\n\
-         Read the `ironsight-glue` skill first. It is upstream's own account of the\n\
-         architecture, the seams a customisation is meant to live in, the invariants\n\
-         that must survive a merge, and how upstream tests. You know this fork; that\n\
-         skill is what you do not know.\n\n",
+        "You are reconciling this fork onto a newer release of its upstream.\n\n\
+         Read the `ironsight-glue` skill first. It is upstream's own account of how\n\
+         the project is put together: the layers, the seams a customisation is meant\n\
+         to live in, the invariants that must survive a merge, and how it is tested.\n\
+         You know this fork; that skill is what you do not know.\n\n",
     );
 
     out.push_str(&format!(
@@ -288,27 +298,25 @@ pub fn brief(
     match checks {
         Some(file) => out.push_str(&format!(
             "THE GATE\n\
-             \x20 This project defines what done means in {file}. Run it with\n\
-             \x20 `ironsight check` from the worktree, and run upstream's own suite too:\n\
+             \x20 This project says what done means in {file}. Run it from the\n\
+             \x20 worktree — both halves, because they answer different questions:\n\
              \n\
-             \x20   ironsight invariants\n\
-             \x20   cargo fmt --check\n\
-             \x20   cargo test\n\
-             \x20   node crates/gui/ui/tokenize.test.mjs\n\
-             \x20   cargo check --target x86_64-pc-windows-msvc -p ironsight-core -p ironsight\n\n"
+             \x20   ironsight check <this session>   did the work finish\n\
+             \x20   ironsight invariants             did it break something that was\n\
+             \x20                                    never its business\n\
+             \n\
+             \x20 Run the invariants before you start as well, so you know which were\n\
+             \x20 already broken and are not yours. Then run whatever the project\n\
+             \x20 builds and tests with — its own README and its checks file say what\n\
+             \x20 that is; do not assume.\n\n"
         )),
         None => out.push_str(
             "THE GATE\n\
              \x20 This project has no .ironsight/checks.toml, so there is nothing\n\
              \x20 mechanical to hold the merge to and the result can only ever be\n\
-             \x20 unverified. Run upstream's suite anyway:\n\
-             \n\
-             \x20   ironsight invariants\n\
-             \x20   cargo fmt --check\n\
-             \x20   cargo test\n\
-             \x20   node crates/gui/ui/tokenize.test.mjs\n\
-             \n\
-             \x20 and say plainly in your report that nothing verified this.\n\n",
+             \x20 unverified. Find whatever it builds and tests with, from its README\n\
+             \x20 and its own configuration, run that, and say plainly in your report\n\
+             \x20 that nothing verified this.\n\n",
         ),
     }
 
@@ -417,6 +425,35 @@ mod tests {
     }
 
     #[test]
+    fn the_gate_is_the_projects_own_and_not_upstreams_build_commands() {
+        // A fork of something that is not built the way upstream is — and most
+        // are not — was being told to run `cargo test` and a JavaScript
+        // tokeniser check. The brief has no business guessing how a project
+        // builds when the project has a file that says.
+        let out = brief(
+            "v2.0.0",
+            "upstream/v2.0.0",
+            "/w",
+            "/w2",
+            &Divergence::default(),
+            Some(".ironsight/checks.toml"),
+            false,
+        );
+        assert!(
+            out.contains("ironsight check") && out.contains("ironsight invariants"),
+            "it points at the project's own definition of done: {out}"
+        );
+        assert!(
+            !out.contains("cargo test") && !out.contains("tokenize.test.mjs"),
+            "and does not assume the project is built the way upstream is"
+        );
+        assert!(
+            !out.contains("fork of Ironsight"),
+            "nor that the thing being forked is Ironsight itself"
+        );
+    }
+
+    #[test]
     fn a_project_with_no_checks_is_told_its_result_cannot_be_verified() {
         // The failure this guards: a clean-looking merge reported as done, on a
         // fork where nothing mechanical ever ran.
@@ -463,6 +500,29 @@ mod tests {
         assert!(
             out.contains("git diff --name-only"),
             "and it says how to see them all"
+        );
+    }
+
+    #[test]
+    fn what_the_brief_asks_for_is_what_the_session_is_allowed_to_do() {
+        // The failure this guards is quiet and total: a brief that says "run
+        // ironsight check", handed to a session that may not run it. It reports
+        // itself blocked, and nothing is reconciled.
+        let out = brief(
+            "v2",
+            "u/v2",
+            "/w",
+            "/w2",
+            &Divergence::default(),
+            Some(".ironsight/checks.toml"),
+            false,
+        );
+        for asked in ["ironsight check", "ironsight invariants"] {
+            assert!(out.contains(asked), "the brief asks for {asked}: {out}");
+        }
+        assert!(
+            GRANTED.iter().any(|g| g.contains("ironsight")),
+            "so the session is granted it"
         );
     }
 
