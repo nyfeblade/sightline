@@ -3,46 +3,88 @@
 
     python3 scripts/make-icon.py
 
-A crosshair built out of dots. The arms are three dots thick at the middle and
-taper to one at the tips, and every dot shrinks as it gets further from the
-centre, so the mark reads as converging on a point rather than as a plus sign.
-The point itself is the only thing in the accent colour.
+The mark is the boundary.
 
-It is deliberately flat. An earlier version was modelled — a lit aperture with
-a machined ring and a cast shadow — and at any size above a dock it stopped
-being a sight and started being an eye. A mark that has to work at sixteen
-pixels wants a silhouette, not a rendering.
+Everything this program does happens at one place: an agent asks whether it may
+do something, and Sightline answers before the thing happens. So the icon is
+that — a vertical line with work crossing it. Two traces come in from the left
+and continue out the right; the middle one reaches the line and stops there.
+Nothing else in a dock looks like it, and it is the only picture of this product
+that is also true about it.
 
-Drawn at three times the final size and reduced, which is how the circles come
-out clean without a vector renderer on the machine.
+What it replaced was a crosshair built out of dots. That mark had two problems.
+It was a weapon sight, which is what the product used to be called and is no
+longer; and a grid of evenly spaced dots is a shape that belongs to any
+launcher, any grid, any anything. This one cannot be about another program.
+
+It is deliberately flat. An earlier version was modelled — a lit aperture with a
+machined ring and a cast shadow — and at any size above a dock it stopped being
+a sight and started being an eye. A mark that has to work at sixteen pixels
+wants a silhouette, not a rendering.
+
+The boundary is drawn heavier than the traces because it is the subject: the
+line is the thing doing the deciding, and the traces are what happens to be
+crossing it. Drawn at three times the final size and reduced, which is how the
+edges come out clean without a vector renderer on the machine.
 """
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw
 
 FINAL = 1024
 S = FINAL * 3
 
-TILE_TOP = (30, 41, 59)        # slate, lifted at the top
-TILE_BOTTOM = (11, 15, 26)
-DOT = (226, 232, 240)          # the arms
-# The aiming point has to be the brightest thing in the mark. Accent blue was
-# tried and is a third darker than the dots around it, so the middle read as a
-# hole punched in the crosshair. The accent survives as the glow behind it.
-CENTRE = (240, 249, 255)
-GLOW = (96, 165, 250)
+# A neutral dark tile, lit very slightly from the top the way macOS icons are.
+# Neutral rather than navy: the accent is the only colour in the mark, and a
+# blue ground takes the edge off the one blue that is supposed to carry meaning.
+TILE_TOP = (36, 36, 42)
+TILE_BOTTOM = (13, 13, 16)
 
-CELLS = 6                      # dots from the middle to the tip of an arm
-SPACING = 0.0570               # of the tile, between dot centres
-DOT_R = 0.0285                 # the middle dot's radius
+BOUNDARY = (245, 245, 247)  # Sightline itself
+TRACE = (10, 132, 255)      # the work crossing it — the system accent
+
+# Everything below is a fraction of the tile, so the mark scales exactly and the
+# vector and the raster are generated from one set of numbers.
+LANES = (0.315, 0.500, 0.685)   # three, far enough apart to survive 32px
+STOPPED = 1                     # the middle one is the subject
+TRACE_W = 0.055
+BOUNDARY_W = 0.086
+# The line runs taller than the traces span and heavier than they are drawn.
+# Both on purpose: three horizontal bars with a short perpendicular handle is
+# the universal sliders-and-filters glyph, and the first version of this was one
+# adjustment away from being it. A line that dominates the tile is a boundary;
+# a stub crossing some rules is a control panel.
+BOUNDARY_TOP, BOUNDARY_BOTTOM = 0.150, 0.850
+IN_FROM, OUT_TO = 0.175, 0.775
+# Where the refused trace gives up. Short of the line rather than against it:
+# a bar that stops exactly at an edge reads as meeting it, and the gap is what
+# says it did not get through.
+HALT = 0.415
 
 
-def thickness(step):
-    """How many dots either side of the arm's centre line, this far out.
+def bars():
+    """The mark, as rounded bars: (x0, y0, x1, y1, radius, colour).
 
-    Three across near the middle, one across from there on. The taper is what
-    makes it converge rather than sit there as a plus sign.
+    One list, used to draw both the PNG and the SVG. Hand-writing the vector
+    separately is how the two drift apart, and then only one of them is the
+    icon anybody actually sees.
     """
-    return 1 if step <= 2 else 0
+    out = []
+    half = TRACE_W / 2
+    for i, y in enumerate(LANES):
+        if i == STOPPED:
+            # Arrives, and gets no further.
+            out.append((IN_FROM, y - half, HALT, y + half, half, TRACE))
+            continue
+        # Through, and out the other side. Drawn as one bar rather than two so
+        # the join cannot show at large sizes; the boundary is painted over it,
+        # which is what makes it read as passing behind.
+        out.append((IN_FROM, y - half, OUT_TO, y + half, half, TRACE))
+    # Last, so it sits over the traces rather than under them: what they meet.
+    bh = BOUNDARY_W / 2
+    out.append(
+        (0.5 - bh, BOUNDARY_TOP, 0.5 + bh, BOUNDARY_BOTTOM, bh, BOUNDARY)
+    )
+    return out
 
 
 def tile():
@@ -52,6 +94,8 @@ def tile():
         t = y / 255
         ramp.putpixel((0, y), tuple(round(a + (b - a) * t) for a, b in zip(TILE_TOP, TILE_BOTTOM)))
     corners = Image.new("L", (S, S), 0)
+    # 22.3% is the macOS rounded-rectangle, near enough that the icon sits in a
+    # dock without looking like it came from somewhere else.
     ImageDraw.Draw(corners).rounded_rectangle(
         [0, 0, S - 1, S - 1], radius=int(S * 0.223), fill=255
     )
@@ -59,80 +103,24 @@ def tile():
     return img
 
 
-def crosshair(img):
-    d = ImageDraw.Draw(img)
-    cx = cy = S / 2
-    step = S * SPACING
-
-    # The glow, first, so the dots sit on it: it is what carries the accent
-    # colour now that the middle dot itself is nearly white.
-    halo = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-    hr = S * DOT_R * 2.6
-    ImageDraw.Draw(halo).ellipse([cx - hr, cy - hr, cx + hr, cy + hr], fill=GLOW + (170,))
-    img.alpha_composite(halo.filter(ImageFilter.GaussianBlur(S * DOT_R * 0.85)))
-
-    def dot(ix, iy):
-        """One dot of the matrix, at grid position (ix, iy)."""
-        out = max(abs(ix), abs(iy))
-        # Smaller the further out, so the arms point inwards.
-        scale = 1 - 0.56 * (out / CELLS) ** 1.05
-        r = S * DOT_R * scale
-        x, y = cx + ix * step, cy + iy * step
-        if out == 0:
-            colour, r = CENTRE, r * 1.06
-        else:
-            colour = DOT
-        d.ellipse([x - r, y - r, x + r, y + r], fill=colour + (255,))
-
-    for n in range(0, CELLS + 1):
-        spread = range(-thickness(n), thickness(n) + 1)
-        if n == 0:
-            dot(0, 0)
-            continue
-        # The corners (±n, ±n) are produced by both the vertical and the
-        # horizontal arm; draw each cell once so a future per-dot tweak cannot
-        # double-apply there.
-        seen = set()
-        for off in spread:
-            for cell in ((n, off), (-n, off), (off, n), (off, -n)):
-                if cell not in seen:
-                    seen.add(cell)
-                    dot(*cell)
+def mark(img):
+    draw = ImageDraw.Draw(img)
+    for x0, y0, x1, y1, r, colour in bars():
+        draw.rounded_rectangle(
+            [x0 * S, y0 * S, x1 * S, y1 * S], radius=r * S, fill=colour + (255,)
+        )
     return img
 
 
-def positions():
-    """Every dot as (x, y, radius, colour), in fractions of the tile."""
-    out = []
-    for n in range(0, CELLS + 1):
-        if n == 0:
-            cells = [(0, 0)]
-        else:
-            cells = []
-            seen = set()
-            for off in range(-thickness(n), thickness(n) + 1):
-                for cell in ((n, off), (-n, off), (off, n), (off, -n)):
-                    if cell not in seen:
-                        seen.add(cell)
-                        cells.append(cell)
-        for ix, iy in cells:
-            far = max(abs(ix), abs(iy))
-            r = DOT_R * (1 - 0.56 * (far / CELLS) ** 1.05)
-            if far == 0:
-                r *= 1.06
-            out.append((0.5 + ix * SPACING, 0.5 + iy * SPACING, r,
-                        CENTRE if far == 0 else DOT))
-    return out
-
-
 def svg(path):
-    """The same mark as vector, generated from the same numbers so the two
-    cannot drift apart — which is what happens when one is hand-written."""
+    """The same mark as vector, from the same numbers, so the two cannot drift."""
     n = 512
     hexed = lambda c: "#%02x%02x%02x" % c
-    dots = "\n".join(
-        f'  <circle cx="{x * n:.1f}" cy="{y * n:.1f}" r="{r * n:.1f}" fill="{hexed(c)}"/>'
-        for x, y, r, c in positions()
+    shapes = "\n".join(
+        f'  <rect x="{x0 * n:.1f}" y="{y0 * n:.1f}" '
+        f'width="{(x1 - x0) * n:.1f}" height="{(y1 - y0) * n:.1f}" '
+        f'rx="{r * n:.1f}" fill="{hexed(c)}"/>'
+        for x0, y0, x1, y1, r, c in bars()
     )
     open(path, "w").write(f"""<!-- Sightline. Generated by scripts/make-icon.py; edit that, not this. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {n} {n}" width="{n}" height="{n}">
@@ -141,20 +129,46 @@ def svg(path):
       <stop offset="0" stop-color="{hexed(TILE_TOP)}"/>
       <stop offset="1" stop-color="{hexed(TILE_BOTTOM)}"/>
     </linearGradient>
-    <radialGradient id="glow">
-      <stop offset="0" stop-color="{hexed(GLOW)}" stop-opacity=".75"/>
-      <stop offset="1" stop-color="{hexed(GLOW)}" stop-opacity="0"/>
-    </radialGradient>
   </defs>
   <rect width="{n}" height="{n}" rx="{n * 0.223:.0f}" fill="url(#tile)"/>
-  <circle cx="{n / 2:.0f}" cy="{n / 2:.0f}" r="{DOT_R * 3.4 * n:.1f}" fill="url(#glow)"/>
-{dots}
+{shapes}
 </svg>
 """)
 
 
+def icns(path, img):
+    """Write the macOS icon set.
+
+    By hand, because no icns tool is installed on the machine this is built on
+    and the alternative was leaving the file stale — which is worse than it
+    sounds: it is the icon macOS would actually show, so the one platform whose
+    conventions this mark was drawn for would have been the one still shipping
+    the old one.
+
+    The format is a magic word, a total length, and then typed chunks. Every
+    type below takes a PNG directly, which modern macOS has read for years.
+    """
+    import struct
+    from io import BytesIO
+
+    # (type, pixel size). The @2x types carry the same pixels as the size above
+    # them, which is what the format expects rather than a separate rendering.
+    kinds = [
+        (b"ic07", 128), (b"ic08", 256), (b"ic09", 512), (b"ic10", 1024),
+        (b"ic11", 32), (b"ic12", 64), (b"ic13", 256), (b"ic14", 512),
+    ]
+    chunks = []
+    for kind, size in kinds:
+        buf = BytesIO()
+        img.resize((size, size), Image.LANCZOS).save(buf, format="PNG")
+        data = buf.getvalue()
+        chunks.append(kind + struct.pack(">I", len(data) + 8) + data)
+    body = b"".join(chunks)
+    open(path, "wb").write(b"icns" + struct.pack(">I", len(body) + 8) + body)
+
+
 def build():
-    img = crosshair(tile()).resize((FINAL, FINAL), Image.LANCZOS)
+    img = mark(tile()).resize((FINAL, FINAL), Image.LANCZOS)
     here = __file__.rsplit("/", 2)[0] + "/crates/gui/icons"
     svg(f"{here}/icon.svg")
     for name, size in [("32x32.png", 32), ("128x128.png", 128),
@@ -163,6 +177,7 @@ def build():
     img.resize((256, 256), Image.LANCZOS).save(
         f"{here}/icon.ico", sizes=[(s, s) for s in (16, 24, 32, 48, 64, 128, 256)]
     )
+    icns(f"{here}/icon.icns", img)
     img.save(f"{here}/icon-master.png")
     print("wrote", here)
 

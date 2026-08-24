@@ -2,51 +2,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <defs>
     <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#1e293b"/>
-      <stop offset="1" stop-color="#0b0f1a"/>
+      <stop offset="0" stop-color="#24242a"/>
+      <stop offset="1" stop-color="#0d0d10"/>
     </linearGradient>
-    <radialGradient id="glow">
-      <stop offset="0" stop-color="#60a5fa" stop-opacity=".75"/>
-      <stop offset="1" stop-color="#60a5fa" stop-opacity="0"/>
-    </radialGradient>
   </defs>
   <rect width="512" height="512" rx="114" fill="url(#tile)"/>
-  <circle cx="256" cy="256" r="49.6" fill="url(#glow)"/>
-  <circle cx="256.0" cy="256.0" r="15.5" fill="#f0f9ff"/>
-  <circle cx="285.2" cy="226.8" r="13.3" fill="#e2e8f0"/>
-  <circle cx="226.8" cy="226.8" r="13.3" fill="#e2e8f0"/>
-  <circle cx="226.8" cy="285.2" r="13.3" fill="#e2e8f0"/>
-  <circle cx="285.2" cy="256.0" r="13.3" fill="#e2e8f0"/>
-  <circle cx="226.8" cy="256.0" r="13.3" fill="#e2e8f0"/>
-  <circle cx="256.0" cy="285.2" r="13.3" fill="#e2e8f0"/>
-  <circle cx="256.0" cy="226.8" r="13.3" fill="#e2e8f0"/>
-  <circle cx="285.2" cy="285.2" r="13.3" fill="#e2e8f0"/>
-  <circle cx="314.4" cy="226.8" r="12.0" fill="#e2e8f0"/>
-  <circle cx="197.6" cy="226.8" r="12.0" fill="#e2e8f0"/>
-  <circle cx="226.8" cy="314.4" r="12.0" fill="#e2e8f0"/>
-  <circle cx="226.8" cy="197.6" r="12.0" fill="#e2e8f0"/>
-  <circle cx="314.4" cy="256.0" r="12.0" fill="#e2e8f0"/>
-  <circle cx="197.6" cy="256.0" r="12.0" fill="#e2e8f0"/>
-  <circle cx="256.0" cy="314.4" r="12.0" fill="#e2e8f0"/>
-  <circle cx="256.0" cy="197.6" r="12.0" fill="#e2e8f0"/>
-  <circle cx="314.4" cy="285.2" r="12.0" fill="#e2e8f0"/>
-  <circle cx="197.6" cy="285.2" r="12.0" fill="#e2e8f0"/>
-  <circle cx="285.2" cy="314.4" r="12.0" fill="#e2e8f0"/>
-  <circle cx="285.2" cy="197.6" r="12.0" fill="#e2e8f0"/>
-  <circle cx="343.6" cy="256.0" r="10.6" fill="#e2e8f0"/>
-  <circle cx="168.4" cy="256.0" r="10.6" fill="#e2e8f0"/>
-  <circle cx="256.0" cy="343.6" r="10.6" fill="#e2e8f0"/>
-  <circle cx="256.0" cy="168.4" r="10.6" fill="#e2e8f0"/>
-  <circle cx="372.7" cy="256.0" r="9.3" fill="#e2e8f0"/>
-  <circle cx="139.3" cy="256.0" r="9.3" fill="#e2e8f0"/>
-  <circle cx="256.0" cy="372.7" r="9.3" fill="#e2e8f0"/>
-  <circle cx="256.0" cy="139.3" r="9.3" fill="#e2e8f0"/>
-  <circle cx="401.9" cy="256.0" r="7.8" fill="#e2e8f0"/>
-  <circle cx="110.1" cy="256.0" r="7.8" fill="#e2e8f0"/>
-  <circle cx="256.0" cy="401.9" r="7.8" fill="#e2e8f0"/>
-  <circle cx="256.0" cy="110.1" r="7.8" fill="#e2e8f0"/>
-  <circle cx="431.1" cy="256.0" r="6.4" fill="#e2e8f0"/>
-  <circle cx="80.9" cy="256.0" r="6.4" fill="#e2e8f0"/>
-  <circle cx="256.0" cy="431.1" r="6.4" fill="#e2e8f0"/>
-  <circle cx="256.0" cy="80.9" r="6.4" fill="#e2e8f0"/>
+  <rect x="89.6" y="147.2" width="307.2" height="28.2" rx="14.1" fill="#0a84ff"/>
+  <rect x="89.6" y="241.9" width="122.9" height="28.2" rx="14.1" fill="#0a84ff"/>
+  <rect x="89.6" y="336.6" width="307.2" height="28.2" rx="14.1" fill="#0a84ff"/>
+  <rect x="234.0" y="76.8" width="44.0" height="358.4" rx="22.0" fill="#f5f5f7"/>
 </svg>
