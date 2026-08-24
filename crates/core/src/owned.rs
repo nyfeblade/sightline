@@ -23,10 +23,15 @@
 //! foreman and a chief can drive without a terminal in the way.
 //!
 //! What it does not yet do: interactive permissions. In this mode a tool is
-//! allowed or refused by the session's configured settings; routing each
-//! decision to a person the way the terminal view does needs Claude Code's
-//! `--permission-prompt-tool` seam, which is its own piece of work. Until then
-//! an owned session runs under whatever permissions it was started with.
+//! allowed or refused by the session's configured settings, so an owned session
+//! runs under whatever permissions it was started with.
+//!
+//! That is a gap in this module, not in the tool. Claude Code does have the
+//! seam — `--permission-prompt-tool mcp__host__approve` with `sdkMcpServers`
+//! declared at `initialize` — and `docs/probes/control_protocol.py` proves a
+//! host can allow, deny and rewrite each call over it, plus interrupt a turn and
+//! change permission mode without a restart. Wiring it here is the first move in
+//! `docs/ARCHITECTURE.md`, and this is where it lands.
 
 use crate::bus::{Event, Kind};
 use serde_json::Value;

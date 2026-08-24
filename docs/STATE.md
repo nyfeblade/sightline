@@ -124,9 +124,14 @@ truthful reading of it: a decision was made on your behalf, by settings, and you
 were not asked. Without it a session getting nothing done looked like a session
 with bad luck.
 
-Interrupting is the other absence: there is no Escape to press and no interrupt
-in the input format, so the window says so rather than sending a key
-nowhere.
+Both halves of that are now known to be wrong, and the probe in
+`docs/probes/control_protocol.py` shows why. A host can answer permission
+requests itself — `--permission-prompt-tool mcp__host__approve` plus
+`sdkMcpServers` at `initialize` — and allow, deny or rewrite each call. And
+there is an interrupt: `control_request` with subtype `interrupt` ended a turn
+with 87 seconds of `sleep` still to run. `set_permission_mode` changes posture
+mid-session too. None of it is wired into `owned.rs` yet; see
+`docs/ARCHITECTURE.md` for what it is for.
 
 ## Aider, read rather than watched
 
