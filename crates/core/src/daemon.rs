@@ -33,7 +33,13 @@ use std::path::{Path, PathBuf};
 /// 2 added owned sessions: ones the daemon holds by pipe rather than by
 /// pseudo-terminal. A version-1 daemon answers `Own` with "could not read that
 /// request", which is why the mismatch is caught at `Hello` instead.
-pub const WIRE: u32 = 2;
+///
+/// 3 added what a session is allowed and forbidden to do. Bumped for a field,
+/// which is not the usual rule — the usual rule is that fields may be added —
+/// because this one decides what an agent may run. An old daemon reading a spec
+/// it half understands would start a session with the wrong permissions and say
+/// nothing, so any change to `owned::Spec` bumps this.
+pub const WIRE: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "do", rename_all = "camelCase")]
@@ -78,12 +84,9 @@ pub enum Request {
     /// Start one, with the message it is to begin on.
     Own {
         cwd: String,
-        model: Option<String>,
-        /// The permission mode it will run under for its whole life; nothing
-        /// can be asked once it is running.
-        #[serde(default)]
-        mode: Option<String>,
-        opening: Option<String>,
+        /// Everything settled at the start and fixed for the life of the
+        /// session: model, permission mode, denied tools, opening message.
+        spec: crate::owned::Spec,
     },
     /// Every owned session this daemon holds.
     OwnedAll,
@@ -179,18 +182,11 @@ fn answer(request: Request) -> Reply {
         Request::Count => Reply::Count {
             n: host::hosted_count(),
         },
-        Request::Own {
-            cwd,
-            model,
-            mode,
-            opening,
-        } => Reply::of(
+        Request::Own { cwd, spec } => Reply::of(
             crate::owned::start(
                 &crate::control::claude_program(),
                 Path::new(&cwd),
-                model.as_deref(),
-                mode.as_deref(),
-                opening.as_deref(),
+                &spec,
                 // Long enough for the agent's first line, which is what binds
                 // the session to its transcript. A caller waiting on a socket
                 // would rather wait a moment than be handed a session no view

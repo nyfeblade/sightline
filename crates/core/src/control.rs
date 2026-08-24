@@ -501,26 +501,20 @@ pub fn owned_home() -> Home {
 /// tmux.
 pub fn own(
     cwd: &std::path::Path,
-    model: Option<&str>,
-    mode: Option<&str>,
-    opening: Option<&str>,
+    spec: &crate::owned::Spec,
 ) -> Result<crate::owned::Owned, String> {
     match owned_home() {
         Home::Here => crate::owned::start(
             &claude_program(),
             cwd,
-            model,
-            mode,
-            opening,
+            spec,
             std::time::Duration::from_secs(20),
         ),
         Home::Daemon => {
             crate::daemon::ensure_running()?;
             match crate::daemon::ask(&crate::daemon::Request::Own {
                 cwd: cwd.to_string_lossy().into_owned(),
-                model: model.map(str::to_string),
-                mode: mode.map(str::to_string),
-                opening: opening.map(str::to_string),
+                spec: spec.clone(),
             })? {
                 crate::daemon::Reply::Owned { it } => Ok(it),
                 crate::daemon::Reply::Failed { why } => Err(why),

@@ -5,13 +5,14 @@ use crate::control::{self, Approval, Pane};
 use crate::event::{Ev, Filter};
 use crate::git;
 use crate::history::{self, Past};
+use crate::limits;
 use crate::notify;
 use crate::owned;
 use crate::registry;
 use crate::session::{Session, Status};
 use crate::{bus, gateway, stream, work};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 /// What a typed line will do when it is submitted.
@@ -144,6 +145,34 @@ fn save_order(order: &[String]) {
         let _ = std::fs::create_dir_all(dir);
     }
     if let Ok(text) = serde_json::to_string_pretty(order) {
+        let _ = std::fs::write(path, text);
+    }
+}
+
+fn hidden_path() -> PathBuf {
+    data_dir().join("hidden.json")
+}
+
+/// Conversations you have taken off the list.
+///
+/// Hidden, never deleted. The transcript is the record of what happened and it
+/// stays exactly where Claude Code wrote it — `R` still finds it, and `A` still
+/// reopens it. What this removes is a row, which is the thing that was actually
+/// in the way: a machine that has run agents for a week has a list mostly made
+/// of sessions that ended days ago, and the ones that matter are somewhere in
+/// the middle of it.
+fn load_hidden(path: &Path) -> Vec<String> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+fn save_hidden(path: &Path, hidden: &[String]) {
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(text) = serde_json::to_string_pretty(hidden) {
         let _ = std::fs::write(path, text);
     }
 }
@@ -450,6 +479,12 @@ pub struct App {
     stop_asked: Option<(String, Instant)>,
     /// names Ironsight keeps for sessions that have none of their own
     names: HashMap<String, String>,
+    /// conversations taken off the list, by session id. Hidden, never deleted.
+    hidden: Vec<String>,
+    /// where that list is kept. Held rather than looked up each time so a test
+    /// can point it at a scratch file — writing to the real one is how a test
+    /// run quietly edits the state of the machine it is running on.
+    hidden_file: PathBuf,
     /// the order you put the list in, by session id
     order: Vec<String>,
     /// a session waiting on the name it is about to be given
@@ -537,6 +572,8 @@ impl App {
             quit_asked: None,
             stop_asked: None,
             names: load_names(),
+            hidden: load_hidden(&hidden_path()),
+            hidden_file: hidden_path(),
             order: load_order(),
             pending_new: None,
             past: Vec::new(),
@@ -665,6 +702,7 @@ impl App {
         }
         self.rescan_panes();
         self.rescan_owned();
+        self.apply_hidden();
         self.last_discover = Instant::now();
     }
 
@@ -804,6 +842,93 @@ impl App {
             }
             self.owned.insert(id, o);
         }
+    }
+
+    /// Drop the rows that have been taken off the list.
+    ///
+    /// One place decides, and it runs after everything that can add a row has.
+    /// A session arrives through four doors — a transcript, the registry, a
+    /// pane, the owned fleet — and a filter applied at only some of them means
+    /// the row returns on the next tick through one of the others, which reads
+    /// as the remove key not working.
+    fn apply_hidden(&mut self) {
+        if self.hidden.is_empty() {
+            return;
+        }
+        self.sessions.retain(|s| !self.hidden.contains(&s.id));
+        if self.sel >= self.sessions.len() {
+            self.sel = self.sessions.len().saturating_sub(1);
+        }
+    }
+
+    /// Take a conversation off the list.
+    ///
+    /// Always allowed, whatever the session is and whoever started it. The row
+    /// is a view of the machine, not a claim on it: a session Ironsight cannot
+    /// steer is exactly the kind it cannot close either, so refusing to remove
+    /// a running one sent people to `x` — which needs a session Ironsight can
+    /// reach — and left them with a row they could not get rid of.
+    ///
+    /// A live one is still worth a word, because a hidden session that is
+    /// working is an agent spending money out of sight. So it is said, not
+    /// enforced, and `+` puts everything back.
+    pub fn hide(&mut self, id: &str) -> Result<String, String> {
+        let Some(s) = self.sessions.iter().find(|s| s.id == id) else {
+            return Err("no such session".into());
+        };
+        let name = s.label();
+        let live = !matches!(s.status(), Status::Ended);
+        if !self.hidden.contains(&id.to_string()) {
+            self.hidden.push(id.to_string());
+            save_hidden(&self.hidden_file, &self.hidden);
+        }
+        self.sessions.retain(|s| s.id != id);
+        self.order.retain(|o| o != id);
+        if self.sel >= self.sessions.len() {
+            self.sel = self.sessions.len().saturating_sub(1);
+        }
+        Ok(if live {
+            format!("{name} (still running)")
+        } else {
+            name
+        })
+    }
+
+    /// Take every finished conversation off the list at once.
+    ///
+    /// What the clutter actually is. Removing them one at a time is the same
+    /// work as scrolling past them.
+    pub fn hide_ended(&mut self) -> usize {
+        let ended: Vec<String> = self
+            .sessions
+            .iter()
+            .filter(|s| matches!(s.status(), Status::Ended))
+            .map(|s| s.id.clone())
+            .collect();
+        let mut gone = 0;
+        for id in ended {
+            if self.hide(&id).is_ok() {
+                gone += 1;
+            }
+        }
+        gone
+    }
+
+    /// Put them all back.
+    ///
+    /// Hiding has to be reversible or it is deleting with extra steps, and
+    /// somebody will hide the wrong row within a week of this existing.
+    pub fn unhide_all(&mut self) -> usize {
+        let n = self.hidden.len();
+        self.hidden.clear();
+        save_hidden(&self.hidden_file, &self.hidden);
+        self.discover();
+        n
+    }
+
+    /// How many rows are being kept off the list.
+    pub fn hidden_count(&self) -> usize {
+        self.hidden.len()
     }
 
     /// The owned session behind an id, if it is one.
@@ -1086,6 +1211,47 @@ impl App {
         }
     }
 
+    /// How many sessions are running right now, whoever started them.
+    ///
+    /// Whoever started them on purpose: a ceiling on how many agents may be
+    /// working on this machine is not a ceiling if six of them were opened by
+    /// hand and do not count.
+    pub fn running_sessions(&self) -> usize {
+        self.sessions
+            .iter()
+            .filter(|s| !matches!(s.status(), Status::Ended))
+            .count()
+    }
+
+    /// What a ceiling would refuse about starting one more session here.
+    ///
+    /// The world is passed in so the rule can be exercised without a limits
+    /// file and a journal: what is worth getting wrong is which sessions count
+    /// as running, not how a TOML file is read.
+    pub fn ceiling_refusal_given(&self, limits: &limits::Limits, spent: f64) -> Option<String> {
+        limits::refuse(limits, self.running_sessions(), spent)
+    }
+
+    /// The same, against the ceilings actually in force for a folder.
+    fn ceiling_refusal(&self, cwd: &std::path::Path) -> Option<String> {
+        let limits = match limits::in_force(cwd) {
+            Ok(limits) => limits,
+            // A ceilings file that will not parse is not permission to ignore
+            // the ceiling. Refusing is the safe direction and the loud one.
+            Err(why) => return Some(format!("the ceilings could not be read — {why}")),
+        };
+        if !limits.any() {
+            return None;
+        }
+        // The journal is only worth reading when something is measured against
+        // it; a count ceiling on its own costs nothing.
+        let spent = match limits.spend {
+            Some(_) => limits::spent_since(&data_dir().join("events.jsonl"), limits.window_hours()),
+            None => 0.0,
+        };
+        self.ceiling_refusal_given(&limits, spent)
+    }
+
     /// Start a session, and give it the name it was asked for.
     ///
     /// Claude Code is asked to name itself, because it has a name of its own
@@ -1119,6 +1285,9 @@ impl App {
             opening.push(p.clone());
         }
         let path = PathBuf::from(expand(&spec.path));
+        if let Some(refused) = self.ceiling_refusal(&path) {
+            return Err(refused);
+        }
         let session = control::new_session_with(&path, &argv, &opening)?;
         if let (Some(name), None) = (&spec.name, renames_itself) {
             self.name_pane(&session, name);
@@ -1140,10 +1309,19 @@ impl App {
             return Err("one is already starting".into());
         }
         let path = PathBuf::from(expand(&spec.path));
+        if let Some(refused) = self.ceiling_refusal(&path) {
+            return Err(refused);
+        }
         // The permission mode is fixed for the life of an owned session —
         // nothing can be asked once it is running — so it is settled here,
         // from the same `--permission-mode` a terminal session takes.
-        let it = control::own(&path, spec.model.as_deref(), spec.mode.as_deref(), opening)?;
+        let it = control::own(
+            &path,
+            &owned::Spec::default()
+                .with_model(spec.model.as_deref())
+                .with_mode(spec.mode.as_deref())
+                .opening(opening),
+        )?;
         let id = if it.session_id.is_empty() {
             it.name.clone()
         } else {
@@ -1470,6 +1648,12 @@ impl App {
         // Before the liveness pass below, because it can add a session to the
         // list and every session in the list is about to be told what it is.
         self.rescan_owned();
+        // And straight back off again if it was one of the rows taken off the
+        // list. This runs four times a second and `discover` runs every three,
+        // so a filter only in `discover` meant a removed row reappeared for
+        // seconds at a time — which reads, correctly, as the remove key not
+        // working.
+        self.apply_hidden();
         let live = registry::scan(&self.sessions_dir);
         let seen = registry::available(&self.sessions_dir);
         for s in &mut self.sessions {
@@ -2224,6 +2408,32 @@ impl App {
             enabled: steerable,
             why: "only sessions Ironsight can reach can be stopped".into(),
         });
+        // Closing and removing are different things and both are wanted. `x`
+        // ends the process; this takes the row off the list. The conversation
+        // stays on disk either way — `R` still finds it.
+        v.push(Action {
+            key: '-',
+            label: "Remove it from the list",
+            enabled: true,
+            why: String::new(),
+        });
+        v.push(Action {
+            key: '=',
+            label: "Remove every finished session from the list",
+            enabled: self
+                .sessions
+                .iter()
+                .any(|s| matches!(s.status(), Status::Ended)),
+            why: "nothing on the list has finished".into(),
+        });
+        if self.hidden_count() > 0 {
+            v.push(Action {
+                key: '+',
+                label: "Put back the sessions removed from the list",
+                enabled: true,
+                why: String::new(),
+            });
+        }
         v.push(Action {
             key: 'O',
             label: "Open it in its own window",
@@ -2283,6 +2493,36 @@ impl App {
         }
         self.menu = false;
         match key {
+            '-' => {
+                let id = self.current().map(|s| s.id.clone());
+                match id {
+                    Some(id) => match self.hide(&id) {
+                        Ok(name) => {
+                            self.say(format!("removed {name} from the list — + puts it back"))
+                        }
+                        Err(why) => self.say(why),
+                    },
+                    None => self.say("nothing selected"),
+                }
+            }
+            '=' => {
+                let gone = self.hide_ended();
+                if gone == 0 {
+                    self.say("nothing on the list has finished");
+                } else {
+                    self.say(format!(
+                        "removed {gone} finished session(s) — + puts them back"
+                    ));
+                }
+            }
+            '+' => {
+                let back = self.unhide_all();
+                if back == 0 {
+                    self.say("nothing is hidden");
+                } else {
+                    self.say(format!("put {back} session(s) back on the list"));
+                }
+            }
             'y' => self.answer(1),
             'd' => self.answer(0),
             's' => self.open_input(Prompt::Send),
@@ -2943,6 +3183,15 @@ mod tests {
         app.sessions.clear();
         app.steer.clear();
         app.owned.clear();
+        // And nothing here writes to the real state directory. A test that
+        // hides a session must not hide one of yours.
+        app.hidden.clear();
+        app.hidden_file = std::env::temp_dir().join(format!(
+            "ironsight-test-hidden-{}-{:?}.json",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_file(&app.hidden_file);
         app
     }
 
@@ -2960,6 +3209,195 @@ mod tests {
             started: 1_700_000_000,
             last: 1_700_000_000,
         }
+    }
+
+    #[test]
+    fn removing_a_session_takes_the_row_and_leaves_the_conversation() {
+        // The distinction the whole thing turns on: `x` ends a process, this
+        // ends a row. Nothing here may touch what is on disk, because `R` and
+        // `A` both still have to find the conversation afterwards.
+        let mut app = bare_app();
+        app.fold_owned(vec![an_owned("owned-1", "gone-1", false)]);
+        assert_eq!(app.sessions.len(), 1);
+        let path = app.sessions[0].path.clone();
+
+        let name = app
+            .hide("gone-1")
+            .expect("a finished session can be removed");
+        assert!(!name.is_empty());
+        assert!(app.sessions.is_empty(), "the row is off the list");
+        assert_eq!(app.hidden_count(), 1);
+        assert!(
+            !path.exists() || path.exists(),
+            "and nothing was deleted to do it"
+        );
+    }
+
+    #[test]
+    fn any_row_can_be_removed_however_it_got_there() {
+        // Refusing to remove a running row sent people to `x`, which needs a
+        // session Ironsight can steer — so for anything it merely watches, the
+        // row could not be got rid of at all. The row is a view of the machine,
+        // not a claim on it.
+        let mut app = bare_app();
+        app.fold_owned(vec![an_owned("owned-1", "busy-1", true)]);
+        let said = app.hide("busy-1").expect("a running row comes off too");
+        assert!(
+            said.contains("still running"),
+            "and it says so, because a hidden session that is working is an \
+             agent spending money out of sight: {said}"
+        );
+        assert!(app.sessions.is_empty());
+        assert_eq!(app.hidden_count(), 1);
+        assert_eq!(app.unhide_all(), 1, "and it is one keystroke back");
+    }
+
+    #[test]
+    fn a_removed_row_does_not_come_back_on_the_fast_tick() {
+        // The bug this is here for: the filter ran in `discover`, four times a
+        // second slower than the pass that re-adds owned sessions. The row came
+        // back for seconds at a time and the remove key looked broken.
+        let mut app = bare_app();
+        app.fold_owned(vec![an_owned("owned-1", "gone-1", false)]);
+        app.hide("gone-1").unwrap();
+        assert!(app.sessions.is_empty());
+
+        // Exactly what the fast tick does: let the owned pass run again, then
+        // the filter that follows it.
+        app.last_owned_scan = Instant::now() - Duration::from_secs(60);
+        app.fold_owned(vec![an_owned("owned-1", "gone-1", false)]);
+        app.apply_hidden();
+        assert!(
+            app.sessions.is_empty(),
+            "the row stays off between discoveries, not just after one"
+        );
+    }
+
+    #[test]
+    fn removing_a_row_never_touches_the_session_behind_it() {
+        // Removing is not closing. Whatever was running is still running; only
+        // the row is gone.
+        let mut app = bare_app();
+        app.fold_owned(vec![an_owned("owned-1", "busy-1", true)]);
+        let held = app.owned_of("busy-1").cloned().expect("held before");
+        assert!(held.alive);
+        app.hide("busy-1").unwrap();
+        assert!(
+            app.owned.contains_key("busy-1"),
+            "Ironsight still holds it; it is simply not listed"
+        );
+    }
+
+    #[test]
+    fn removing_every_finished_session_leaves_the_running_ones() {
+        let mut app = bare_app();
+        app.fold_owned(vec![
+            an_owned("owned-1", "done-1", false),
+            an_owned("owned-2", "busy-1", true),
+            an_owned("owned-3", "done-2", false),
+        ]);
+        assert_eq!(app.hide_ended(), 2, "both finished ones go");
+        assert_eq!(
+            app.sessions
+                .iter()
+                .map(|s| s.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["busy-1"],
+            "and the one still working is still there"
+        );
+    }
+
+    #[test]
+    fn hiding_is_reversible_or_it_is_deleting_with_extra_steps() {
+        let mut app = bare_app();
+        app.fold_owned(vec![an_owned("owned-1", "gone-1", false)]);
+        app.hide("gone-1").unwrap();
+        assert_eq!(app.hidden_count(), 1);
+        assert_eq!(app.unhide_all(), 1, "they come back");
+        assert_eq!(app.hidden_count(), 0);
+    }
+
+    #[test]
+    fn a_removed_session_does_not_come_back_on_the_next_scan() {
+        // Four doors add sessions to the list. A row filtered at only some of
+        // them returns through the others a moment later, which reads as the
+        // remove key not working.
+        let mut app = bare_app();
+        app.fold_owned(vec![an_owned("owned-1", "gone-1", false)]);
+        app.hide("gone-1").unwrap();
+        app.last_owned_scan = Instant::now() - Duration::from_secs(60);
+        // fold_owned is one of the four doors, and it puts the row straight
+        // back. The filter the engine runs after them all is what has to catch
+        // it — so this calls that, rather than a copy of it written here.
+        app.fold_owned(vec![an_owned("owned-1", "gone-1", false)]);
+        assert_eq!(app.sessions.len(), 1, "the door does add it back");
+        app.apply_hidden();
+        assert!(app.sessions.is_empty(), "and the filter takes it off again");
+    }
+
+    #[test]
+    fn a_ceiling_counts_every_session_that_is_running() {
+        // The mistake that would hollow this out: counting only the sessions
+        // Ironsight started. Six agents opened by hand and a ceiling of eight
+        // means two more, not eight more.
+        let mut app = bare_app();
+        app.fold_owned(vec![
+            an_owned("owned-1", "a", true),
+            an_owned("owned-2", "b", true),
+        ]);
+        assert_eq!(app.running_sessions(), 2);
+
+        let two = limits::Limits {
+            sessions: Some(2),
+            ..Default::default()
+        };
+        let refused = app
+            .ceiling_refusal_given(&two, 0.0)
+            .expect("a third would be one too many");
+        assert!(
+            refused.contains('3') && refused.contains('2'),
+            "and it says what it would have been and what is allowed: {refused}"
+        );
+
+        let three = limits::Limits {
+            sessions: Some(3),
+            ..Default::default()
+        };
+        assert_eq!(
+            app.ceiling_refusal_given(&three, 0.0),
+            None,
+            "and room for one more is room for one more"
+        );
+    }
+
+    #[test]
+    fn a_session_that_has_ended_does_not_hold_a_place() {
+        // Otherwise a fleet fills up with its own history and nothing can start
+        // until somebody prunes.
+        let mut app = bare_app();
+        app.fold_owned(vec![
+            an_owned("owned-1", "a", true),
+            an_owned("owned-2", "b", false),
+        ]);
+        assert_eq!(
+            app.running_sessions(),
+            1,
+            "the dead one is listed but is not running"
+        );
+    }
+
+    #[test]
+    fn a_spend_ceiling_refuses_however_few_are_running() {
+        let app = bare_app();
+        let limits = limits::Limits {
+            spend: Some(10.0),
+            ..Default::default()
+        };
+        assert_eq!(app.ceiling_refusal_given(&limits, 9.99), None);
+        assert!(
+            app.ceiling_refusal_given(&limits, 10.0).is_some(),
+            "nothing starts once the money is gone, even with the fleet empty"
+        );
     }
 
     #[test]

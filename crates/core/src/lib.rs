@@ -10,16 +10,19 @@ pub mod bootstrap;
 pub mod brief;
 pub mod bus;
 pub mod checks;
+pub mod chief;
 pub mod control;
 pub mod daemon;
 pub mod event;
 pub mod gateway;
 pub mod git;
+pub mod glue;
 pub mod history;
 // Selected only on Windows, but built and tested everywhere, so on Unix its
 // surface is unused by design.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub mod host;
+pub mod limits;
 pub mod notify;
 pub mod owned;
 pub mod pricing;

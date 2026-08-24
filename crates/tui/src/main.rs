@@ -29,7 +29,15 @@ usage: Ironsight [options]
                                any command), default claude. --owned starts one
                                Ironsight holds itself, spoken to over structured
                                JSON with no terminal in the way
+       ironsight glue <version> [--remote NAME] [--dry-run]
+                               reconcile this fork onto a newer upstream release:
+                               teaches your agent upstream's architecture, seams
+                               and invariants, then has it write the adapters in a
+                               worktree of its own. --install just teaches it
        ironsight owned              list the sessions Ironsight is holding itself
+       ironsight hidden [--ended] [--clear]
+                               rows taken off the session list; --ended takes
+                               every finished one off, --clear puts them all back
        ironsight send <who> <text> send a line to a running session, whether it is
                                in a terminal or held by Ironsight
        ironsight adopt <who>        (re)open a conversation in tmux so it can be steered
@@ -552,8 +560,9 @@ fn main() -> Result<()> {
         let owned = owned::OwnedSession::start_with(
             &program,
             &cwd,
-            model.as_deref(),
-            mode.as_deref(),
+            &owned::Spec::default()
+                .with_model(model.as_deref())
+                .with_mode(mode.as_deref()),
             &session_id,
             "claude",
             // A one-shot command: let claude's diagnostics reach the terminal,
@@ -610,6 +619,445 @@ fn main() -> Result<()> {
             .find(|p| p.session == *who || p.id == *who)
             .ok_or_else(|| anyhow::anyhow!("no session called {who}"))?;
         return attach_to(&pane.id, &pane.session);
+    }
+
+    // A session that supervises the others: Ironsight on its path, a brief, and a
+    // ceiling it cannot raise. Not a new runtime — that is the whole point.
+    if args.first().map(String::as_str) == Some("chief") {
+        let opt = |name: &str| {
+            args.iter()
+                .position(|a| a == name)
+                .and_then(|i| args.get(i + 1))
+                .cloned()
+        };
+        let path = args
+            .get(1)
+            .filter(|a| !a.starts_with("--"))
+            .cloned()
+            .unwrap_or_else(|| ".".into());
+        let cwd = std::path::PathBuf::from(app::expand(&path));
+        if !cwd.is_dir() {
+            anyhow::bail!("{} is not a folder", cwd.display());
+        }
+
+        // Everything after the flags is what you want done, in your words. A
+        // chief with no intent is a supervisor with nothing to supervise.
+        let intent = match opt("--intent") {
+            Some(text) => text,
+            None => {
+                let mut rest: Vec<String> = Vec::new();
+                let mut it = args[1..].iter().peekable();
+                if it.peek().map(|a| !a.starts_with("--")).unwrap_or(false) {
+                    it.next();
+                }
+                while let Some(a) = it.next() {
+                    match a.as_str() {
+                        "--model" | "--intent" => {
+                            it.next();
+                        }
+                        "--" => {
+                            rest.extend(it.by_ref().cloned());
+                            break;
+                        }
+                        other if other.starts_with("--") => {}
+                        other => {
+                            rest.push(other.to_string());
+                            rest.extend(it.by_ref().cloned());
+                            break;
+                        }
+                    }
+                }
+                rest.join(" ")
+            }
+        };
+        if intent.trim().is_empty() {
+            anyhow::bail!(
+                "usage: ironsight chief [path] <what you want done>\n                 a chief needs to be told what is wanted, in your words"
+            );
+        }
+
+        // Ceilings are not optional here, and this is the one place that says
+        // so. Ordinary use does not need them; granting something else the
+        // power to start sessions is exactly the case they exist for, and a
+        // supervisor that could start a hundred workers because nobody had got
+        // round to setting a number is not a design, it is a hope.
+        let limits = ironsight_core::limits::in_force(&cwd).map_err(|e| anyhow::anyhow!(e))?;
+        if !limits.any() {
+            anyhow::bail!(
+                "a chief starts sessions on your behalf, so it does not start without a \
+                 ceiling.\nSet one first:\n\n    ironsight limits --sessions 6 --spend 20\n"
+            );
+        }
+
+        let mut app = App::new(
+            app::default_root(),
+            app::default_sessions_dir(),
+            Duration::from_secs(7 * 86_400),
+            true,
+        );
+        app.with_state();
+        let constitution = brief::Constitution::find(&cwd).map(|(_, c)| c);
+        let packet = ironsight_core::chief::brief(
+            &intent,
+            &cwd.to_string_lossy(),
+            constitution.as_ref(),
+            &limits,
+            &app.work,
+        );
+
+        if args.iter().any(|a| a == "--dry-run") {
+            // What it would be told, without paying to tell it. The brief is
+            // the whole of the chief, so being able to read it before starting
+            // one is worth a flag.
+            println!("{packet}");
+            return Ok(());
+        }
+
+        let it = control::own(
+            &cwd,
+            &owned::Spec::default()
+                .with_model(opt("--model").as_deref())
+                .allowing(ironsight_core::chief::GRANTED)
+                .denying(ironsight_core::chief::DENIED)
+                .opening(Some(&packet)),
+        )
+        .map_err(|e| anyhow::anyhow!(e))?;
+        let id = if it.session_id.is_empty() {
+            it.name.clone()
+        } else {
+            it.session_id.clone()
+        };
+        // The chief's own work is work, and is tracked like anyone else's.
+        let task = app.assign(&id, &format!("supervise: {intent}"));
+        println!("{} · {task} · {}", it.name, limits.describe());
+        println!("talk to it with `ironsight send {} <text>`", it.name);
+        return Ok(());
+    }
+
+    // Reconcile a fork onto a newer upstream release, by teaching the fork's own
+    // agent rather than by merging text.
+    if args.first().map(String::as_str) == Some("glue") {
+        use ironsight_core::glue;
+        let opt = |name: &str| {
+            args.iter()
+                .position(|a| a == name)
+                .and_then(|i| args.get(i + 1))
+                .cloned()
+        };
+        let here = std::env::current_dir()?;
+        let root = git::repo_root(&here).unwrap_or_else(|| here.clone());
+        if git::repo_root(&here).is_none() {
+            anyhow::bail!(
+                "{} is not inside a git repository, and reconciling a fork needs one",
+                here.display()
+            );
+        }
+
+        // Teaching the fork is worth doing on its own: after this the fork's
+        // own agent can be asked to reconcile without going through Ironsight
+        // at all, which is the point of shipping an ability rather than a tool.
+        if args.iter().any(|a| a == "--install") {
+            let path = glue::install(&root).map_err(|e| anyhow::anyhow!(e))?;
+            println!(
+                "installed the {} ability at {}",
+                glue::ABILITY_NAME,
+                path.display()
+            );
+            println!("your agent can now be asked to reconcile this fork directly.");
+            return Ok(());
+        }
+
+        let version = args
+            .get(1)
+            .filter(|a| !a.starts_with("--"))
+            .cloned()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{}",
+                    [
+                        "usage: ironsight glue <version> [--remote NAME] [--dry-run]",
+                        "       ironsight glue --install",
+                    ]
+                    .join("\n")
+                )
+            })?;
+
+        // Which remote is upstream, said out loud rather than assumed: a fork
+        // usually has both `upstream` and `origin` and they mean different
+        // things.
+        let remote = opt("--remote").or_else(|| glue::upstream_remote(&root));
+        let Some(remote) = remote else {
+            anyhow::bail!(
+                "{}",
+                [
+                    "this repository has no remotes, so there is no upstream to reconcile onto.",
+                    "Add one:  git remote add upstream <url>",
+                ]
+                .join("\n")
+            );
+        };
+        println!("upstream is {remote}");
+
+        // Resolve the version against what is actually here. Fetching is the
+        // caller's business — this does not reach the network on its own.
+        let candidates = [
+            version.clone(),
+            format!("{remote}/{version}"),
+            format!("refs/tags/{version}"),
+        ];
+        let Some(upstream_ref) = candidates.iter().find(|r| glue::known(&root, r)).cloned() else {
+            anyhow::bail!(
+                "{}",
+                [
+                    format!("nothing here is called {version}. Fetch it first:"),
+                    format!("    git fetch {remote} --tags"),
+                    "then try again.".to_string(),
+                ]
+                .join("\n")
+            );
+        };
+
+        let divergence = glue::divergence(&root, &upstream_ref).map_err(|e| anyhow::anyhow!(e))?;
+        if divergence.quiet() {
+            println!("this fork is already at {version} — nothing upstream to bring in");
+            return Ok(());
+        }
+        if divergence.untouched() {
+            println!("this fork has changed nothing since it parted from upstream, so a");
+            println!("plain `git merge {upstream_ref}` will do the job without any of this.");
+            return Ok(());
+        }
+
+        let checks_file = std::path::Path::new(&root).join(checks::FILE);
+        let checks = checks_file.is_file().then(|| checks::FILE);
+        let dirty = glue::dirty(&root);
+
+        // Containment first: the reconciliation happens on a branch in a
+        // worktree of its own, never on the branch someone is standing on.
+        let branch = format!("glue-{}", version.replace(['/', ' '], "-"));
+        let worktree = if args.iter().any(|a| a == "--dry-run") {
+            root.join("..").join(&branch)
+        } else {
+            git::create_worktree(&root, &branch).map_err(|e| anyhow::anyhow!(e))?
+        };
+
+        let packet = glue::brief(
+            &version,
+            &upstream_ref,
+            &root.to_string_lossy(),
+            &worktree.to_string_lossy(),
+            &divergence,
+            checks,
+            dirty,
+        );
+
+        if args.iter().any(|a| a == "--dry-run") {
+            println!("\n{packet}");
+            return Ok(());
+        }
+
+        // The ability goes into the worktree too, so the session reconciling
+        // reads the copy that shipped with this Ironsight rather than whatever
+        // the fork had lying about.
+        glue::install(&worktree).map_err(|e| anyhow::anyhow!(e))?;
+
+        let mut app = App::new(
+            app::default_root(),
+            app::default_sessions_dir(),
+            Duration::from_secs(7 * 86_400),
+            true,
+        );
+        app.with_state();
+        let it = control::own(
+            &worktree,
+            &owned::Spec::default()
+                .with_model(opt("--model").as_deref())
+                // It has to edit code to write an adapter, and nothing can be
+                // asked of it while it runs.
+                .with_mode(Some("acceptEdits"))
+                .opening(Some(&packet)),
+        )
+        .map_err(|e| anyhow::anyhow!(e))?;
+        let id = if it.session_id.is_empty() {
+            it.name.clone()
+        } else {
+            it.session_id.clone()
+        };
+        let task = app.assign(&id, &format!("reconcile this fork onto {version}"));
+        println!(
+            "{} · {task} · {} contested file(s) · {}",
+            it.name,
+            divergence.contested.len(),
+            worktree.display()
+        );
+        println!(
+            "watch it with `ironsight`, talk to it with `ironsight send {} <text>`",
+            it.name
+        );
+        println!("it works only in that worktree and will not merge — that is yours to do.");
+        return Ok(());
+    }
+
+    // Rows taken off the list, and the way back. A `hidden.json` nobody can
+    // read from a terminal would make removing a row a thing you could not
+    // undo without knowing where Ironsight keeps its state.
+    if args.first().map(String::as_str) == Some("hidden") {
+        let mut app = App::new(
+            app::default_root(),
+            app::default_sessions_dir(),
+            Duration::from_secs(30 * 86_400),
+            false,
+        );
+        if args.iter().any(|a| a == "--ended") {
+            // The clutter, cleared without opening the interface. Only finished
+            // sessions: anything still running keeps its row, because a hidden
+            // session that is working is an agent spending money out of sight.
+            app.discover();
+            app.refresh();
+            let gone = app.hide_ended();
+            println!(
+                "{}",
+                match gone {
+                    0 => "nothing on the list has finished".to_string(),
+                    n => format!(
+                        "took {n} finished session(s) off the list — \
+                         put them back with: ironsight hidden --clear"
+                    ),
+                }
+            );
+            return Ok(());
+        }
+        if args.iter().any(|a| a == "--clear") {
+            let back = app.unhide_all();
+            println!(
+                "{}",
+                match back {
+                    0 => "nothing was hidden".to_string(),
+                    n => format!("put {n} session(s) back on the list"),
+                }
+            );
+            return Ok(());
+        }
+        let n = app.hidden_count();
+        if n == 0 {
+            println!("nothing is hidden — every conversation Ironsight knows about is listed");
+        } else {
+            println!("{n} session(s) taken off the list. They are not deleted: the");
+            println!("transcripts are where they always were, and `ironsight` R still");
+            println!("finds them. Put them all back with: ironsight hidden --clear");
+        }
+        return Ok(());
+    }
+
+    // The ceilings on what a fleet may do, and the one command that sets them.
+    //
+    // They are written here rather than edited by hand because the file lives
+    // outside every worktree on purpose, and a person who has to go looking for
+    // it will not set one.
+    if args.first().map(String::as_str) == Some("limits") {
+        let opt = |name: &str| {
+            args.iter()
+                .position(|a| a == name)
+                .and_then(|i| args.get(i + 1))
+                .cloned()
+        };
+        let asked = [opt("--sessions"), opt("--spend"), opt("--window")];
+        if asked.iter().any(Option::is_some) || args.iter().any(|a| a == "--none") {
+            let path = ironsight_core::limits::machine_path();
+            let mut limits = ironsight_core::limits::read(&path)
+                .map_err(|e| anyhow::anyhow!(e))?
+                .unwrap_or_default();
+            if args.iter().any(|a| a == "--none") {
+                limits = Default::default();
+            }
+            if let Some(v) = &asked[0] {
+                limits.sessions =
+                    Some(v.parse().map_err(|_| {
+                        anyhow::anyhow!("--sessions wants a whole number, not {v}")
+                    })?);
+            }
+            if let Some(v) = &asked[1] {
+                limits.spend = Some(
+                    v.trim_start_matches('$')
+                        .parse()
+                        .map_err(|_| anyhow::anyhow!("--spend wants an amount, not {v}"))?,
+                );
+            }
+            if let Some(v) = &asked[2] {
+                limits.window = Some(
+                    v.trim_end_matches('h')
+                        .parse()
+                        .map_err(|_| anyhow::anyhow!("--window wants hours, not {v}"))?,
+                );
+            }
+            let mut text = [
+                "# What a fleet on this machine may do.",
+                "#",
+                "# Here rather than in a repository on purpose: a ceiling a supervised",
+                "# agent can edit is not a ceiling. A project may lower these in",
+                "# .ironsight/limits.toml, and may never raise them.",
+                "",
+                "",
+            ]
+            .join("\n");
+            if let Some(n) = limits.sessions {
+                text.push_str(&format!("sessions = {n}\n"));
+            }
+            if let Some(d) = limits.spend {
+                text.push_str(&format!("spend    = {d}\n"));
+            }
+            if let Some(h) = limits.window {
+                text.push_str(&format!("window   = {h}\n"));
+            }
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            std::fs::write(&path, text)?;
+            println!("{} · {}", path.display(), limits.describe());
+            return Ok(());
+        }
+
+        let cwd = std::env::current_dir()?;
+        let machine = ironsight_core::limits::read(&ironsight_core::limits::machine_path())
+            .map_err(|e| anyhow::anyhow!(e))?;
+        let project = match ironsight_core::limits::project_path(&cwd) {
+            Some(path) => (
+                Some(path.clone()),
+                ironsight_core::limits::read(&path).map_err(|e| anyhow::anyhow!(e))?,
+            ),
+            None => (None, None),
+        };
+        let in_force = ironsight_core::limits::effective(machine, project.1);
+        println!(
+            "machine  {} · {}",
+            ironsight_core::limits::machine_path().display(),
+            machine.map(|m| m.describe()).unwrap_or("none set".into())
+        );
+        if let (Some(path), Some(p)) = (&project.0, project.1) {
+            println!("project  {} · {}", path.display(), p.describe());
+        }
+        println!("in force {}", in_force.describe());
+        if !in_force.any() {
+            println!("\nset one with: ironsight limits --sessions 8 --spend 25");
+            return Ok(());
+        }
+        // What the ceilings are actually being measured against, because a
+        // ceiling you cannot see the other side of is not much use.
+        let journal = app::data_dir().join("events.jsonl");
+        let hours = in_force.window_hours();
+        let spent = ironsight_core::limits::spent_since(&journal, hours);
+        println!("spent    ${spent:.2} in the last {hours}h, by the event journal");
+        if in_force.spend.is_some() && !journal.exists() {
+            // Said plainly rather than left to be discovered: spend is counted
+            // from what was written down, and nothing writes it down unless an
+            // Ironsight is running. A spend ceiling on a machine that only ever
+            // runs the commands is a ceiling nothing is measured against.
+            println!("\nnothing has been journalled yet ({}).", journal.display());
+            println!("spend is counted from that file, and it is written while an Ironsight");
+            println!("window or terminal view is running — a spend ceiling measures nothing");
+            println!("until one has been.");
+        }
+        return Ok(());
     }
 
     // What Ironsight is holding by pipe rather than by terminal: the handle, the
@@ -1867,6 +2315,12 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     KeyCode::Char('R') => app.run_action('R'),
                     KeyCode::F(2) => app.run_action('N'),
                     KeyCode::Char('x') => app.run_action('x'),
+                    // Closing and removing are different things. `x` ends the
+                    // process; these take rows off the list, and the
+                    // conversation stays on disk for `R` either way.
+                    KeyCode::Char('-') | KeyCode::Delete => app.run_action('-'),
+                    KeyCode::Char('=') => app.run_action('='),
+                    KeyCode::Char('+') => app.run_action('+'),
                     KeyCode::Char('y') => app.answer(1),
                     KeyCode::Char('d') => app.answer(0),
 

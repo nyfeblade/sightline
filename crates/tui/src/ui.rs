@@ -1453,7 +1453,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     }
     // Deliberately short: everything else is one keypress away behind the
     // actions menu and the help sheet.
-    let keys = "  j/k session · n new · s send · enter actions · 1…9 panes · / search · ? help";
+    let keys = "  j/k session · n new · s send · - remove · enter actions · / search · ? help";
     let state = format!(
         "{} · {} · {} ",
         app.view.label(),
@@ -1676,7 +1676,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
         .title(Span::styled(" keys ", Style::new().fg(pal().gold)));
     let inner = block.inner(rect);
     f.render_widget(block, rect);
-    let rows: [(&str, &str); 34] = [
+    let rows: [(&str, &str); 37] = [
         ("  look", ""),
         ("j / k, ↓ ↑", "select a session"),
         (
@@ -1723,9 +1723,15 @@ fn draw_help(f: &mut Frame, area: Rect) {
         ("M / X", "merge that branch back · remove the checkout"),
         ("b / L", "broadcast a message · launch the fleet file"),
         (
-            "K / Z",
+            "x / Z",
             "close this session · close everything Ironsight started",
         ),
+        (
+            "- / =",
+            "take this row off the list · take every finished one off",
+        ),
+        ("", "  the conversation stays on disk — R still finds it"),
+        ("+", "put back everything taken off the list"),
         ("F2", "rename the selected session"),
         ("", ""),
         ("  other", ""),

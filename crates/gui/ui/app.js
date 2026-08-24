@@ -1633,6 +1633,19 @@ function drawDetail(s) {
       draw();
     });
   }
+  // Offered for every row, steerable or not. Closing and removing are different
+  // things, and a session Ironsight only watches cannot be closed at all — so
+  // withholding this left rows that could not be got rid of. The conversation is
+  // untouched either way: Resume still finds it.
+  action(actions, "Remove from list", "ghost", async () => {
+    try {
+      say(`removed ${await invoke("remove", { id: s.id })} from the list`);
+    } catch (e) {
+      return say(String(e));
+    }
+    selected = null;
+    draw();
+  });
   box.append(actions);
   // The panel is rebuilt every tick, and WebKit restores the scroll it had
   // before the rebuild. Once this session's facts overflow the rail — an
@@ -2063,7 +2076,7 @@ function drawSwatches() {
 }
 
 let notifyOn = true;
-function drawMenu() {
+async function drawMenu() {
   const grid = el("menu-grid");
   clear(grid);
   const item = (label, note, run) => {
@@ -2088,6 +2101,19 @@ function drawMenu() {
     const closed = await invoke("prune");
     say(closed.length ? `closed ${closed.join(", ")}` : "nothing to tidy up");
   });
+  // Two different tidyings, and it is worth the words to say which is which:
+  // one ends processes, the other clears rows.
+  item("Clear finished", "take every finished session off the list", async () => {
+    const gone = await invoke("remove_ended");
+    say(gone ? `removed ${gone} finished session(s) from the list` : "nothing has finished");
+    selected = null;
+  });
+  const removed = await invoke("removed_count").catch(() => 0);
+  if (removed) {
+    item("Put back removed", `${removed} taken off the list`, async () => {
+      say(`put ${await invoke("restore_removed")} session(s) back`);
+    });
+  }
   item("Close everything", "every session Ironsight started", async () => {
     const closed = await invoke("close_all");
     say(`closed ${closed.length} — each reopens from Resume`);
@@ -2121,8 +2147,11 @@ function drawMenu() {
   });
 }
 
-on("more", "click", () => {
-  drawMenu();
+on("more", "click", async () => {
+  // Awaited before the dialog opens: one entry depends on asking the engine
+  // how many rows are hidden, and a menu that grows an item after it is on
+  // screen reads as a glitch.
+  await drawMenu();
   drawSwatches();
   useAccent(chosenAccent());
   el("menu").showModal();

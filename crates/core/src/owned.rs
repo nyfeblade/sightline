@@ -268,7 +268,7 @@ fn value_text(v: &Value) -> String {
 ///
 /// Kept in one place because it is the whole contract with Claude Code: change
 /// a flag and the parser above is talking to something else.
-pub fn argv(model: Option<&str>, mode: Option<&str>) -> Vec<String> {
+pub fn argv(spec: &Spec) -> Vec<String> {
     let mut v = vec![
         "-p".to_string(),
         "--verbose".into(),
@@ -277,19 +277,104 @@ pub fn argv(model: Option<&str>, mode: Option<&str>) -> Vec<String> {
         "--output-format".into(),
         "stream-json".into(),
     ];
-    if let Some(m) = model {
+    if let Some(m) = &spec.model {
         v.push("--model".into());
-        v.push(m.to_string());
+        v.push(m.clone());
     }
-    // The one lever there is over what an owned session may do. Nothing can be
-    // asked mid-run in this mode, so a session that is going to need to edit
-    // files has to be started knowing that — otherwise every such call is
-    // refused and the session spends its turn explaining why.
-    if let Some(m) = mode {
+    // Nothing can be asked mid-run in this mode, so a session that is going to
+    // need to edit files has to be started knowing that — otherwise every such
+    // call is refused and the session spends its turn explaining why.
+    if let Some(m) = &spec.mode {
         v.push("--permission-mode".into());
-        v.push(m.to_string());
+        v.push(m.clone());
+    }
+    // The two lists do different jobs, and it is worth being exact about which.
+    //
+    // `--allowedTools` *grants*: it does not narrow anything down. A session
+    // started with `--allowedTools "Bash(echo *)"` ran `ls /tmp` quite happily,
+    // because everything the machine's own settings already permit stays
+    // permitted. What it is for is the opposite problem — a headless session
+    // cannot be asked, so a command it needs and the settings do not cover is
+    // simply refused, and the session spends its turn saying so. That is not
+    // hypothetical: a chief with no grant could not run a single `ironsight`
+    // command and correctly reported itself blocked.
+    if !spec.allow.is_empty() {
+        v.push("--allowedTools".into());
+        for tool in &spec.allow {
+            v.push(tool.clone());
+        }
+    }
+    // `--disallowedTools` restricts, and is therefore the only tool-level
+    // guarantee available here.
+    if !spec.deny.is_empty() {
+        v.push("--disallowedTools".into());
+        for tool in &spec.deny {
+            v.push(tool.clone());
+        }
     }
     v
+}
+
+/// How an owned session is to be started.
+///
+/// A struct rather than four more arguments: every one of these is settled once
+/// and cannot be changed while the session runs, so they belong together and
+/// they travel together — through the daemon's wire, into `argv`, and into the
+/// record the fleet keeps.
+/// Every field is optional on the way in, so an older client can still be
+/// understood — but an *unknown* field is refused rather than dropped. That is
+/// not fussiness. This struct carries what a session is allowed to do, and a
+/// daemon that quietly ignored a field it did not recognise would start a
+/// session with fewer grants or fewer restrictions than the caller asked for,
+/// and nothing would say so. It cost an afternoon once: a chief started through
+/// a daemon built before `allow` existed could not run a single command, and
+/// the fault was looked for everywhere except in the process holding it.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Spec {
+    /// The model, or the agent's own default.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// The permission mode for the life of the session.
+    #[serde(default)]
+    pub mode: Option<String>,
+    /// Tools it may use without being asked. Grants; does not restrict.
+    #[serde(default)]
+    pub allow: Vec<String>,
+    /// Tools it may not use, whatever else it is allowed. Restricts.
+    #[serde(default)]
+    pub deny: Vec<String>,
+    /// The message it begins on. Without one the agent says nothing at all —
+    /// no init line, so no conversation id, so nothing to see.
+    #[serde(default)]
+    pub opening: Option<String>,
+}
+
+impl Spec {
+    pub fn with_model(mut self, model: Option<&str>) -> Self {
+        self.model = model.map(str::to_string);
+        self
+    }
+
+    pub fn with_mode(mut self, mode: Option<&str>) -> Self {
+        self.mode = mode.map(str::to_string);
+        self
+    }
+
+    pub fn allowing(mut self, tools: &[&str]) -> Self {
+        self.allow = tools.iter().map(|t| t.to_string()).collect();
+        self
+    }
+
+    pub fn denying(mut self, tools: &[&str]) -> Self {
+        self.deny = tools.iter().map(|t| t.to_string()).collect();
+        self
+    }
+
+    pub fn opening(mut self, text: Option<&str>) -> Self {
+        self.opening = text.map(str::to_string);
+        self
+    }
 }
 
 /// One user message, framed the way the input stream expects it.
@@ -392,21 +477,12 @@ impl OwnedSession {
     pub fn start(
         program: &str,
         cwd: &std::path::Path,
-        model: Option<&str>,
+        spec: &Spec,
         session: &str,
         agent: &str,
         on_event: impl FnMut(Event) + Send + 'static,
     ) -> std::io::Result<Self> {
-        Self::start_with(
-            program,
-            cwd,
-            model,
-            None,
-            session,
-            agent,
-            Stderr::Quiet,
-            on_event,
-        )
+        Self::start_with(program, cwd, spec, session, agent, Stderr::Quiet, on_event)
     }
 
     /// Start one, choosing what happens to the agent's stderr.
@@ -416,12 +492,10 @@ impl OwnedSession {
     /// only there, and swallowing it turns every such failure into a blank line
     /// or a hang. A fleet backend running many at once wants it quiet, so it
     /// does not scatter across a terminal. The caller decides.
-    #[allow(clippy::too_many_arguments)]
     pub fn start_with(
         program: &str,
         cwd: &std::path::Path,
-        model: Option<&str>,
-        mode: Option<&str>,
+        spec: &Spec,
         session: &str,
         agent: &str,
         stderr: Stderr,
@@ -431,7 +505,7 @@ impl OwnedSession {
         use std::process::{Command, Stdio};
 
         let mut child = Command::new(program)
-            .args(argv(model, mode))
+            .args(argv(spec))
             .current_dir(cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -447,8 +521,8 @@ impl OwnedSession {
         let state = std::sync::Arc::new(std::sync::Mutex::new(Owned {
             name: session.to_string(),
             cwd: cwd.to_string_lossy().into_owned(),
-            model: model.unwrap_or_default().to_string(),
-            mode: mode.unwrap_or_default().to_string(),
+            model: spec.model.clone().unwrap_or_default(),
+            mode: spec.mode.clone().unwrap_or_default(),
             session_id: String::new(),
             pid: child.id(),
             alive: true,
@@ -712,9 +786,7 @@ pub fn is_owned_name(name: &str) -> bool {
 pub fn start(
     program: &str,
     cwd: &std::path::Path,
-    model: Option<&str>,
-    mode: Option<&str>,
-    opening: Option<&str>,
+    spec: &Spec,
     settle: std::time::Duration,
 ) -> Result<Owned, String> {
     let mut held = locked();
@@ -723,8 +795,7 @@ pub fn start(
     let session = OwnedSession::start_with(
         program,
         cwd,
-        model,
-        mode,
+        spec,
         &name,
         "claude",
         // Many of these may run at once under a daemon with no terminal;
@@ -737,7 +808,7 @@ pub fn start(
         |_ev| {},
     )
     .map_err(|e| format!("could not start an owned session: {e}"))?;
-    if let Some(first) = opening {
+    if let Some(first) = &spec.opening {
         // A failure here is the session failing to start in the only sense that
         // matters: the process is up but nothing will ever come out of it.
         session
@@ -1089,10 +1160,10 @@ mod tests {
         std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
 
         let (tx, rx) = mpsc::channel();
-        let mut session = OwnedSession::start(
+        let session = OwnedSession::start(
             shim.to_str().unwrap(),
             &dir,
-            None,
+            &Spec::default(),
             "sess-1",
             "claude",
             move |ev| {
@@ -1245,9 +1316,7 @@ mod tests {
         let started = start(
             shim.to_str().unwrap(),
             &dir,
-            None,
-            None,
-            Some("do the thing"),
+            &Spec::default().opening(Some("do the thing")),
             std::time::Duration::from_secs(5),
         )
         .expect("the shim starts");
@@ -1318,9 +1387,7 @@ mod tests {
         let started = start(
             shim.to_str().unwrap(),
             &dir,
-            None,
-            None,
-            None,
+            &Spec::default(),
             std::time::Duration::from_millis(100),
         )
         .expect("it spawns, even though it will not last");
@@ -1379,9 +1446,7 @@ mod tests {
         let started = start(
             shim.to_str().unwrap(),
             &dir,
-            None,
-            None,
-            None,
+            &Spec::default(),
             Duration::from_millis(50),
         )
         .expect("the shim starts");
@@ -1502,21 +1567,92 @@ mod tests {
         // Nothing can be asked of a session in this mode, so the permission
         // mode is the one lever there is — and a flag that was accepted and
         // then dropped would be the worst of both.
-        let v = argv(None, Some("acceptEdits"));
+        let v = argv(&Spec::default().with_mode(Some("acceptEdits")));
         assert!(
             v.windows(2)
                 .any(|w| w[0] == "--permission-mode" && w[1] == "acceptEdits"),
             "the mode reaches the agent: {v:?}"
         );
         assert!(
-            !argv(None, None).iter().any(|a| a == "--permission-mode"),
+            !argv(&Spec::default())
+                .iter()
+                .any(|a| a == "--permission-mode"),
             "and nothing is invented when none was asked for"
         );
     }
 
     #[test]
+    fn what_a_session_may_do_without_being_asked_reaches_the_agent() {
+        // The half that is not a guarantee but is still necessary: a headless
+        // session cannot be asked, so a command it needs and the machine's
+        // settings do not cover is refused outright.
+        let v = argv(&Spec::default().allowing(&["Bash(ironsight *)", "Read"]));
+        let at = v
+            .iter()
+            .position(|a| a == "--allowedTools")
+            .unwrap_or_else(|| panic!("the grant is passed: {v:?}"));
+        assert_eq!(v[at + 1], "Bash(ironsight *)");
+        assert_eq!(v[at + 2], "Read");
+    }
+
+    #[test]
+    fn a_spec_field_nobody_knows_is_refused_rather_than_dropped() {
+        // The failure this guards: a daemon built before a field existed reads
+        // the request, ignores what it does not recognise, and starts a session
+        // with different permissions from the ones asked for — silently. That
+        // is how a chief ends up unable to run a single command with nothing
+        // anywhere saying why.
+        let ok: Result<Spec, _> = serde_json::from_str(r#"{"model":"opus"}"#);
+        assert!(ok.is_ok(), "a spec with fields missing is still readable");
+        let surprise: Result<Spec, _> =
+            serde_json::from_str(r#"{"model":"opus","somethingNewer":["x"]}"#);
+        assert!(
+            surprise.is_err(),
+            "but one carrying something this build does not understand is refused"
+        );
+    }
+
+    #[test]
+    fn a_grant_and_a_restriction_are_separate_lists() {
+        // Conflating them would be the worst kind of wrong: an allow list read
+        // as a restriction looks like a sandbox and is not one.
+        let v = argv(
+            &Spec::default()
+                .allowing(&["Bash(ironsight *)"])
+                .denying(&["Write"]),
+        );
+        let allow = v.iter().position(|a| a == "--allowedTools").unwrap();
+        let deny = v.iter().position(|a| a == "--disallowedTools").unwrap();
+        assert_eq!(v[allow + 1], "Bash(ironsight *)");
+        assert_eq!(v[deny + 1], "Write");
+        assert!(allow < deny, "and both survive being passed together");
+    }
+
+    #[test]
+    fn what_a_session_may_not_do_reaches_the_agent() {
+        // A deny list, because an allow list does not restrict — checked
+        // against the real tool, not assumed. This is the only tool-level
+        // guarantee a supervised session has.
+        let v = argv(&Spec::default().denying(&["Write", "Edit"]));
+        let at = v
+            .iter()
+            .position(|a| a == "--disallowedTools")
+            .expect("the deny list is passed: {v:?}");
+        assert_eq!(
+            &v[at + 1..at + 3],
+            ["Write".to_string(), "Edit".to_string()]
+        );
+        assert!(
+            !argv(&Spec::default())
+                .iter()
+                .any(|a| a == "--disallowedTools"),
+            "and nothing is denied when nothing was asked to be"
+        );
+    }
+
+    #[test]
     fn the_argv_is_the_whole_contract() {
-        let v = argv(Some("claude-opus-5"), None);
+        let v = argv(&Spec::default().with_model(Some("claude-opus-5")));
         assert!(v.contains(&"stream-json".to_string()));
         assert_eq!(
             v.iter().filter(|s| *s == "stream-json").count(),

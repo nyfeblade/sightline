@@ -783,6 +783,35 @@ fn reorder(shared: State<Shared>, ids: Vec<String>) {
     shared.raw(|app| app.reorder(ids));
 }
 
+/// Take a row off the list. The conversation stays on disk; Resume still finds
+/// it. Closing a session and removing its row are different things and both are
+/// wanted.
+#[tauri::command]
+fn remove(shared: State<Shared>, id: String) -> Result<String, String> {
+    shared.raw(|app| app.hide(&id))
+}
+
+/// Take every finished session off the list at once, which is what the clutter
+/// actually is.
+#[tauri::command]
+fn remove_ended(shared: State<Shared>) -> usize {
+    shared.raw(|app| app.hide_ended())
+}
+
+/// Put them all back. Hiding has to be reversible or it is deleting with extra
+/// steps.
+#[tauri::command]
+fn restore_removed(shared: State<Shared>) -> usize {
+    shared.raw(|app| app.unhide_all())
+}
+
+/// How many rows are being kept off the list, so the window can offer to put
+/// them back rather than leaving them lost.
+#[tauri::command]
+fn removed_count(shared: State<Shared>) -> usize {
+    shared.raw(|app| app.hidden_count())
+}
+
 #[tauri::command]
 fn stop(shared: State<Shared>, id: String) -> Result<(), String> {
     shared
@@ -1140,6 +1169,10 @@ fn main() {
             rename,
             reorder,
             stop,
+            remove,
+            remove_ended,
+            restore_removed,
+            removed_count,
             open_tui,
             files,
             plan,
