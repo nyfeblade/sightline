@@ -1038,6 +1038,16 @@ async function drawWork() {
       }
       draw();
     });
+    action(actions, "Reconcile a fork…", "ghost", async () => {
+      const version = await ask("Which upstream release should this fork move to?");
+      if (!version) return;
+      try {
+        say(await invoke("reconcile", { version }));
+      } catch (e) {
+        say(String(e));
+      }
+      draw();
+    });
     if (w.invariants > 0) {
       action(actions, "Run the invariants", "ghost", async () => {
         say("running the invariants…");

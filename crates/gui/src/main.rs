@@ -1128,6 +1128,17 @@ fn set_ceilings(
     shared.raw(|app| app.set_ceilings(sessions, spend))
 }
 
+/// Reconcile this fork onto a newer upstream release.
+#[tauri::command]
+fn reconcile(shared: State<Shared>, version: String) -> Result<String, String> {
+    bootstrap::ensure_backend()?;
+    shared.raw(|app| {
+        let here = app.here();
+        let (name, worktree) = app.reconcile(&here, version.trim(), None, None)?;
+        Ok(format!("{name} is reconciling in {}", worktree.display()))
+    })
+}
+
 /// Hand work to a chief, in the folder the Hub is pointed at.
 #[tauri::command]
 fn start_chief(shared: State<Shared>, intent: String) -> Result<String, String> {
@@ -1278,6 +1289,7 @@ fn main() {
             run_invariants,
             set_ceilings,
             start_chief,
+            reconcile,
             constitution,
             save_constitution,
             task_state,

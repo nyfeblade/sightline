@@ -1428,7 +1428,7 @@ fn draw_workflow(f: &mut Frame, app: &mut App, area: Rect) {
         .border_style(Style::new().fg(pal().dim))
         .title(Span::styled(" workflow ", Style::new().fg(pal().gold)))
         .title_bottom(Span::styled(
-            " c chief · s set up · l ceilings · v invariants · ctrl+w back ",
+            " c chief · s set up · l ceilings · v invariants · g reconcile · ctrl+w back ",
             muted(),
         ));
     let inner = block.inner(area);
@@ -1631,7 +1631,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     // Deliberately short: everything else is one keypress away behind the
     // actions menu and the help sheet.
     let keys = if app.mode == app::Mode::Workflow {
-        "  c chief · s set up · l ceilings · v invariants · ctrl+w monitor · ? help"
+        "  c chief · s set up · l ceilings · v invariants · g reconcile · ctrl+w monitor"
     } else {
         "  j/k session · n new · s send · ctrl+w workflow · enter actions · ? help"
     };
@@ -1857,7 +1857,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
         .title(Span::styled(" keys ", Style::new().fg(pal().gold)));
     let inner = block.inner(rect);
     f.render_widget(block, rect);
-    let rows: [(&str, &str); 49] = [
+    let rows: [(&str, &str); 50] = [
         ("  look", ""),
         ("j / k, ↓ ↑", "select a session"),
         (
@@ -1935,6 +1935,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
             "v",
             "run the invariants: what must never stop being true here",
         ),
+        ("g", "reconcile this fork onto a newer upstream release"),
         ("", ""),
         ("  other", ""),
         ("$", "subscription view or API-equivalent cost"),

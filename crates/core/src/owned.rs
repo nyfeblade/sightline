@@ -1468,8 +1468,12 @@ mod tests {
             let all = list();
             let _ = tx.send((all, at.elapsed()));
         });
+        // Fifteen seconds, not five. What this separates is "did not block" from
+        // "blocked until the shim exits", and the shim sleeps for thirty — so
+        // the bound only has to sit between the two, and the wide gap is what
+        // keeps it from failing on a machine that happens to be compiling.
         let answered = rx
-            .recv_timeout(Duration::from_secs(5))
+            .recv_timeout(Duration::from_secs(15))
             .expect("listing the fleet answered while a write to one session was blocked");
         assert!(
             answered.0.iter().any(|o| o.name == name),
@@ -1483,7 +1487,7 @@ mod tests {
         let at = Instant::now();
         stop(&name).expect("it stops");
         assert!(
-            at.elapsed() < Duration::from_secs(5),
+            at.elapsed() < Duration::from_secs(15),
             "stopping waited for the blocked write to finish: {:?}",
             at.elapsed()
         );

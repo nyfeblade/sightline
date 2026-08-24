@@ -6,6 +6,7 @@ use crate::checks;
 use crate::control::{self, Approval, Pane};
 use crate::event::{Ev, Filter};
 use crate::git;
+use crate::glue;
 use crate::history::{self, Past};
 use crate::limits;
 use crate::notify;
@@ -72,6 +73,8 @@ pub enum Prompt {
     Chief,
     /// how many sessions a fleet here may run at once
     Ceiling,
+    /// which upstream release to reconcile this fork onto
+    Reconcile,
 }
 
 /// Where things were drawn last frame, so a click can be turned back into the
@@ -1128,6 +1131,9 @@ impl App {
             Prompt::Ceiling => {
                 "ceilings · sessions [spend], e.g. `6 20` — what a fleet here may do".into()
             }
+            Prompt::Reconcile => {
+                "reconcile this fork onto which upstream release — e.g. v0.5.0".into()
+            }
             Prompt::NewSession => {
                 "new session · path [--agent a] [--model m] [--effort e] [--mode p] [first message]"
                     .into()
@@ -1241,6 +1247,16 @@ impl App {
             Prompt::Broadcast => {
                 let n = self.broadcast(&text);
                 self.say(format!("sent to {n} sessions"));
+            }
+            Prompt::Reconcile => {
+                let here = self.here();
+                match self.reconcile(&here, text.trim(), None, None) {
+                    Ok((name, worktree)) => self.say(format!(
+                        "{name} is reconciling in {} — it will not merge",
+                        short_path(&worktree.to_string_lossy())
+                    )),
+                    Err(e) => self.say(e),
+                }
             }
             Prompt::Chief => {
                 let where_ = self
@@ -1704,6 +1720,94 @@ impl App {
         }
         limits::write_machine(&limits)?;
         Ok(limits.describe())
+    }
+
+    /// Reconcile a fork onto a newer upstream release.
+    ///
+    /// In the engine for the same reason as `start_chief`: it was written as a
+    /// command, and a front end may not hold logic the other needs. Returns
+    /// what to call the session, and where it is working.
+    pub fn reconcile(
+        &mut self,
+        cwd: &std::path::Path,
+        version: &str,
+        remote: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<(String, PathBuf), String> {
+        let root = git::repo_root(cwd)
+            .ok_or_else(|| format!("{} is not inside a git repository", cwd.display()))?;
+        let remote = remote
+            .map(str::to_string)
+            .or_else(|| glue::upstream_remote(&root))
+            .ok_or_else(|| {
+                "this repository has no remotes, so there is no upstream to reconcile onto"
+                    .to_string()
+            })?;
+        // Resolved against what is actually here; fetching stays the caller's
+        // business, so nothing reaches the network on its own.
+        let candidates = [
+            version.to_string(),
+            format!("{remote}/{version}"),
+            format!("refs/tags/{version}"),
+        ];
+        let upstream_ref = candidates
+            .iter()
+            .find(|r| glue::known(&root, r))
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "nothing here is called {version} — fetch it first: git fetch {remote} --tags"
+                )
+            })?;
+
+        let divergence = glue::divergence(&root, &upstream_ref)?;
+        if divergence.quiet() {
+            return Err(format!("this fork is already at {version}"));
+        }
+        if divergence.untouched() {
+            return Err(format!(
+                "this fork has changed nothing, so `git merge {upstream_ref}` will do"
+            ));
+        }
+
+        let checks_file = root.join(checks::FILE);
+        let checks = checks_file.is_file().then_some(checks::FILE);
+        let dirty = glue::dirty(&root);
+        let branch = format!("glue-{}", version.replace(['/', ' '], "-"));
+        let worktree = git::create_worktree(&root, &branch)?;
+        // The ability goes into the worktree, so the session reads the copy
+        // that shipped with this Ironsight rather than whatever the fork had.
+        glue::install(&worktree)?;
+
+        let packet = glue::brief(
+            version,
+            &upstream_ref,
+            &root.to_string_lossy(),
+            &worktree.to_string_lossy(),
+            &divergence,
+            checks,
+            dirty,
+        );
+        let it = control::own(
+            &worktree,
+            &owned::Spec::default()
+                .with_model(model)
+                // It has to edit code to write an adapter, and it has to be able
+                // to run the gate the brief points it at.
+                .with_mode(Some("acceptEdits"))
+                .allowing(glue::GRANTED)
+                .opening(Some(&packet)),
+        )?;
+        let id = if it.session_id.is_empty() {
+            it.name.clone()
+        } else {
+            it.session_id.clone()
+        };
+        self.with_state();
+        self.assign(&id, &format!("reconcile this fork onto {version}"));
+        self.last_owned_scan = Instant::now() - Duration::from_secs(60);
+        self.discover();
+        Ok((it.name, worktree))
     }
 
     /// Start a chief on a folder, and return the id it is listed under.

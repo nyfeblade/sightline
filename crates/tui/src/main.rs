@@ -939,49 +939,31 @@ fn main() -> Result<()> {
             );
         };
 
-        let divergence = glue::divergence(&root, &upstream_ref).map_err(|e| anyhow::anyhow!(e))?;
-        if divergence.quiet() {
-            println!("this fork is already at {version} — nothing upstream to bring in");
-            return Ok(());
-        }
-        if divergence.untouched() {
-            println!("this fork has changed nothing since it parted from upstream, so a");
-            println!("plain `git merge {upstream_ref}` will do the job without any of this.");
-            return Ok(());
-        }
-
-        let checks_file = std::path::Path::new(&root).join(checks::FILE);
-        let checks = checks_file.is_file().then(|| checks::FILE);
-        let dirty = glue::dirty(&root);
-
-        // Containment first: the reconciliation happens on a branch in a
-        // worktree of its own, never on the branch someone is standing on.
-        let branch = format!("glue-{}", version.replace(['/', ' '], "-"));
-        let worktree = if args.iter().any(|a| a == "--dry-run") {
-            root.join("..").join(&branch)
-        } else {
-            git::create_worktree(&root, &branch).map_err(|e| anyhow::anyhow!(e))?
-        };
-
-        let packet = glue::brief(
-            &version,
-            &upstream_ref,
-            &root.to_string_lossy(),
-            &worktree.to_string_lossy(),
-            &divergence,
-            checks,
-            dirty,
-        );
-
+        // Reading the packet before paying to send it. Everything up to here is
+        // the same work `reconcile` does, so this stops short of it rather than
+        // duplicating what comes after.
         if args.iter().any(|a| a == "--dry-run") {
-            println!("\n{packet}");
+            let divergence =
+                glue::divergence(&root, &upstream_ref).map_err(|e| anyhow::anyhow!(e))?;
+            let checks_file = root.join(checks::FILE);
+            let checks = checks_file.is_file().then_some(checks::FILE);
+            println!(
+                "\n{}",
+                glue::brief(
+                    &version,
+                    &upstream_ref,
+                    &root.to_string_lossy(),
+                    &root
+                        .join("..")
+                        .join(format!("glue-{version}"))
+                        .to_string_lossy(),
+                    &divergence,
+                    checks,
+                    glue::dirty(&root),
+                )
+            );
             return Ok(());
         }
-
-        // The ability goes into the worktree too, so the session reconciling
-        // reads the copy that shipped with this Ironsight rather than whatever
-        // the fork had lying about.
-        glue::install(&worktree).map_err(|e| anyhow::anyhow!(e))?;
 
         let mut app = App::new(
             app::default_root(),
@@ -989,35 +971,14 @@ fn main() -> Result<()> {
             Duration::from_secs(7 * 86_400),
             true,
         );
-        app.with_state();
-        let it = control::own(
-            &worktree,
-            &owned::Spec::default()
-                .with_model(opt("--model").as_deref())
-                // It has to edit code to write an adapter, and nothing can be
-                // asked of it while it runs.
-                .with_mode(Some("acceptEdits"))
-                // And it has to be able to run the gate the brief points it at.
-                .allowing(glue::GRANTED)
-                .opening(Some(&packet)),
-        )
-        .map_err(|e| anyhow::anyhow!(e))?;
-        let id = if it.session_id.is_empty() {
-            it.name.clone()
-        } else {
-            it.session_id.clone()
-        };
-        let task = app.assign(&id, &format!("reconcile this fork onto {version}"));
-        println!(
-            "{} · {task} · {} contested file(s) · {}",
-            it.name,
-            divergence.contested.len(),
-            worktree.display()
-        );
-        println!(
-            "watch it with `ironsight`, talk to it with `ironsight send {} <text>`",
-            it.name
-        );
+        // The same engine function the Hub calls. It used to be written out
+        // again here, which is exactly the duplication the one-engine rule is
+        // for.
+        let (name, worktree) = app
+            .reconcile(&root, &version, Some(&remote), opt("--model").as_deref())
+            .map_err(|e| anyhow::anyhow!(e))?;
+        println!("{name} · {}", worktree.display());
+        println!("watch it with `ironsight`, talk to it with `ironsight send {name} <text>`");
         println!("it works only in that worktree and will not merge — that is yours to do.");
         return Ok(());
     }
@@ -2530,6 +2491,9 @@ fn run(term: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                             Ok(said) => app.say(said),
                             Err(e) => app.say(e),
                         }
+                    }
+                    KeyCode::Char('g') if app.mode == app::Mode::Workflow => {
+                        app.open_input(Prompt::Reconcile)
                     }
                     KeyCode::Char('v') if app.mode == app::Mode::Workflow => {
                         let here = app.here();
