@@ -400,28 +400,87 @@ fn ledger() -> PathBuf {
     crate::app::data_dir().join("trusted-checks.json")
 }
 
-fn approved() -> HashMap<String, String> {
-    std::fs::read_to_string(ledger())
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
+fn approved_at(ledger: &Path) -> HashMap<String, String> {
+    std::fs::read_to_string(ledger)
+        .map(|t| approved_from(&t))
         .unwrap_or_default()
+}
+
+/// The ledger's text, read as approvals.
+///
+/// Anything that does not parse is nothing approved, never something approved:
+/// this is the one direction of failure that is safe here.
+fn approved_from(text: &str) -> HashMap<String, String> {
+    serde_json::from_str(text).unwrap_or_default()
 }
 
 /// Whether these exact commands, in this project, have been approved.
 pub fn trusted(root: &Path, suite: &Suite) -> bool {
-    approved().get(&root.to_string_lossy().to_string()) == Some(&suite.raw)
+    trusted_at(&ledger(), root, suite)
+}
+
+fn trusted_at(ledger: &Path, root: &Path, suite: &Suite) -> bool {
+    approved_at(ledger).get(&root.to_string_lossy().to_string()) == Some(&suite.raw)
 }
 
 /// Approve what is in a project's checks file as it stands now.
+///
+/// Written through a temporary file and renamed into place, because this is one
+/// ledger shared by every Sightline on the machine — a window, a command in a
+/// shell, a daemon — and `write` truncates before it fills. A reader arriving in
+/// that gap gets half a file, which does not parse, which reads as *nothing
+/// approved*. That fails closed, so it is safe, but a project silently losing
+/// its approval is indistinguishable from never having had it.
+///
+/// The ledger is re-read here rather than reused from before the caller's
+/// deliberation, so approving one project does not undo an approval another
+/// process made while this one was deciding. A gap remains between that read and
+/// the rename; closing it needs a lock, and the cost of losing that race is one
+/// approval that has to be given again rather than something unsafe.
 pub fn trust(root: &Path, suite: &Suite) -> Result<(), String> {
-    let mut all = approved();
-    all.insert(root.to_string_lossy().into_owned(), suite.raw.clone());
-    let path = ledger();
+    trust_at(&ledger(), root, suite)
+}
+
+/// The same, against a named ledger.
+///
+/// Split out so the concurrency this is careful about can be tested against a
+/// ledger of its own. A test that shares the machine's real one is testing the
+/// rest of the suite as much as the code, and fails for reasons that have
+/// nothing to do with either.
+fn trust_at(path: &Path, root: &Path, suite: &Suite) -> Result<(), String> {
+    // One writer at a time within this process, which covers the window, the
+    // daemon and their threads. Across processes the rename below still makes
+    // every read whole; what remains is a lost update between the read and the
+    // rename, and the cost of losing that race is an approval given twice.
+    static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _held = match WRITING.lock() {
+        Ok(g) => g,
+        Err(e) => e.into_inner(),
+    };
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
+    let mut all = approved_at(path);
+    all.insert(root.to_string_lossy().into_owned(), suite.raw.clone());
     let text = serde_json::to_string_pretty(&all).map_err(|e| e.to_string())?;
-    std::fs::write(&path, text).map_err(|e| e.to_string())
+
+    // Unique per call, not per process: two writers naming the same staging file
+    // means the first rename takes it and the second finds nothing there, which
+    // fails the approval for a reason that has nothing to do with the approval.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let staged = path.with_extension(format!(
+        "tmp.{}.{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    std::fs::write(&staged, text).map_err(|e| e.to_string())?;
+    match std::fs::rename(&staged, path) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = std::fs::remove_file(&staged);
+            Err(e.to_string())
+        }
+    }
 }
 
 /// What to say to someone whose checks have not been approved.
@@ -788,6 +847,63 @@ mod invariant_tests {
 mod tests {
 
     #[test]
+    fn approving_one_project_does_not_unapprove_another() {
+        // The ledger is shared by every Sightline on the machine. Read-modify-
+        // write from a stale snapshot loses whichever approval was made while
+        // this one was deciding, and the symptom is a project that was trusted
+        // yesterday asking again today for no reason anyone can see.
+        let base = std::env::temp_dir().join(format!(
+            "sightline-ledger-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let ledger = base.join("trusted-checks.json");
+
+        let mut made = |name: &str| {
+            let d = base.join(name);
+            std::fs::create_dir_all(d.join(".sightline")).unwrap();
+            std::fs::write(
+                d.join(FILE),
+                format!("[[check]]\nname = \"{name}\"\nrun = \"true\"\n"),
+            )
+            .unwrap();
+            let suite = Suite::find(&d).unwrap().unwrap().1;
+            (d, suite)
+        };
+        let (a, one) = made("a");
+        let (b, two) = made("b");
+
+        trust_at(&ledger, &a, &one).unwrap();
+        trust_at(&ledger, &b, &two).unwrap();
+
+        let all = approved_at(&ledger);
+        assert_eq!(
+            all.get(&a.to_string_lossy().to_string()),
+            Some(&one.raw),
+            "the first approval was lost when the second was made"
+        );
+        assert_eq!(all.get(&b.to_string_lossy().to_string()), Some(&two.raw));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_half_written_ledger_trusts_nothing_rather_than_something() {
+        // Whatever else goes wrong, the direction of failure is the one that
+        // refuses. A ledger that cannot be parsed must not read as an approval.
+        let torn = "{\"/some/project\": \"[[check]]\nname = \"";
+        let parsed: Result<std::collections::HashMap<String, String>, _> =
+            serde_json::from_str(torn);
+        assert!(parsed.is_err(), "this fixture is supposed to be torn");
+        assert!(
+            approved_from(torn).is_empty(),
+            "a torn ledger approved something"
+        );
+    }
+
+    #[test]
     fn a_project_written_before_the_rename_still_has_checks() {
         // Its .ironsight/ directory is committed with its code and there is no
         // upgrade step anyone would think to run, so both names are read.
@@ -988,22 +1104,32 @@ timeout = "2m"
     #[test]
     fn commands_are_not_run_until_those_exact_commands_are_approved() {
         let dir = scratch("trust");
-        // A private ledger, so this cannot approve anything on the real machine.
-        let store = dir.join("state");
-        std::fs::create_dir_all(&store).unwrap();
-        unsafe { std::env::set_var("SIGHTLINE_DATA_DIR", &store) };
+        // A private ledger, named rather than arranged by moving the whole
+        // process's data directory. This used to set SIGHTLINE_DATA_DIR, which
+        // is global: while it ran, every other test's idea of where the ledger
+        // lives moved with it, so an approval written by one test went to this
+        // scratch store and was looked for in the real one. That is what made
+        // the suite fail roughly half the time, from a test that had nothing to
+        // do with trust.
+        let led = dir.join("state").join("trusted-checks.json");
 
         write(&dir, "[[check]]\nname = \"tests\"\nrun = \"cargo test\"\n");
         let (root, suite) = Suite::find(&dir).unwrap().unwrap();
-        assert!(!trusted(&root, &suite), "a checks file arrives untrusted");
+        assert!(
+            !trusted_at(&led, &root, &suite),
+            "a checks file arrives untrusted"
+        );
         assert!(
             untrusted_hint(&root, &suite).contains("sightline trust"),
             "and says how to approve it"
         );
 
-        trust(&root, &suite).unwrap();
+        trust_at(&led, &root, &suite).unwrap();
         let (root, suite) = Suite::find(&dir).unwrap().unwrap();
-        assert!(trusted(&root, &suite), "approved commands stay approved");
+        assert!(
+            trusted_at(&led, &root, &suite),
+            "approved commands stay approved"
+        );
 
         // The repository updates, and the checks now do something else.
         write(
@@ -1012,10 +1138,9 @@ timeout = "2m"
         );
         let (root, changed) = Suite::find(&dir).unwrap().unwrap();
         assert!(
-            !trusted(&root, &changed),
+            !trusted_at(&led, &root, &changed),
             "changed commands are not the approved ones, whatever the file is called"
         );
-        unsafe { std::env::remove_var("SIGHTLINE_DATA_DIR") };
         let _ = std::fs::remove_dir_all(&dir);
     }
 
