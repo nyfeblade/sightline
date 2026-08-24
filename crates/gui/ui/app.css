@@ -1663,3 +1663,88 @@ body::before {
 }
 .primary { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .18), 0 1px 3px rgba(0, 0, 0, .4); }
 kbd { background: rgba(255, 255, 255, .10); border-color: rgba(255, 255, 255, .10); box-shadow: inset 0 1px 0 rgba(255,255,255,.07); }
+
+/* ── glass, properly ────────────────────────────────────────────────────────
+   The four layers that make this material read as glass rather than as a grey
+   panel, and none of them is the blur on its own:
+
+     1  blur with saturate(180%), so what shows through stays vivid instead of
+        going muddy — an unsaturated blur is what makes cheap glass look like
+        fog;
+     2  a low-opacity dark tint over it, rgba(18,18,22,.75), which is what the
+        text actually sits on;
+     3  a 1px specular highlight along the top edge, inset 0 1px 0 0
+        rgba(255,255,255,.12) — light catching the lip of a physical plate;
+     4  an outset drop shadow, so the plate blends into what is behind it
+        instead of being stuck to it.
+
+   And the correction that made this work at all: `backdrop-filter` blurs what
+   is behind an element *within the page*. It never needed the compositor. The
+   earlier pass gave up on glass for Linux because Wayland has no blur-behind
+   protocol — true, and irrelevant to everything except the window's own edge.
+   What it did need was something behind the glass worth blurring, which is the
+   ambient field below. */
+.ambient {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(85% 55% at 14% -6%, rgba(72, 118, 214, .30), transparent 62%),
+    radial-gradient(75% 55% at 92% 104%, rgba(158, 84, 200, .22), transparent 60%),
+    radial-gradient(55% 40% at 58% 48%, rgba(40, 148, 190, .13), transparent 72%),
+    #0b0b0e;
+}
+
+/* The recipe, once. */
+.bar, .status, dialog, .composer input, .rail.detail {
+  backdrop-filter: blur(26px) saturate(180%);
+  -webkit-backdrop-filter: blur(26px) saturate(180%);
+}
+.bar {
+  background: rgba(18, 18, 22, .72);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, .12), 0 1px 0 0 rgba(0, 0, 0, .5);
+}
+.status {
+  background: rgba(18, 18, 22, .78);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, .10);
+}
+.rail.detail, #rail { background: rgba(18, 18, 22, .55); }
+#rail { backdrop-filter: blur(26px) saturate(180%); -webkit-backdrop-filter: blur(26px) saturate(180%); }
+.middle { background: rgba(14, 14, 18, .40); }
+
+dialog {
+  background: rgba(18, 18, 22, .78);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, .12),
+    0 24px 64px rgba(0, 0, 0, .62);
+}
+html[data-platform="linux"] dialog { background: rgba(18, 18, 22, .82); }
+
+.composer input {
+  background: rgba(18, 18, 22, .60);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, .08);
+}
+
+/* The window's own plate: the specular lip, the hairline, and a shadow that
+   settles it onto whatever is behind. */
+body::before {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .035), rgba(255, 255, 255, 0) 18%);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, .12),
+    inset 0 0 0 1px rgba(255, 255, 255, .06),
+    0 24px 70px rgba(0, 0, 0, .55);
+}
+
+/* Where the compositor will blur behind the window as well, let it: the ambient
+   field goes translucent and the desktop joins in. */
+html[data-platform="mac"] .ambient,
+html[data-platform="windows"] .ambient { background-color: rgba(14, 14, 17, .55); }
+
+/* The ambient field sits at z-index -1, which paints it behind its parent's
+   background — so an opaque body hid the very thing the glass was meant to
+   blur, and every surface came out flat grey. The body carries no fill now;
+   the field is the fill. */
+body { background: transparent !important; }
+html { background: #0e0e11; }
+html[data-platform="mac"], html[data-platform="windows"] { background: transparent; }
