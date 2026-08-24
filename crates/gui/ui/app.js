@@ -1647,13 +1647,19 @@ function drawDetail(s) {
     draw();
   });
   box.append(actions);
-  // The panel is rebuilt every tick, and WebKit restores the scroll it had
-  // before the rebuild. Once this session's facts overflow the rail — an
-  // assignment, a task, a long path — that restored scroll hides the first
-  // line, which is the session's *name*: the one thing on this panel that says
-  // which agent the buttons below it will act on. Put it back at the top, after
-  // the content exists rather than before.
-  box.scrollTop = 0;
+  // A different session means a different panel, so start it at the top. The
+  // *same* session keeps where you scrolled it to: this is rebuilt every tick,
+  // and resetting unconditionally meant the actions at the bottom of a long
+  // panel — Close, Remove from list — snapped out of reach before you could
+  // click them.
+  //
+  // What actually hid the session's name when the panel overflowed was flex
+  // children shrinking before their scrolling container does; that is fixed in
+  // the stylesheet, and this no longer has to compensate for it.
+  if (box.dataset.was !== s.id) {
+    box.scrollTop = 0;
+    box.dataset.was = s.id;
+  }
 }
 
 // ── what is waiting on you ─────────────────────────────────────────────────

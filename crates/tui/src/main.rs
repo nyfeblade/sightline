@@ -840,6 +840,17 @@ fn main() -> Result<()> {
 
     // Reconcile a fork onto a newer upstream release, by teaching the fork's own
     // agent rather than by merging text.
+    // `--glue <version>` as well as `glue <version>`: it reads as a flag on the
+    // program more than as a subcommand, and being wrong about which one it was
+    // should not cost anyone a round trip through the usage text.
+    let args: Vec<String> = if args.first().map(String::as_str) == Some("--glue") {
+        std::iter::once("glue".to_string())
+            .chain(args[1..].iter().cloned())
+            .collect()
+    } else {
+        args
+    };
+
     if args.first().map(String::as_str) == Some("glue") {
         use ironsight_core::glue;
         let opt = |name: &str| {
