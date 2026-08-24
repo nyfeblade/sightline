@@ -1,6 +1,6 @@
-//! What Ironsight depends on in other people's files, pinned down.
+//! What Sightline depends on in other people's files, pinned down.
 //!
-//! Everything Ironsight knows about a session comes from artifacts nobody
+//! Everything Sightline knows about a session comes from artifacts nobody
 //! documents: Claude Code's transcript and session registry, Aider's chat
 //! history, the shape of a permission prompt on screen. Any of them can change
 //! in a release, and when one does the failure is quiet — a status that reads
@@ -25,7 +25,7 @@ fn read(name: &str) -> String {
 
 #[test]
 fn claude_code_still_writes_a_transcript_scope_can_read() {
-    let mut session = ironsight_core::session::Session::open(fixture("claude-transcript.jsonl"));
+    let mut session = sightline_core::session::Session::open(fixture("claude-transcript.jsonl"));
     session.backfill();
 
     assert_eq!(
@@ -41,7 +41,7 @@ fn claude_code_still_writes_a_transcript_scope_can_read() {
         session.title, "the rate limiter one",
         "a chosen title outranks the derived one"
     );
-    assert!(session.titled, "and Ironsight knows a person chose it");
+    assert!(session.titled, "and Sightline knows a person chose it");
     assert_eq!(
         session.turns, 1,
         "a turn is counted from the record Claude Code writes when one ends"
@@ -54,7 +54,7 @@ fn claude_code_still_writes_a_transcript_scope_can_read() {
     assert_eq!(session.totals.cache_write, 6_200);
     assert!(
         session.totals.cost > 0.0,
-        "usage was priced, so the model id is still one Ironsight knows"
+        "usage was priced, so the model id is still one Sightline knows"
     );
 
     // Tool calls, their results, and the plan.
@@ -73,7 +73,7 @@ fn claude_code_still_writes_a_transcript_scope_can_read() {
 fn the_session_registry_still_says_what_is_running() {
     let text = read("claude-registry.json");
     let record: serde_json::Value = serde_json::from_str(&text).expect("still JSON");
-    // Each of these is a field Ironsight reads by name. A rename breaks liveness,
+    // Each of these is a field Sightline reads by name. A rename breaks liveness,
     // which is what everything else hangs off.
     for field in [
         "pid",
@@ -86,7 +86,7 @@ fn the_session_registry_still_says_what_is_running() {
     ] {
         assert!(
             record.get(field).is_some(),
-            "the registry no longer has `{field}`, which Ironsight reads to know a \
+            "the registry no longer has `{field}`, which Sightline reads to know a \
              session is alive and what it is doing"
         );
     }
@@ -99,8 +99,8 @@ fn the_session_registry_still_says_what_is_running() {
 #[test]
 fn a_permission_prompt_is_still_recognisable_on_screen() {
     let screen = read("claude-permission-screen.txt");
-    let asking = ironsight_core::control::pending_approval(&screen)
-        .expect("Claude Code draws a prompt Ironsight can no longer see");
+    let asking = sightline_core::control::pending_approval(&screen)
+        .expect("Claude Code draws a prompt Sightline can no longer see");
     assert_eq!(asking.question, "Do you want to proceed?");
     assert_eq!(asking.options.len(), 3);
     assert_eq!(asking.keys, vec!["1", "2", "3"], "answered by number");
@@ -113,7 +113,7 @@ fn a_permission_prompt_is_still_recognisable_on_screen() {
 /// thing — which is the failure that matters most, because it acts.
 #[test]
 fn answering_a_prompt_sends_what_that_option_is_answered_by() {
-    use ironsight_core::control::{keystroke_for, pending_approval};
+    use sightline_core::control::{keystroke_for, pending_approval};
 
     // Claude Code: a numbered list, answered by the number.
     let numbered = read("claude-permission-screen.txt");
@@ -147,8 +147,8 @@ fn answering_a_prompt_sends_what_that_option_is_answered_by() {
 #[test]
 fn aider_still_asks_in_letters_and_answers_to_them() {
     let screen = read("aider-permission-screen.txt");
-    let asking = ironsight_core::control::pending_approval(&screen)
-        .expect("Aider draws a prompt Ironsight can no longer see");
+    let asking = sightline_core::control::pending_approval(&screen)
+        .expect("Aider draws a prompt Sightline can no longer see");
     assert!(asking.question.contains("gitignore"));
     assert_eq!(asking.options, vec!["Yes", "No"]);
     assert_eq!(
@@ -160,7 +160,7 @@ fn aider_still_asks_in_letters_and_answers_to_them() {
 
 #[test]
 fn aider_still_records_what_it_did_and_what_it_cost() {
-    use ironsight_core::agent::aider::{Line, read_line};
+    use sightline_core::agent::aider::{Line, read_line};
     let history = read("aider-history.md");
     let lines: Vec<Line> = history.lines().map(read_line).collect();
 
@@ -199,11 +199,11 @@ fn aider_still_records_what_it_did_and_what_it_cost() {
 /// stays at zero — so the stream is pinned to the same fixture the reader is.
 #[test]
 fn the_stream_still_carries_what_a_transcript_says() {
-    use ironsight_core::bus::Kind;
-    use ironsight_core::stream::{Snapshot, Watcher};
+    use sightline_core::bus::Kind;
+    use sightline_core::stream::{Snapshot, Watcher};
     use std::time::Instant;
 
-    let mut session = ironsight_core::session::Session::open(fixture("claude-transcript.jsonl"));
+    let mut session = sightline_core::session::Session::open(fixture("claude-transcript.jsonl"));
     let mut watcher = Watcher::new();
     let now = Instant::now();
 
@@ -261,7 +261,7 @@ fn the_stream_still_carries_what_a_transcript_says() {
     for ev in &events {
         assert_eq!(ev.version, 1, "the stream is still speaking version 1");
         let line = ev.line();
-        let back: ironsight_core::bus::Event =
+        let back: sightline_core::bus::Event =
             serde_json::from_str(&line).expect("an event on the wire parses back");
         assert_eq!(&back, ev, "what a consumer reads is what was published");
         assert!(
@@ -272,11 +272,11 @@ fn the_stream_still_carries_what_a_transcript_says() {
 }
 
 /// The stream-json protocol is a documented, versioned interface — but it is
-/// still one Ironsight depends on, and the point of pinning it is that a change
+/// still one Sightline depends on, and the point of pinning it is that a change
 /// fails here rather than as an owned session that silently produces no events.
 #[test]
-fn claude_code_still_speaks_the_stream_json_ironsight_parses() {
-    use ironsight_core::owned::parse_line;
+fn claude_code_still_speaks_the_stream_json_sightline_parses() {
+    use sightline_core::owned::parse_line;
 
     let fixture = read("claude-stream-json.jsonl");
     let events: Vec<_> = fixture

@@ -8,9 +8,9 @@
 //! moment it starts asking a model for an opinion the word "verified" stops
 //! meaning anything.
 //!
-//! What the checks are belongs to the project, not to Ironsight. They live in
-//! `.ironsight/checks.toml`, committed with the code, because a definition of
-//! done that Ironsight supplied would be Ironsight's opinion of someone else's
+//! What the checks are belongs to the project, not to Sightline. They live in
+//! `.sightline/checks.toml`, committed with the code, because a definition of
+//! done that Sightline supplied would be Sightline's opinion of someone else's
 //! project.
 //!
 //! ```toml
@@ -33,7 +33,14 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 /// Where a project says what finished means.
-pub const FILE: &str = ".ironsight/checks.toml";
+pub const FILE: &str = ".sightline/checks.toml";
+
+/// Where it used to live, and still may.
+///
+/// A project's own files are committed with its code, so a repository written
+/// before the rename has the old directory and there is no upgrade step anyone
+/// would think to run. Both are read; only the new one is written.
+pub const FORMER: &str = ".ironsight/checks.toml";
 
 /// What a project is built and tested with, worked out from what is lying in
 /// it, and the checks that follow.
@@ -234,7 +241,13 @@ impl Suite {
     pub fn find(from: &Path) -> Result<Option<(PathBuf, Suite)>, String> {
         let mut at = Some(from);
         while let Some(dir) = at {
-            let path = dir.join(FILE);
+            // The current name first: a project mid-rename has both, and the
+            // one it is moving to is the one it means.
+            let path = [FILE, FORMER]
+                .iter()
+                .map(|f| dir.join(f))
+                .find(|p| p.is_file())
+                .unwrap_or_else(|| dir.join(FILE));
             if path.is_file() {
                 let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
                 let mut suite: Suite =
@@ -425,7 +438,7 @@ pub fn untrusted_hint(root: &Path, suite: &Suite) -> String {
         .collect();
     format!(
         "{} has not been approved. It would run {} shell command(s) from {}: {}. \
-         Read them, then: ironsight trust {}",
+         Read them, then: sightline trust {}",
         root.display(),
         names.len(),
         FILE,
@@ -503,7 +516,7 @@ fn execute(check: &Check, cwd: &Path, env: &HashMap<String, String>) -> State {
     // pipe will hold — a test suite, a build — would otherwise block forever
     // waiting for a reader that is busy waiting for it to exit.
     let nth = RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let base = std::env::temp_dir().join(format!("ironsight-check-{}-{nth}", std::process::id()));
+    let base = std::env::temp_dir().join(format!("sightline-check-{}-{nth}", std::process::id()));
     // Unlinked however this function returns — a failed spawn, a wait error, a
     // half-created pair — not only on the happy path.
     let temp = TempPair::new(base.with_extension("out"), base.with_extension("err"));
@@ -559,7 +572,7 @@ fn execute(check: &Check, cwd: &Path, env: &HashMap<String, String>) -> State {
             Ok(None) => std::thread::sleep(Duration::from_millis(50)),
             Err(e) => {
                 // Reap before returning: dropping a Child does not wait, so the
-                // process would otherwise linger as a zombie until Ironsight
+                // process would otherwise linger as a zombie until Sightline
                 // exits. The temp files are cleaned by TempPair's drop.
                 kill_tree(&mut child);
                 return State::Unknown {
@@ -773,12 +786,46 @@ mod invariant_tests {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_project_written_before_the_rename_still_has_checks() {
+        // Its .ironsight/ directory is committed with its code and there is no
+        // upgrade step anyone would think to run, so both names are read.
+        let dir = std::env::temp_dir().join(format!("sightline-former-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".ironsight")).unwrap();
+        std::fs::write(
+            dir.join(FORMER),
+            "[[check]]\nname = \"tests\"\nrun = \"cargo test\"\n",
+        )
+        .unwrap();
+        let found = Suite::find(&dir).unwrap();
+        assert!(found.is_some(), "the old directory was not read");
+        assert_eq!(found.unwrap().1.checks[0].name, "tests");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_current_name_wins_when_a_project_has_both() {
+        let dir = std::env::temp_dir().join(format!("sightline-both-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".ironsight")).unwrap();
+        std::fs::create_dir_all(dir.join(".sightline")).unwrap();
+        std::fs::write(dir.join(FORMER), "[[check]]\nname = \"old\"\nrun = \"x\"\n").unwrap();
+        std::fs::write(dir.join(FILE), "[[check]]\nname = \"new\"\nrun = \"x\"\n").unwrap();
+        let (_, suite) = Suite::find(&dir).unwrap().unwrap();
+        assert_eq!(
+            suite.checks[0].name, "new",
+            "a project mid-rename means the one it is moving to"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     use super::*;
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("ironsight-checks-{name}"));
+        let dir = std::env::temp_dir().join(format!("sightline-checks-{name}"));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join(".ironsight")).unwrap();
+        std::fs::create_dir_all(dir.join(".sightline")).unwrap();
         dir
     }
 
@@ -840,7 +887,7 @@ timeout = "2m"
 
     #[test]
     fn a_project_that_has_said_nothing_has_no_checks() {
-        let dir = std::env::temp_dir().join("ironsight-checks-silent");
+        let dir = std::env::temp_dir().join("sightline-checks-silent");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         // Nothing is asserted about the parents of a temp directory, so this
@@ -944,13 +991,13 @@ timeout = "2m"
         // A private ledger, so this cannot approve anything on the real machine.
         let store = dir.join("state");
         std::fs::create_dir_all(&store).unwrap();
-        unsafe { std::env::set_var("IRONSIGHT_DATA_DIR", &store) };
+        unsafe { std::env::set_var("SIGHTLINE_DATA_DIR", &store) };
 
         write(&dir, "[[check]]\nname = \"tests\"\nrun = \"cargo test\"\n");
         let (root, suite) = Suite::find(&dir).unwrap().unwrap();
         assert!(!trusted(&root, &suite), "a checks file arrives untrusted");
         assert!(
-            untrusted_hint(&root, &suite).contains("ironsight trust"),
+            untrusted_hint(&root, &suite).contains("sightline trust"),
             "and says how to approve it"
         );
 
@@ -968,7 +1015,7 @@ timeout = "2m"
             !trusted(&root, &changed),
             "changed commands are not the approved ones, whatever the file is called"
         );
-        unsafe { std::env::remove_var("IRONSIGHT_DATA_DIR") };
+        unsafe { std::env::remove_var("SIGHTLINE_DATA_DIR") };
         let _ = std::fs::remove_dir_all(&dir);
     }
 

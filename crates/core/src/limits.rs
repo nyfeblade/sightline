@@ -9,15 +9,15 @@
 //! can come through, and a start that would exceed one fails saying which.
 //!
 //! Where they live matters as much as what they say. The real ceiling is in
-//! Ironsight's own directory:
+//! Sightline's own directory:
 //!
 //! ```text
-//! ~/.local/share/ironsight/limits.toml
+//! ~/.local/share/sightline/limits.toml
 //! ```
 //!
 //! outside every worktree, because a ceiling a supervised agent can edit is not
 //! a ceiling — it is a suggestion in a file it has write access to. A project
-//! may add `.ironsight/limits.toml` beside its checks and constitution, but it
+//! may add `.sightline/limits.toml` beside its checks and constitution, but it
 //! can only ever be *stricter*: a repository cannot raise the ceiling of the
 //! machine it happens to be checked out on.
 //!
@@ -29,7 +29,7 @@
 //!
 //! Nothing here is on by default. A ceiling nobody asked for that refuses a
 //! ninth session is a surprise, and surprises are how a tool gets turned off.
-//! What is not optional is supervision: `ironsight chief` refuses to start
+//! What is not optional is supervision: `sightline chief` refuses to start
 //! without ceilings in force, because that is exactly the case the doc above is
 //! about.
 
@@ -37,7 +37,7 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
 /// Where a project may lower the machine's ceilings.
-pub const FILE: &str = ".ironsight/limits.toml";
+pub const FILE: &str = ".sightline/limits.toml";
 
 /// What is allowed. `None` anywhere means "no ceiling of this kind".
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
@@ -165,7 +165,7 @@ pub fn write_machine(limits: &Limits) -> Result<PathBuf, String> {
         "#",
         "# Here rather than in a repository on purpose: a ceiling a supervised",
         "# agent can edit is not a ceiling. A project may lower these in",
-        "# .ironsight/limits.toml, and may never raise them.",
+        "# .sightline/limits.toml, and may never raise them.",
         "",
         "",
     ]
@@ -204,7 +204,7 @@ pub fn refuse(limits: &Limits, running: usize, spent: f64) -> Option<String> {
         // one more. A ceiling of three means three, not four.
         if running + 1 > most {
             return Some(format!(
-                "that would be {} sessions of Ironsight's running and the ceiling is {most} \
+                "that would be {} sessions of Sightline's running and the ceiling is {most} \
                  — raise it in {}",
                 running + 1,
                 machine_path().display()
@@ -350,7 +350,7 @@ mod tests {
     fn a_ceiling_with_a_typo_in_it_is_not_no_ceiling() {
         // The failure that would matter most: a malformed file read as absent
         // means the fleet runs uncapped, and nothing says so.
-        let dir = std::env::temp_dir().join(format!("ironsight-limits-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("sightline-limits-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("limits.toml");
@@ -390,7 +390,7 @@ mod tests {
     #[test]
     fn spend_is_read_from_what_happened_not_from_what_is_open() {
         use crate::bus::{Bus, Event, Journal, Kind};
-        let dir = std::env::temp_dir().join(format!("ironsight-spend-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("sightline-spend-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("events.jsonl");

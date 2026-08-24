@@ -1,5 +1,5 @@
 [package]
-name = "ironsight-core"
+name = "sightline-core"
 description = "Reading, steering and starting Claude Code sessions"
 version.workspace = true
 edition.workspace = true

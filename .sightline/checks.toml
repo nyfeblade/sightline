@@ -4,7 +4,7 @@
 # that passes has said that the failures it is able to express did not happen,
 # which is worth knowing and is not the same as the work being right. What
 # carries a task past "checked" is a refutation — something written to show the
-# work is wrong that was tried and did not fire. See `ironsight refute`.
+# work is wrong that was tried and did not fire. See `sightline refute`.
 
 [[check]]
 name    = "format"
@@ -27,7 +27,7 @@ timeout = "2m"
 # Cross-compiling is how a platform nobody is sitting at stays green.
 [[check]]
 name     = "windows"
-run      = "cargo check --target x86_64-pc-windows-msvc -p ironsight-core -p ironsight"
+run      = "cargo check --target x86_64-pc-windows-msvc -p sightline-core -p sightline"
 timeout  = "10m"
 optional = true
 
@@ -39,7 +39,7 @@ optional = true
 #
 # They exist because "the tests pass" survives a change that quietly broke
 # something load-bearing — which is exactly what happens during a merge, and why
-# `ironsight glue` hands these to whoever is reconciling a fork. Prose in a
+# `sightline glue` hands these to whoever is reconciling a fork. Prose in a
 # document cannot fire; a command can.
 #
 # Each was checked by breaking the thing on purpose and watching it catch it.
@@ -71,17 +71,17 @@ refute = "! grep -q 'stood == refutations.len()' crates/core/src/ladder.rs"
 
 [[invariant]]
 name   = "there is one definition of finished"
-must   = "Only the ladder runs a refutation. A worker claiming through the kernel tool and a person running `ironsight check` must reach the same verdict, so the promotion past Checked has one implementation and both call it."
+must   = "Only the ladder runs a refutation. A worker claiming through the kernel tool and a person running `sightline check` must reach the same verdict, so the promotion past Checked has one implementation and both call it."
 refute = "grep -rlq 'checks::refute(' crates/tui/src crates/gui/src"
 
 [[invariant]]
 name   = "nothing runs from a repository until it is read"
-must   = "checks.toml is shell that arrived with someone else's code. It runs only after `ironsight trust` approves those exact commands."
+must   = "checks.toml is shell that arrived with someone else's code. It runs only after `sightline trust` approves those exact commands."
 refute = "! grep -q 'checks::trusted' crates/tui/src/main.rs"
 
 [[invariant]]
 name   = "a ceiling lives outside the worktree"
-must   = "The real limits file is in Ironsight's data directory. A ceiling a supervised agent can edit is a suggestion."
+must   = "The real limits file is in Sightline's data directory. A ceiling a supervised agent can edit is a suggestion."
 refute = "! grep -A1 'fn machine_path' crates/core/src/limits.rs | grep -q 'data_dir'"
 
 [[invariant]]

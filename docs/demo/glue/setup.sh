@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a fork that has genuinely diverged from its upstream, so `ironsight glue`
+# Build a fork that has genuinely diverged from its upstream, so `sightline glue`
 # has something real to reconcile.
 #
 # The scenario is small enough to read in a minute and awkward enough to be
@@ -131,8 +131,8 @@ def test_muting_silences_everything():
         notify.MUTED = False
 EOF
 
-mkdir -p .ironsight
-cat > .ironsight/checks.toml <<'EOF'
+mkdir -p .sightline
+cat > .sightline/checks.toml <<'EOF'
 # What finished means in this fork.
 
 [[check]]
@@ -158,7 +158,7 @@ must   = "notify.py keeps a way to silence everything. It is the fork's own patc
 refute = "! grep -q 'MUTED' notify.py"
 EOF
 
-cat > .ironsight/constitution.md <<'EOF'
+cat > .sightline/constitution.md <<'EOF'
 # Constitution
 
 ## Mission
@@ -177,7 +177,7 @@ notify.py is upstream's and is patched as little as possible. app.py is ours.
   this exists.
 
 ## Done means
-- python3 -m pytest -q passes, and `ironsight invariants` is quiet.
+- python3 -m pytest -q passes, and `sightline invariants` is quiet.
 EOF
 
 cat > README.md <<'EOF'

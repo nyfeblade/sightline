@@ -1,7 +1,7 @@
-//! Turning what Ironsight sees into what Ironsight publishes.
+//! Turning what Sightline sees into what Sightline publishes.
 //!
 //! Nothing here detects anything new. Every event this produces comes from a
-//! comparison Ironsight was already making — a status that changed, a transcript
+//! comparison Sightline was already making — a status that changed, a transcript
 //! that grew, a file whose counters moved — and the only thing being added is
 //! that the comparison is now written down where something else can read it.
 //!
@@ -14,7 +14,7 @@
 //! Two rules it must not break.
 //!
 //! It never replays history. A session that has been running all day, first
-//! seen when Ironsight starts, produces no backlog: its cursor is seeded where it
+//! seen when Sightline starts, produces no backlog: its cursor is seeded where it
 //! stands. The stream is what happens from now on, and a consumer that wants
 //! what came before reads the journal.
 //!
@@ -70,7 +70,7 @@ impl<'a> Snapshot<'a> {
     ///
     /// `agent` is Claude Code unless the caller knows better, because a Session
     /// is read from Claude Code's transcript root and that is what put it
-    /// there. A session Ironsight started itself may be running something else
+    /// there. A session Sightline started itself may be running something else
     /// entirely, and only the caller can see the pane that would say so — hence
     /// `with_agent`. It is emphatically not `agent_name`, which is the name the
     /// session was given by a person.
@@ -220,7 +220,7 @@ impl Watcher {
         }
 
         // A session that has gone from the list has ended, whether it exited or
-        // Ironsight simply lost sight of it. Saying which would be a guess, so it
+        // Sightline simply lost sight of it. Saying which would be a guess, so it
         // says it cannot tell.
         let present: Vec<&str> = sessions.iter().map(|s| s.id.as_str()).collect();
         let vanished: Vec<String> = self
@@ -633,7 +633,7 @@ mod tests {
         let t = Instant::now();
         w.poll(t, &[f.snap()]);
         // Busy enough that the session's own buffer aged out what happened
-        // before Ironsight looked again.
+        // before Sightline looked again.
         f.dropped = 500;
         f.events
             .push_back(ev(EvKind::Tool, "Read", "big.txt", true));

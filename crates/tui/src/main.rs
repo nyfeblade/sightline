@@ -1,11 +1,11 @@
-//! Ironsight — the commands, and the session table.
+//! Sightline — the commands, and the session table.
 //!
 //! The interface is the window (`crates/gui`). What is here is everything that
 //! is useful from a shell or a script: starting and steering sessions, tasks,
 //! checks, briefs, ceilings, invariants, glue — and a one-shot table of what is
-//! running, which is what a bare `ironsight` prints.
+//! running, which is what a bare `sightline` prints.
 
-use ironsight_core::{
+use sightline_core::{
     app, bootstrap, brief, bus, checks, control, gateway, git, ladder, owned, session, work,
 };
 
@@ -17,70 +17,70 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 const USAGE: &str = "\
-Ironsight — commands for the Claude Code sessions on this machine
+Sightline — commands for the Claude Code sessions on this machine
 
-usage: ironsight [options]     print what every session is doing, and exit
-       ironsight new [path] [--agent A] [--name N] [--model M] [--effort E]
+usage: sightline [options]     print what every session is doing, and exit
+       sightline new [path] [--agent A] [--name N] [--model M] [--effort E]
                  [--permission-mode P] [--prompt T] [--worktree BRANCH]
                  [--task WHAT] [--parent WHO] [--owned]
                                start a session and exit; --agent picks which
                                agent to run (claude, codex, gemini, aider, or
                                any command), default claude. --owned starts one
-                               Ironsight holds itself, spoken to over structured
+                               Sightline holds itself, spoken to over structured
                                JSON with no terminal in the way
-       ironsight glue <version> [--remote NAME] [--dry-run]
+       sightline glue <version> [--remote NAME] [--dry-run]
                                reconcile this fork onto a newer upstream release:
                                teaches your agent upstream's architecture, seams
                                and invariants, then has it write the adapters in a
                                worktree of its own. --install just teaches it
-       ironsight owned              list the sessions Ironsight is holding itself
-       ironsight key                read one keypress and say what arrived, for
+       sightline owned              list the sessions Sightline is holding itself
+       sightline key                read one keypress and say what arrived, for
                                working out why the way back does nothing
-       ironsight hidden [--ended] [--clear]
+       sightline hidden [--ended] [--clear]
                                rows taken off the session list; --ended takes
                                every finished one off, --clear puts them all back
-       ironsight send <who> <text> send a line to a running session, whether it is
-                               in a terminal or held by Ironsight
-       ironsight adopt <who>        (re)open a conversation in tmux so it can be steered
-       ironsight prune              close Ironsight sessions whose process has exited
-       ironsight doctor             check everything Ironsight needs is installed
-       ironsight run [--model M] [--permission-mode P] <prompt>
-                               run a session Ironsight owns: structured JSON, no
+       sightline send <who> <text> send a line to a running session, whether it is
+                               in a terminal or held by Sightline
+       sightline adopt <who>        (re)open a conversation in tmux so it can be steered
+       sightline prune              close Sightline sessions whose process has exited
+       sightline doctor             check everything Sightline needs is installed
+       sightline run [--model M] [--permission-mode P] <prompt>
+                               run a session Sightline owns: structured JSON, no
                                terminal, no scraping. Streams what it does as it
                                happens and exits when the turn is done
-       ironsight serve              hold sessions in a process of Ironsight's own,
+       sightline serve              hold sessions in a process of Sightline's own,
                                 so they outlive every window. Started for you
                                 when it is needed; run it yourself to watch it
-       ironsight attach <who>       hand this terminal to a session Ironsight holds
+       sightline attach <who>       hand this terminal to a session Sightline holds
                                 — the way out when the window is the problem
-       ironsight stop [who|--all]   stop one session, or everything Ironsight started
-       ironsight waiting            list sessions blocked on a prompt
-       ironsight approve <who> [n]  answer a blocked session (default option 1)
-       ironsight events [--since N] [--json]
+       sightline stop [who|--all]   stop one session, or everything Sightline started
+       sightline waiting            list sessions blocked on a prompt
+       sightline approve <who> [n]  answer a blocked session (default option 1)
+       sightline events [--since N] [--json]
                                follow everything happening on this machine;
-                               attaches to a running Ironsight if there is one,
+                               attaches to a running Sightline if there is one,
                                and watches the machine itself if there is not
-       ironsight tasks [--json]     what each session was asked to do
-       ironsight assign <who> <text>
+       sightline tasks [--json]     what each session was asked to do
+       sightline assign <who> <text>
                                give a session an assignment
-       ironsight note <task> <text> append what was learned to a task
-       ironsight brief <who> [--task <what>]
+       sightline note <task> <text> append what was learned to a task
+       sightline brief <who> [--task <what>]
                                render a session's brief from the project's
                                constitution: the constraints that bear on the
                                task, what done means, and when to escalate
-       ironsight refute <task> <command>
+       sightline refute <task> <command>
                                name something that would show this work is
                                wrong. The command must fail; if it succeeds the
                                claim is refused. Without one, work can be
                                checked but never verified
-       ironsight claim <who>        say a session's work is finished; the checks decide
-       ironsight check <who>        run this project's checks now and report
-       ironsight invariants         try to break what must never stop being true
+       sightline claim <who>        say a session's work is finished; the checks decide
+       sightline check <who>        run this project's checks now and report
+       sightline invariants         try to break what must never stop being true
                                here. A quiet run is the good one
-       ironsight trust [path]       approve a project's checks, having read them.
-                               Nothing runs from a .ironsight/checks.toml until
+       sightline trust [path]       approve a project's checks, having read them.
+                               Nothing runs from a .sightline/checks.toml until
                                you have, and it asks again if the file changes
-       ironsight foreman [--every N]
+       sightline foreman [--every N]
                                watch for claimed work and refuse what does not
                                pass its checks. Never writes code, never
                                restarts anything, never guesses
@@ -94,7 +94,7 @@ options:
   -h, --help      this text
   -V, --version   version
 
-The window is the interface: `ironsight-gui`, or the desktop entry. This binary
+The window is the interface: `sightline-gui`, or the desktop entry. This binary
 is the commands, plus the table above for a shell or a script.";
 
 fn parse_since(s: &str) -> Option<Duration> {
@@ -207,7 +207,7 @@ fn attach_to(pane: &str, name: &str) -> Result<()> {
     restore_terminal_however_this_ends();
 
     let result = (|| -> Result<()> {
-        let mut last: Vec<Vec<ironsight_core::screen::Run>> = Vec::new();
+        let mut last: Vec<Vec<sightline_core::screen::Run>> = Vec::new();
         loop {
             let (cols, rows) = terminal::size()?;
             if let Some(frame) = control::frame(pane, cols, rows.saturating_sub(1)) {
@@ -326,16 +326,16 @@ fn main() -> Result<()> {
 
     let args: Vec<String> = std::env::args().skip(1).collect();
 
-    // Where Ironsight holds sessions itself, a subcommand would start or steer
+    // Where Sightline holds sessions itself, a subcommand would start or steer
     // something and then exit, taking it with it. Say so rather than doing it.
     const ONE_SHOT: [&str; 7] = [
         "new", "send", "adopt", "approve", "waiting", "stop", "prune",
     ];
     if let Some(cmd) = args.first() {
-        if !control::outlives_ironsight() && ONE_SHOT.contains(&cmd.as_str()) {
+        if !control::outlives_sightline() && ONE_SHOT.contains(&cmd.as_str()) {
             anyhow::bail!(
                 "scope holds sessions itself on this platform, so they end when it exits.\n\
-                 `Ironsight {cmd}` would do that immediately — run Ironsight and use it from there."
+                 `Sightline {cmd}` would do that immediately — run Sightline and use it from there."
             );
         }
     }
@@ -345,13 +345,13 @@ fn main() -> Result<()> {
         if who == "--all" {
             let closed = control::stop_all();
             if closed.is_empty() {
-                println!("nothing of Ironsight's was running");
+                println!("nothing of Sightline's was running");
             } else {
                 println!("stopped {}", closed.join(", "));
             }
             return Ok(());
         }
-        // A session Ironsight holds by pipe is stopped by name too — there is
+        // A session Sightline holds by pipe is stopped by name too — there is
         // no terminal to kill, so the terminal backend would never find it.
         if control::owned_all()
             .iter()
@@ -366,7 +366,7 @@ fn main() -> Result<()> {
             .iter()
             .find(|p| p.session == who)
             .map(|p| p.session.clone())
-            .ok_or_else(|| anyhow::anyhow!("no session called {who} — try ironsight stop --all"))?;
+            .ok_or_else(|| anyhow::anyhow!("no session called {who} — try sightline stop --all"))?;
         control::kill_session(&target).map_err(|e| anyhow::anyhow!(e))?;
         println!("stopped {target}");
         return Ok(());
@@ -385,7 +385,7 @@ fn main() -> Result<()> {
         }
         // Not a check — nothing is missing either way — but it is the question
         // people actually ask, and the answer has been guessable rather than
-        // askable. `F12 → back to Ironsight` is printed on a session's status
+        // askable. `F12 → back to Sightline` is printed on a session's status
         // line; whether it is true depends on tmux, and tmux is where to look.
         println!("ok   {:<14} {}", "way back", control::way_back_state());
         if bootstrap::ready(&checks) {
@@ -398,7 +398,7 @@ fn main() -> Result<()> {
     // The daemon. Nothing but the sessions and a socket: everything about what
     // a session *means* stays in the front ends, which read the same files they
     // always read.
-    // A session Ironsight owns, spoken to over the protocol rather than a
+    // A session Sightline owns, spoken to over the protocol rather than a
     // terminal. One-shot: send the prompt, stream what happens, exit when the
     // turn finishes. This is the seam the foreman and chief will drive.
     if args.first().map(String::as_str) == Some("run") {
@@ -433,7 +433,7 @@ fn main() -> Result<()> {
         }
         let prompt = it.cloned().collect::<Vec<_>>().join(" ");
         if prompt.trim().is_empty() {
-            anyhow::bail!("usage: ironsight run [--model M] [--permission-mode P] <prompt>");
+            anyhow::bail!("usage: sightline run [--model M] [--permission-mode P] <prompt>");
         }
 
         let program = control::claude_program();
@@ -481,24 +481,24 @@ fn main() -> Result<()> {
     }
 
     if args.first().map(String::as_str) == Some("serve") {
-        let path = ironsight_core::daemon::default_path();
-        if ironsight_core::daemon::running() {
+        let path = sightline_core::daemon::default_path();
+        if sightline_core::daemon::running() {
             anyhow::bail!("one is already listening on {}", path.display());
         }
         println!("holding sessions · {}", path.display());
-        ironsight_core::daemon::serve(path)?;
+        sightline_core::daemon::serve(path)?;
         return Ok(());
     }
 
     // The way back in when the window is the problem.
     //
     // tmux gave this for free — `tmux attach` and you are in the session. Held
-    // by Ironsight there has to be something that does the same, and it has to
+    // by Sightline there has to be something that does the same, and it has to
     // exist before anyone relies on the daemon rather than after.
     if args.first().map(String::as_str) == Some("attach") {
         let who = args
             .get(1)
-            .ok_or_else(|| anyhow::anyhow!("usage: ironsight attach <who>"))?;
+            .ok_or_else(|| anyhow::anyhow!("usage: sightline attach <who>"))?;
         let pane = control::panes()
             .into_iter()
             .find(|p| p.session == *who || p.id == *who)
@@ -506,7 +506,7 @@ fn main() -> Result<()> {
         return attach_to(&pane.id, &pane.session);
     }
 
-    // A session that supervises the others: Ironsight on its path, a brief, and a
+    // A session that supervises the others: Sightline on its path, a brief, and a
     // ceiling it cannot raise. Not a new runtime — that is the whole point.
     if args.first().map(String::as_str) == Some("chief") {
         let opt = |name: &str| {
@@ -557,7 +557,7 @@ fn main() -> Result<()> {
         };
         if intent.trim().is_empty() {
             anyhow::bail!(
-                "usage: ironsight chief [path] <what you want done>\n                 a chief needs to be told what is wanted, in your words"
+                "usage: sightline chief [path] <what you want done>\n                 a chief needs to be told what is wanted, in your words"
             );
         }
 
@@ -566,11 +566,11 @@ fn main() -> Result<()> {
         // power to start sessions is exactly the case they exist for, and a
         // supervisor that could start a hundred workers because nobody had got
         // round to setting a number is not a design, it is a hope.
-        let limits = ironsight_core::limits::in_force(&cwd).map_err(|e| anyhow::anyhow!(e))?;
+        let limits = sightline_core::limits::in_force(&cwd).map_err(|e| anyhow::anyhow!(e))?;
         if !limits.any() {
             anyhow::bail!(
                 "a chief starts sessions on your behalf, so it does not start without a \
-                 ceiling.\nSet one first:\n\n    ironsight limits --sessions 6 --spend 20\n"
+                 ceiling.\nSet one first:\n\n    sightline limits --sessions 6 --spend 20\n"
             );
         }
 
@@ -582,7 +582,7 @@ fn main() -> Result<()> {
         );
         app.with_state();
         let constitution = brief::Constitution::find(&cwd).map(|(_, c)| c);
-        let packet = ironsight_core::chief::brief(
+        let packet = sightline_core::chief::brief(
             &intent,
             &cwd.to_string_lossy(),
             constitution.as_ref(),
@@ -602,8 +602,8 @@ fn main() -> Result<()> {
             &cwd,
             &owned::Spec::default()
                 .with_model(opt("--model").as_deref())
-                .allowing(ironsight_core::chief::GRANTED)
-                .denying(ironsight_core::chief::DENIED)
+                .allowing(sightline_core::chief::GRANTED)
+                .denying(sightline_core::chief::DENIED)
                 .opening(Some(&packet)),
         )
         .map_err(|e| anyhow::anyhow!(e))?;
@@ -615,7 +615,7 @@ fn main() -> Result<()> {
         // The chief's own work is work, and is tracked like anyone else's.
         let task = app.assign(&id, &format!("supervise: {intent}"));
         println!("{} · {task} · {}", it.name, limits.describe());
-        println!("talk to it with `ironsight send {} <text>`", it.name);
+        println!("talk to it with `sightline send {} <text>`", it.name);
         return Ok(());
     }
 
@@ -695,7 +695,7 @@ fn main() -> Result<()> {
     };
 
     if args.first().map(String::as_str) == Some("glue") {
-        use ironsight_core::glue;
+        use sightline_core::glue;
         let opt = |name: &str| {
             args.iter()
                 .position(|a| a == name)
@@ -712,7 +712,7 @@ fn main() -> Result<()> {
         }
 
         // Teaching the fork is worth doing on its own: after this the fork's
-        // own agent can be asked to reconcile without going through Ironsight
+        // own agent can be asked to reconcile without going through Sightline
         // at all, which is the point of shipping an ability rather than a tool.
         if args.iter().any(|a| a == "--install") {
             let path = glue::install(&root).map_err(|e| anyhow::anyhow!(e))?;
@@ -733,8 +733,8 @@ fn main() -> Result<()> {
                 anyhow::anyhow!(
                     "{}",
                     [
-                        "usage: ironsight glue <version> [--remote NAME] [--dry-run]",
-                        "       ironsight glue --install",
+                        "usage: sightline glue <version> [--remote NAME] [--dry-run]",
+                        "       sightline glue --install",
                     ]
                     .join("\n")
                 )
@@ -814,7 +814,7 @@ fn main() -> Result<()> {
             .reconcile(&root, &version, Some(&remote), opt("--model").as_deref())
             .map_err(|e| anyhow::anyhow!(e))?;
         println!("{name} · {}", worktree.display());
-        println!("watch it with `ironsight`, talk to it with `ironsight send {name} <text>`");
+        println!("watch it with `sightline`, talk to it with `sightline send {name} <text>`");
         println!("it works only in that worktree and will not merge — that is yours to do.");
         return Ok(());
     }
@@ -825,7 +825,7 @@ fn main() -> Result<()> {
     // does not work there are three different places it can be going wrong: the
     // desktop can take it, the terminal can take it, or tmux can be holding a
     // binding for something else. Nothing about the first two is visible from
-    // inside Ironsight — so rather than guess, read one keypress and say what
+    // inside Sightline — so rather than guess, read one keypress and say what
     // actually arrived.
     if args.first().map(String::as_str) == Some("key") {
         use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -834,12 +834,12 @@ fn main() -> Result<()> {
         if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
             anyhow::bail!(
                 "there is no terminal on stdin, so there is no key to read — \
-                 run `ironsight key` directly in a terminal"
+                 run `sightline key` directly in a terminal"
             );
         }
         let want = control::way_back_key();
         println!("press {want} — or any key to see what it is. esc gives up.");
-        println!("(if nothing happens at all, something above Ironsight is taking it)");
+        println!("(if nothing happens at all, something above Sightline is taking it)");
         crossterm::terminal::enable_raw_mode()?;
         let deadline = Instant::now() + Duration::from_secs(20);
         let mut saw: Option<String> = None;
@@ -873,18 +873,18 @@ fn main() -> Result<()> {
             Some(key) if key == want => {
                 println!("{key} arrives here, so your terminal is not taking it.");
                 println!("If it does nothing inside a session, the binding is the problem:");
-                println!("  ironsight doctor        says whether tmux is holding it");
+                println!("  sightline doctor        says whether tmux is holding it");
             }
             Some(key) => {
                 println!("that arrived as {key}, not {want}.");
-                println!("Use it instead:  IRONSIGHT_WAY_BACK={key} ironsight");
+                println!("Use it instead:  SIGHTLINE_WAY_BACK={key} sightline");
                 println!("Put that in your shell profile to keep it.");
             }
             None => {
                 println!("nothing arrived in twenty seconds.");
-                println!("Whatever you pressed is being taken above Ironsight — by the");
+                println!("Whatever you pressed is being taken above Sightline — by the");
                 println!("desktop, or by the terminal itself. Pick a key that gets");
-                println!("through and name it:  IRONSIGHT_WAY_BACK=F9 ironsight");
+                println!("through and name it:  SIGHTLINE_WAY_BACK=F9 sightline");
             }
         }
         return Ok(());
@@ -892,7 +892,7 @@ fn main() -> Result<()> {
 
     // Rows taken off the list, and the way back. A `hidden.json` nobody can
     // read from a terminal would make removing a row a thing you could not
-    // undo without knowing where Ironsight keeps its state.
+    // undo without knowing where Sightline keeps its state.
     if args.first().map(String::as_str) == Some("hidden") {
         let mut app = App::new(
             app::default_root(),
@@ -913,7 +913,7 @@ fn main() -> Result<()> {
                     0 => "nothing on the list has finished".to_string(),
                     n => format!(
                         "took {n} finished session(s) off the list — \
-                         put them back with: ironsight hidden --clear"
+                         put them back with: sightline hidden --clear"
                     ),
                 }
             );
@@ -932,11 +932,11 @@ fn main() -> Result<()> {
         }
         let n = app.hidden_count();
         if n == 0 {
-            println!("nothing is hidden — every conversation Ironsight knows about is listed");
+            println!("nothing is hidden — every conversation Sightline knows about is listed");
         } else {
             println!("{n} session(s) taken off the list. They are not deleted: the");
-            println!("transcripts are where they always were, and `ironsight` R still");
-            println!("finds them. Put them all back with: ironsight hidden --clear");
+            println!("transcripts are where they always were, and `sightline` R still");
+            println!("finds them. Put them all back with: sightline hidden --clear");
         }
         return Ok(());
     }
@@ -955,8 +955,8 @@ fn main() -> Result<()> {
         };
         let asked = [opt("--sessions"), opt("--spend"), opt("--window")];
         if asked.iter().any(Option::is_some) || args.iter().any(|a| a == "--none") {
-            let path = ironsight_core::limits::machine_path();
-            let mut limits = ironsight_core::limits::read(&path)
+            let path = sightline_core::limits::machine_path();
+            let mut limits = sightline_core::limits::read(&path)
                 .map_err(|e| anyhow::anyhow!(e))?
                 .unwrap_or_default();
             if args.iter().any(|a| a == "--none") {
@@ -987,7 +987,7 @@ fn main() -> Result<()> {
                 "#",
                 "# Here rather than in a repository on purpose: a ceiling a supervised",
                 "# agent can edit is not a ceiling. A project may lower these in",
-                "# .ironsight/limits.toml, and may never raise them.",
+                "# .sightline/limits.toml, and may never raise them.",
                 "",
                 "",
             ]
@@ -1010,19 +1010,19 @@ fn main() -> Result<()> {
         }
 
         let cwd = std::env::current_dir()?;
-        let machine = ironsight_core::limits::read(&ironsight_core::limits::machine_path())
+        let machine = sightline_core::limits::read(&sightline_core::limits::machine_path())
             .map_err(|e| anyhow::anyhow!(e))?;
-        let project = match ironsight_core::limits::project_path(&cwd) {
+        let project = match sightline_core::limits::project_path(&cwd) {
             Some(path) => (
                 Some(path.clone()),
-                ironsight_core::limits::read(&path).map_err(|e| anyhow::anyhow!(e))?,
+                sightline_core::limits::read(&path).map_err(|e| anyhow::anyhow!(e))?,
             ),
             None => (None, None),
         };
-        let in_force = ironsight_core::limits::effective(machine, project.1);
+        let in_force = sightline_core::limits::effective(machine, project.1);
         println!(
             "machine  {} · {}",
-            ironsight_core::limits::machine_path().display(),
+            sightline_core::limits::machine_path().display(),
             machine.map(|m| m.describe()).unwrap_or("none set".into())
         );
         if let (Some(path), Some(p)) = (&project.0, project.1) {
@@ -1030,7 +1030,7 @@ fn main() -> Result<()> {
         }
         println!("in force {}", in_force.describe());
         if !in_force.any() {
-            println!("\nset one with: ironsight limits --sessions 8 --spend 25");
+            println!("\nset one with: sightline limits --sessions 8 --spend 25");
             return Ok(());
         }
         // What the ceilings are actually being measured against, because a
@@ -1046,31 +1046,31 @@ fn main() -> Result<()> {
         app.refresh();
         let running = app.running_sessions();
         println!(
-            "running  {running} session(s) of Ironsight's own — your own sessions do not count"
+            "running  {running} session(s) of Sightline's own — your own sessions do not count"
         );
         let journal = app::data_dir().join("events.jsonl");
         let hours = in_force.window_hours();
-        let spent = ironsight_core::limits::spent_since(&journal, hours);
+        let spent = sightline_core::limits::spent_since(&journal, hours);
         println!("spent    ${spent:.2} in the last {hours}h, by the event journal");
         if in_force.spend.is_some() && !journal.exists() {
             // Said plainly rather than left to be discovered: spend is counted
             // from what was written down, and nothing writes it down unless an
-            // Ironsight is running. A spend ceiling on a machine that only ever
+            // Sightline is running. A spend ceiling on a machine that only ever
             // runs the commands is a ceiling nothing is measured against.
             println!("\nnothing has been journalled yet ({}).", journal.display());
-            println!("spend is counted from that file, and it is written while an Ironsight");
+            println!("spend is counted from that file, and it is written while an Sightline");
             println!("window or terminal view is running — a spend ceiling measures nothing");
             println!("until one has been.");
         }
         return Ok(());
     }
 
-    // What Ironsight is holding by pipe rather than by terminal: the handle, the
+    // What Sightline is holding by pipe rather than by terminal: the handle, the
     // conversation it is in, and whether it is mid-turn.
     if args.first().map(String::as_str) == Some("owned") {
         let all = control::owned_all();
         if all.is_empty() {
-            println!("Ironsight is holding no sessions of its own");
+            println!("Sightline is holding no sessions of its own");
             return Ok(());
         }
         for o in all {
@@ -1103,11 +1103,11 @@ fn main() -> Result<()> {
 
     if args.first().map(String::as_str) == Some("prune") {
         let mut closed = control::prune();
-        // The ones Ironsight holds are tidied by the same word. Only the dead:
+        // The ones Sightline holds are tidied by the same word. Only the dead:
         // nothing running is touched, which is what a person means by prune.
         closed.extend(control::owned_reap());
         if closed.is_empty() {
-            println!("nothing to tidy up — everything Ironsight started is still running");
+            println!("nothing to tidy up — everything Sightline started is still running");
         } else {
             println!("closed {}", closed.join(", "));
         }
@@ -1147,7 +1147,7 @@ fn main() -> Result<()> {
         if args[0] == "adopt" {
             let who = args
                 .get(1)
-                .ok_or_else(|| anyhow::anyhow!("usage: ironsight adopt <who>"))?;
+                .ok_or_else(|| anyhow::anyhow!("usage: sightline adopt <who>"))?;
             let idx = app
                 .sessions
                 .iter()
@@ -1160,7 +1160,7 @@ fn main() -> Result<()> {
         }
         let who = args
             .get(1)
-            .ok_or_else(|| anyhow::anyhow!("usage: ironsight approve <who> [n]"))?;
+            .ok_or_else(|| anyhow::anyhow!("usage: sightline approve <who> [n]"))?;
         let n: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(1);
         let idx = app
             .sessions
@@ -1173,9 +1173,9 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    // The stream, for anything that is not Ironsight.
+    // The stream, for anything that is not Sightline.
     //
-    // If an Ironsight is running its socket is the source, so several consumers
+    // If an Sightline is running its socket is the source, so several consumers
     // see one consistent stream. If none is, this becomes the watcher itself —
     // which is the layer being useful with nothing above it, rather than a
     // window onto something else that must already be open.
@@ -1237,7 +1237,7 @@ fn main() -> Result<()> {
                     }
                     return Ok(());
                 }
-                // The Ironsight that owned it exited between the check and the
+                // The Sightline that owned it exited between the check and the
                 // connect; fall through and watch the machine directly.
                 Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {}
                 Err(e) => return Err(e.into()),
@@ -1251,7 +1251,7 @@ fn main() -> Result<()> {
             false,
         );
         if !app.with_stream().map_err(|e| anyhow::anyhow!(e))? {
-            // Another Ironsight took the socket between the check above and the
+            // Another Sightline took the socket between the check above and the
             // bind. Read from it rather than watching the machine twice.
             gateway::follow(&sock, |ev| show(&ev))?;
             return Ok(());
@@ -1290,7 +1290,7 @@ fn main() -> Result<()> {
             if json {
                 println!("[]");
             } else {
-                println!("nothing has been assigned — try: ironsight assign <who> <what>");
+                println!("nothing has been assigned — try: sightline assign <who> <what>");
             }
             return Ok(());
         }
@@ -1362,10 +1362,10 @@ fn main() -> Result<()> {
     if args.first().map(String::as_str) == Some("assign") {
         let who = args
             .get(1)
-            .ok_or_else(|| anyhow::anyhow!("usage: ironsight assign <who> <what>"))?;
+            .ok_or_else(|| anyhow::anyhow!("usage: sightline assign <who> <what>"))?;
         let what = args[2..].join(" ");
         if what.is_empty() {
-            anyhow::bail!("usage: ironsight assign <who> <what>");
+            anyhow::bail!("usage: sightline assign <who> <what>");
         }
         let mut app = App::new(
             app::default_root(),
@@ -1373,7 +1373,7 @@ fn main() -> Result<()> {
             Duration::from_secs(7 * 86_400),
             false,
         );
-        // Only the store: an Ironsight may well be running, and this command has
+        // Only the store: an Sightline may well be running, and this command has
         // no business taking the stream from it.
         app.with_state();
         app.rescan_panes();
@@ -1399,7 +1399,7 @@ fn main() -> Result<()> {
             false,
         );
         // A foreman is a supervisor, so it publishes what it decides when it
-        // can. When another Ironsight already holds the stream it still does
+        // can. When another Sightline already holds the stream it still does
         // the work — its verdicts go to the store either way — and says so
         // rather than pretending its events went anywhere.
         let publishing = if args[0] == "foreman" {
@@ -1413,7 +1413,7 @@ fn main() -> Result<()> {
         if args[0] == "claim" {
             let who = args
                 .get(1)
-                .ok_or_else(|| anyhow::anyhow!("usage: ironsight claim <who>"))?;
+                .ok_or_else(|| anyhow::anyhow!("usage: sightline claim <who>"))?;
             let id =
                 resolve(&app, who).ok_or_else(|| anyhow::anyhow!("no session matching {who}"))?;
             let task = app
@@ -1432,7 +1432,7 @@ fn main() -> Result<()> {
         if args[0] == "check" {
             let who = args
                 .get(1)
-                .ok_or_else(|| anyhow::anyhow!("usage: ironsight check <who>"))?;
+                .ok_or_else(|| anyhow::anyhow!("usage: sightline check <who>"))?;
             let id =
                 resolve(&app, who).ok_or_else(|| anyhow::anyhow!("no session matching {who}"))?;
             let outcomes = verify(&mut app, &id, false);
@@ -1468,7 +1468,7 @@ fn main() -> Result<()> {
             if publishing {
                 "publishing to the stream"
             } else {
-                "another Ironsight holds the stream, so verdicts go to the store only"
+                "another Sightline holds the stream, so verdicts go to the store only"
             }
         );
         loop {
@@ -1523,10 +1523,10 @@ fn main() -> Result<()> {
     if args.first().map(String::as_str) == Some("refute") {
         let id = args
             .get(1)
-            .ok_or_else(|| anyhow::anyhow!("usage: ironsight refute <task> <command>"))?;
+            .ok_or_else(|| anyhow::anyhow!("usage: sightline refute <task> <command>"))?;
         let command = args[2..].join(" ");
         if command.is_empty() {
-            anyhow::bail!("usage: ironsight refute <task> <command that must fail>");
+            anyhow::bail!("usage: sightline refute <task> <command that must fail>");
         }
         let mut store = work::Store::load(work::path_in(&app::data_dir()));
         store
@@ -1543,7 +1543,7 @@ fn main() -> Result<()> {
     if args.first().map(String::as_str) == Some("brief") {
         let who = args
             .get(1)
-            .ok_or_else(|| anyhow::anyhow!("usage: ironsight brief <who> [--task <what>]"))?;
+            .ok_or_else(|| anyhow::anyhow!("usage: sightline brief <who> [--task <what>]"))?;
         let adhoc = args
             .iter()
             .position(|a| a == "--task")
@@ -1606,10 +1606,10 @@ fn main() -> Result<()> {
     if args.first().map(String::as_str) == Some("note") {
         let id = args
             .get(1)
-            .ok_or_else(|| anyhow::anyhow!("usage: ironsight note <task> <text>"))?;
+            .ok_or_else(|| anyhow::anyhow!("usage: sightline note <task> <text>"))?;
         let text = args[2..].join(" ");
         if text.is_empty() {
-            anyhow::bail!("usage: ironsight note <task> <text>");
+            anyhow::bail!("usage: sightline note <task> <text>");
         }
         let mut store = work::Store::load(work::path_in(&app::data_dir()));
         store.note(id, &text).map_err(|e| anyhow::anyhow!(e))?;
@@ -1621,10 +1621,10 @@ fn main() -> Result<()> {
     if args.first().map(String::as_str) == Some("send") {
         let who = args
             .get(1)
-            .ok_or_else(|| anyhow::anyhow!("usage: ironsight send <who> <text>"))?;
+            .ok_or_else(|| anyhow::anyhow!("usage: sightline send <who> <text>"))?;
         let text = args[2..].join(" ");
         if text.is_empty() {
-            anyhow::bail!("usage: ironsight send <who> <text>");
+            anyhow::bail!("usage: sightline send <who> <text>");
         }
         // A tmux session or pane name works even before the session has written
         // a transcript — which is the case while it is still asking whether the
@@ -1734,7 +1734,7 @@ fn main() -> Result<()> {
         let assignment = opt("--task");
         let parent = opt("--parent");
 
-        // A session Ironsight holds itself, spoken to down a pipe rather than
+        // A session Sightline holds itself, spoken to down a pipe rather than
         // typed into a terminal. Started here rather than under a command of
         // its own because it is a session: the same folder, model, task,
         // lineage and brief apply, and only the way in is different.
@@ -1750,7 +1750,7 @@ fn main() -> Result<()> {
             let opening = match (&assignment, &spec.prompt) {
                 (Some(what), _) => {
                     let constitution = brief::Constitution::find(&cwd).map(|(_, c)| c);
-                    let task = ironsight_core::work::Task::new(
+                    let task = sightline_core::work::Task::new(
                         "pending".into(),
                         String::new(),
                         what.clone(),
@@ -1781,13 +1781,13 @@ fn main() -> Result<()> {
                 .map(|o| o.name.clone())
                 .unwrap_or_else(|| id.clone());
             println!(
-                "started {held} — held by Ironsight, talk to it with `ironsight send {held} <text>`"
+                "started {held} — held by Sightline, talk to it with `sightline send {held} <text>`"
             );
             return Ok(());
         }
 
         let name = app.start_session(&spec).map_err(|e| anyhow::anyhow!(e))?;
-        // Lineage and assignment are recorded against the session Ironsight has
+        // Lineage and assignment are recorded against the session Sightline has
         // just started, which it knows by the pane it is running in until the
         // transcript catches up.
         if assignment.is_some() || parent.is_some() {
@@ -1841,7 +1841,7 @@ fn main() -> Result<()> {
                 return Ok(());
             }
             "-V" | "--version" => {
-                println!("Ironsight {}", env!("CARGO_PKG_VERSION"));
+                println!("Sightline {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
             }
             "--live" => only_live = true,
@@ -1911,7 +1911,7 @@ extern "C" fn restore_on_signal(sig: i32) {
 ///
 /// The ordinary path already does this. These are the other ones: a `pkill`, a
 /// `systemctl stop`, a closed terminal, a panic. Without them the last thing
-/// Ironsight does is leave mouse reporting on, and every mouse movement is then
+/// Sightline does is leave mouse reporting on, and every mouse movement is then
 /// typed into whatever shell comes next — which cannot be typed over, and looks
 /// like a broken terminal rather than like a program that failed to clean up.
 fn restore_terminal_however_this_ends() {
@@ -1963,7 +1963,7 @@ fn fmt_age(secs: i64) -> String {
 
 /// The one-shot table.
 ///
-/// Writes rather than prints: `ironsight | head` closes the pipe halfway,
+/// Writes rather than prints: `sightline | head` closes the pipe halfway,
 /// and a tool that panics when someone pipes it into `head` is a tool that
 /// looks broken.
 fn print_once(app: &App) {
@@ -2036,7 +2036,7 @@ fn truncate(s: &str, n: usize) -> String {
 ///
 /// ctrl+] is the classic escape, but a terminal without the kitty keyboard
 /// protocol sends the raw control byte 0x1D, which crossterm reports as
-/// ctrl+5 — so Ironsight watched for a key press that could never arrive and
+/// ctrl+5 — so Sightline watched for a key press that could never arrive and
 /// passthrough became a one-way door. F12 is there as a way out that no
 /// keyboard layout can withhold.
 fn leaves_passthrough(code: KeyCode, ctrl: bool) -> bool {

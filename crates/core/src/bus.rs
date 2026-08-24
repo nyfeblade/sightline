@@ -1,7 +1,7 @@
-//! The event stream: every transition Ironsight detects, as a record anything can
+//! The event stream: every transition Sightline detects, as a record anything can
 //! consume.
 //!
-//! Ironsight already computes each of these — a session going quiet, a prompt
+//! Sightline already computes each of these — a session going quiet, a prompt
 //! appearing, a tool failing — and until now kept them to itself, so anything
 //! wanting to supervise a fleet had to read a screen and guess. Publishing them
 //! turns supervision into consumption.
@@ -42,7 +42,7 @@ pub struct Event {
     pub at: DateTime<Utc>,
     pub session: String,
     pub agent: String,
-    /// the session that started this one, when Ironsight started it
+    /// the session that started this one, when Sightline started it
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
     /// the assignment this session was given, when it has one
@@ -68,9 +68,9 @@ pub enum By {
 pub enum Ended {
     /// the process is gone
     Exited,
-    /// Ironsight closed it, or was asked to
+    /// Sightline closed it, or was asked to
     Closed,
-    /// it stopped being visible and Ironsight cannot say why
+    /// it stopped being visible and Sightline cannot say why
     Lost,
 }
 
@@ -384,7 +384,7 @@ impl Bus {
 /// The right to be the one process writing the journal.
 ///
 /// The event socket already settled this on Unix: whoever bound it owned the
-/// journal, and a second Ironsight found the address in use. Windows has no such
+/// journal, and a second Sightline found the address in use. Windows has no such
 /// socket, so two processes both opened the journal, both numbered events from
 /// their own counter, and `--since` quietly stopped meaning anything.
 ///
@@ -424,7 +424,7 @@ impl PublisherLock {
                 match holder {
                     // A living holder: it is theirs, and this process watches.
                     Some(pid) if pid_alive(pid) => {
-                        Err(format!("another Ironsight (pid {pid}) is publishing"))
+                        Err(format!("another Sightline (pid {pid}) is publishing"))
                     }
                     // A dead holder: genuinely stale, steal it.
                     Some(_) => Self::steal(path),
@@ -444,7 +444,7 @@ impl PublisherLock {
                         if stale {
                             Self::steal(path)
                         } else {
-                            Err("another Ironsight is acquiring the lock".into())
+                            Err("another Sightline is acquiring the lock".into())
                         }
                     }
                 }
@@ -468,7 +468,7 @@ impl PublisherLock {
                 let _ = f.flush();
                 Ok(PublisherLock { path })
             }
-            Err(_) => Err("another Ironsight took the lock first".into()),
+            Err(_) => Err("another Sightline took the lock first".into()),
         }
     }
 }
@@ -544,7 +544,7 @@ impl Journal {
         }
         let written = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
         // Continue the numbering rather than restarting it, so a consumer's
-        // `--since` still means what it meant before Ironsight was restarted.
+        // `--since` still means what it meant before Sightline was restarted.
         let last_seq = last_seq_in(&path);
         let file = std::fs::OpenOptions::new()
             .create(true)
@@ -673,7 +673,7 @@ mod tests {
     }
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("ironsight-bus-{name}"));
+        let dir = std::env::temp_dir().join(format!("sightline-bus-{name}"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("events.jsonl")
@@ -681,7 +681,7 @@ mod tests {
 
     #[test]
     fn only_one_process_may_hold_the_publisher_lock() {
-        let dir = std::env::temp_dir().join("ironsight-lock-one");
+        let dir = std::env::temp_dir().join("sightline-lock-one");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("publisher.lock");
@@ -707,7 +707,7 @@ mod tests {
         // The race: process A created the file but has not written its pid yet.
         // A second acquirer must refuse, not steal — stealing hands the lock to
         // two processes and duplicates sequence numbers.
-        let dir = std::env::temp_dir().join("ironsight-lock-empty");
+        let dir = std::env::temp_dir().join("sightline-lock-empty");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("publisher.lock");
@@ -721,7 +721,7 @@ mod tests {
 
     #[test]
     fn a_lock_left_by_a_dead_process_is_stolen() {
-        let dir = std::env::temp_dir().join("ironsight-lock-stale");
+        let dir = std::env::temp_dir().join("sightline-lock-stale");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("publisher.lock");
@@ -738,7 +738,7 @@ mod tests {
 
     #[test]
     fn a_lock_this_process_did_not_take_is_left_alone_on_drop() {
-        let dir = std::env::temp_dir().join("ironsight-lock-foreign");
+        let dir = std::env::temp_dir().join("sightline-lock-foreign");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("publisher.lock");

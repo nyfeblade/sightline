@@ -10,8 +10,8 @@ usage: demo-fixture.py <dir> [repo-path]
 import json, os, sys, time, uuid
 from datetime import datetime, timedelta, timezone
 
-OUT = sys.argv[1] if len(sys.argv) > 1 else "/tmp/ironsight-fixture"
-REPO = sys.argv[2] if len(sys.argv) > 2 else "/tmp/ironsight-demo-repo"
+OUT = sys.argv[1] if len(sys.argv) > 1 else "/tmp/sightline-fixture"
+REPO = sys.argv[2] if len(sys.argv) > 2 else "/tmp/sightline-demo-repo"
 now = datetime.now(timezone.utc)
 lines_written = {}
 
@@ -130,12 +130,12 @@ recs = [
     prompt(api, cwd, ts(60), "Now add the retry-after header and rerun."),
     call(api, cwd, ts(40), "Bash", {"command": "rm -f target/debug/limiter.tmp"}, "t9"),
 ]
-write("-tmp-ironsight-demo-repo", api, recs)
+write("-tmp-sightline-demo-repo", api, recs)
 
 # ── a session waiting on its human ──────────────────────────────────────────
 web = str(uuid.uuid4())
-wcwd = "/tmp/ironsight-demo-web"
-write("-tmp-ironsight-demo-web", web, [
+wcwd = "/tmp/sightline-demo-web"
+write("-tmp-sightline-demo-web", web, [
     {"type": "ai-title", "sessionId": web, "aiTitle": "Dark mode for the dashboard"},
     prompt(web, wcwd, ts(2400), "Give the dashboard a dark theme that follows the system setting."),
     say(web, wcwd, ts(2380), "Done — the palette now switches on prefers-color-scheme."),
@@ -146,8 +146,8 @@ write("-tmp-ironsight-demo-web", web, [
 
 # ── a finished session ──────────────────────────────────────────────────────
 docs = str(uuid.uuid4())
-dcwd = "/tmp/ironsight-demo-docs"
-write("-tmp-ironsight-demo-docs", docs, [
+dcwd = "/tmp/sightline-demo-docs"
+write("-tmp-sightline-demo-docs", docs, [
     {"type": "ai-title", "sessionId": docs, "aiTitle": "Rewrite the install guide"},
     prompt(docs, dcwd, ts(48000), "Rewrite the install guide for the new packaging."),
     say(docs, dcwd, ts(47900), "Rewritten, with the package manager sections split out."),
@@ -157,16 +157,16 @@ write("-tmp-ironsight-demo-docs", docs, [
 # Titles and ages only: the browser reads the head of each transcript, so this
 # is all it ever looks at.
 HISTORY = [
-    ("Fix flaky checkout test", "-tmp-ironsight-demo-repo", "/tmp/ironsight-demo-repo", 5 * 3600),
-    ("Port the CLI to clap 4", "-tmp-ironsight-demo-repo", "/tmp/ironsight-demo-repo", 26 * 3600),
-    ("Explain the retry budget", "-tmp-ironsight-demo-web", "/tmp/ironsight-demo-web", 3 * 86400),
-    ("Draft the release notes", "-tmp-ironsight-demo-docs", "/tmp/ironsight-demo-docs", 4 * 86400),
-    ("Trim the docker image", "-tmp-ironsight-demo-repo", "/tmp/ironsight-demo-repo", 6 * 86400),
-    ("Audit the auth middleware", "-tmp-ironsight-demo-repo", "/tmp/ironsight-demo-repo", 9 * 86400),
-    ("Why is startup 400ms slower", "-tmp-ironsight-demo-repo", "/tmp/ironsight-demo-repo", 12 * 86400),
-    ("Set up the staging deploy", "-tmp-ironsight-demo-web", "/tmp/ironsight-demo-web", 18 * 86400),
-    ("Write the postmortem", "-tmp-ironsight-demo-docs", "/tmp/ironsight-demo-docs", 25 * 86400),
-    ("First look at the codebase", "-tmp-ironsight-demo-repo", "/tmp/ironsight-demo-repo", 40 * 86400),
+    ("Fix flaky checkout test", "-tmp-sightline-demo-repo", "/tmp/sightline-demo-repo", 5 * 3600),
+    ("Port the CLI to clap 4", "-tmp-sightline-demo-repo", "/tmp/sightline-demo-repo", 26 * 3600),
+    ("Explain the retry budget", "-tmp-sightline-demo-web", "/tmp/sightline-demo-web", 3 * 86400),
+    ("Draft the release notes", "-tmp-sightline-demo-docs", "/tmp/sightline-demo-docs", 4 * 86400),
+    ("Trim the docker image", "-tmp-sightline-demo-repo", "/tmp/sightline-demo-repo", 6 * 86400),
+    ("Audit the auth middleware", "-tmp-sightline-demo-repo", "/tmp/sightline-demo-repo", 9 * 86400),
+    ("Why is startup 400ms slower", "-tmp-sightline-demo-repo", "/tmp/sightline-demo-repo", 12 * 86400),
+    ("Set up the staging deploy", "-tmp-sightline-demo-web", "/tmp/sightline-demo-web", 18 * 86400),
+    ("Write the postmortem", "-tmp-sightline-demo-docs", "/tmp/sightline-demo-docs", 25 * 86400),
+    ("First look at the codebase", "-tmp-sightline-demo-repo", "/tmp/sightline-demo-repo", 40 * 86400),
 ]
 for title, slug, cwd, ago in HISTORY:
     sid = str(uuid.uuid4())

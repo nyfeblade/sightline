@@ -29,27 +29,27 @@ jobs:
       # Only the terminal view: it needs nothing but a compiler, so the same
       # command works on all three. The app is built by the job below, where
       # its dependencies exist.
-      - run: cargo build --release --target ${{ matrix.target }} -p ironsight
+      - run: cargo build --release --target ${{ matrix.target }} -p sightline
       - name: package
         if: runner.os != 'Windows'
         run: |
-          name="ironsight-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          name="sightline-${GITHUB_REF_NAME}-${{ matrix.target }}"
           mkdir -p "$name"
-          cp target/${{ matrix.target }}/release/ironsight README.md LICENSE "$name/"
+          cp target/${{ matrix.target }}/release/sightline README.md LICENSE "$name/"
           tar -czf "$name.tar.gz" "$name"
       - name: package (windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $name = "ironsight-$env:GITHUB_REF_NAME-${{ matrix.target }}"
+          $name = "sightline-$env:GITHUB_REF_NAME-${{ matrix.target }}"
           New-Item -ItemType Directory -Path $name | Out-Null
-          Copy-Item "target/${{ matrix.target }}/release/ironsight.exe", README.md, LICENSE $name
+          Copy-Item "target/${{ matrix.target }}/release/sightline.exe", README.md, LICENSE $name
           Compress-Archive -Path $name -DestinationPath "$name.zip"
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            ironsight-*.tar.gz
-            ironsight-*.zip
+            sightline-*.tar.gz
+            sightline-*.zip
           generate_release_notes: true
 
   app:

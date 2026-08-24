@@ -707,7 +707,7 @@ impl Session {
     /// One line of an Aider record, applied.
     ///
     /// Returns whether the line said anything worth keeping, which is what the
-    /// "how much of this file did Ironsight understand" figure counts.
+    /// "how much of this file did Sightline understand" figure counts.
     ///
     /// The shapes come from `agent::aider`, which was written and tested against
     /// a real run; this is the part that turns them into the same feed, totals
@@ -762,7 +762,7 @@ impl Session {
             }
             Line::Tokens { sent, received } => {
                 // Aider reports per exchange, so these accumulate. It says
-                // nothing about caching that Ironsight could price, which is why
+                // nothing about caching that Sightline could price, which is why
                 // an Aider session shows tokens and no dollars of its own.
                 self.totals.input += sent;
                 self.totals.output += received;
@@ -848,7 +848,7 @@ impl Session {
         s
     }
 
-    /// A session Ironsight holds by pipe, before its transcript exists.
+    /// A session Sightline holds by pipe, before its transcript exists.
     ///
     /// The gap it fills is small but real: between the agent being started and
     /// its first line being written there is a process running, doing work, and
@@ -982,7 +982,7 @@ mod tests {
         // The adapter has always been able to read this file. Until now nothing
         // called it, so an Aider session showed as a bare screen with no
         // conversation, no model and no numbers.
-        let dir = std::env::temp_dir().join(format!("ironsight-aider-read-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("sightline-aider-read-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let found = a_record(&dir);
 
@@ -1049,7 +1049,7 @@ mod tests {
     fn an_aider_session_is_as_recent_as_its_record() {
         // Only the "chat started" line carries a time, so age taken from the
         // events alone would report a session working now as hours old.
-        let dir = std::env::temp_dir().join(format!("ironsight-aider-age-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("sightline-aider-age-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let found = a_record(&dir);
         let mut session = Session::aider(&found);

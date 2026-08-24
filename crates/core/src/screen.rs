@@ -3,7 +3,7 @@
 //! The terminal view can simply show a session's own drawing, because it is a
 //! terminal. A window is not, so the screen has to be taken apart first: what
 //! character is in each cell, what colour it is, where the cursor sits. That is
-//! what a terminal emulator does, and Ironsight already carries one for the sessions
+//! what a terminal emulator does, and Sightline already carries one for the sessions
 //! it hosts itself, so the same parser is pointed at tmux's rendering too.
 //!
 //! Colours come out as CSS. The first sixteen are named rather than resolved —
@@ -48,7 +48,7 @@ pub struct Frame {
     pub cursor: (u16, u16),
     pub cursor_visible: bool,
     pub lines: Vec<Vec<Run>>,
-    /// Terminals attached to this session other than Ironsight.
+    /// Terminals attached to this session other than Sightline.
     ///
     /// It decides who owns the size. A session nobody is sitting in can be
     /// reshaped to fit a window; one that a person is watching in their own

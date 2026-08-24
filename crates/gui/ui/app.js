@@ -810,7 +810,7 @@ function applyEvent(ev) {
   const s = sessions.find((x) => x.id === ev.session);
   const k = ev.kind;
   if (!s) {
-    // Something Ironsight has not told us about yet. Only a new session is
+    // Something Sightline has not told us about yet. Only a new session is
     // worth a round trip; anything else will be right at the next correction.
     if (k.type === "sessionStarted") draw();
     return;
@@ -882,7 +882,7 @@ async function startStream() {
     say(String(e));
   }
   // Pushed from the engine the moment it happens. Nothing here polls.
-  window.__TAURI__.event.listen("ironsight://event", (msg) => pushEvent(msg.payload));
+  window.__TAURI__.event.listen("sightline://event", (msg) => pushEvent(msg.payload));
 }
 
 function drawStream() {
@@ -997,7 +997,7 @@ async function drawWork() {
     fact(
       w.hasCeilings,
       w.hasCeilings
-        ? `${w.running} of Ironsight's own running now`
+        ? `${w.running} of Sightline's own running now`
         : "a chief will not start without one",
     );
 
@@ -1689,7 +1689,7 @@ function drawDetail(s) {
   });
   if (s.steerable) {
     // Opening a session in its own window means handing over a terminal, and a
-    // session Ironsight holds by pipe has none. It can still be talked to,
+    // session Sightline holds by pipe has none. It can still be talked to,
     // renamed and closed — everything below — so only this one is withheld.
     if (s.terminal) {
       action(actions, "Window", "ghost", async () => {
@@ -1748,7 +1748,7 @@ function drawDetail(s) {
     });
   }
   // Offered for every row, steerable or not. Closing and removing are different
-  // things, and a session Ironsight only watches cannot be closed at all — so
+  // things, and a session Sightline only watches cannot be closed at all — so
   // withholding this left rows that could not be got rid of. The conversation is
   // untouched either way: Resume still finds it.
   action(actions, "Remove from list", "ghost", async () => {
@@ -2211,7 +2211,7 @@ async function drawMenu() {
     grid.append(button);
   };
   item("Broadcast…", "say one thing to every session", async () => {
-    const text = await ask("Send to every session Ironsight can reach:");
+    const text = await ask("Send to every session Sightline can reach:");
     if (text) say(`sent to ${await invoke("broadcast", { text })} sessions`);
   });
   item("Launch the fleet", "start everything the fleet file describes", async () => {
@@ -2234,7 +2234,7 @@ async function drawMenu() {
       say(`put ${await invoke("restore_removed")} session(s) back`);
     });
   }
-  item("Close everything", "every session Ironsight started", async () => {
+  item("Close everything", "every session Sightline started", async () => {
     const closed = await invoke("close_all");
     say(`closed ${closed.length} — each reopens from Resume`);
   });

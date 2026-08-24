@@ -21,10 +21,10 @@ pub struct Live {
 }
 
 impl Live {
-    /// The same answer for a session Ironsight holds itself.
+    /// The same answer for a session Sightline holds itself.
     ///
     /// A session driven over pipes never writes a registry entry — there is no
-    /// terminal for it to register from — so Ironsight is the only thing that
+    /// terminal for it to register from — so Sightline is the only thing that
     /// knows it is running. Saying so in the registry's own shape means every
     /// judgement downstream (is it working, is it waiting, has it ended) is
     /// made by the same code for both kinds.

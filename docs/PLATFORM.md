@@ -1,6 +1,6 @@
-# Where Ironsight is going
+# Where Sightline is going
 
-Ironsight today is a way to watch and steer the coding agents running on your
+Sightline today is a way to watch and steer the coding agents running on your
 machine. This document is about what it could become, why the shape of it
 matters, and — more usefully — which parts already exist, which are ordinary
 work, and which are guesses that have not been tested yet.
@@ -39,7 +39,7 @@ if this is the top layer. If there is no answer, it is not a layer — it is a
 feature of the layer below, pretending.
 
 This is also the failure plan. Everything here reads artifacts that other
-projects do not document, and those change. A well-layered Ironsight that loses its
+projects do not document, and those change. A well-layered Sightline that loses its
 transcript reader still watches, steers and isolates sessions. A monolith loses
 everything at once.
 
@@ -48,12 +48,12 @@ everything at once.
 Status: exists, in use daily.
 
 A session is discovered, watched, and driven through the terminal it runs in:
-tmux on Unix, a pseudo-console Ironsight owns on Windows. From that come the things
+tmux on Unix, a pseudo-console Sightline owns on Windows. From that come the things
 everything else needs.
 
 - Sessions: discovery, status, selection, an order you choose and that persists
 - Terminals: the live screen as cells with colour and a caret, keys forwarded
-  back, one key that always returns to Ironsight
+  back, one key that always returns to Sightline
 - Transcripts: what was said, what was called, what it returned, what failed
 - Permissions: prompts read off the screen and answered in the shape each agent
   expects — a number for Claude Code, a letter for Aider
@@ -71,7 +71,7 @@ holds logic the other lacks.
 
 Status: exists as of the first fixtures in `crates/core/tests/`.
 
-Everything Ironsight knows comes from files nobody documents. When one changes, the
+Everything Sightline knows comes from files nobody documents. When one changes, the
 failure is quiet: a status that reads wrong, a prompt nobody is told about, a
 cost of zero.
 
@@ -80,7 +80,7 @@ name what moved rather than merely failing — the registry no longer carries
 `procStart`, the prompt is no longer answered by number, the token line is no
 longer written after each exchange.
 
-This comes before anything else builds on Ironsight. Without it, an ecosystem is a
+This comes before anything else builds on Sightline. Without it, an ecosystem is a
 pile of other people's code that breaks in unison and blames the wrong thing.
 
 Product if this is the top layer: a tool that tells you the moment your agent's
@@ -90,7 +90,7 @@ own format changes, which is worth having on its own.
 
 Status: built. See `PHASE1.md` for what it is and what it cost.
 
-Ironsight already computes every transition worth naming; it simply keeps them to
+Sightline already computes every transition worth naming; it simply keeps them to
 itself. Making them a versioned stream turns supervision from screen-scraping
 into consumption.
 
@@ -157,13 +157,13 @@ deliberately mechanical: no judgement, no review of quality, nothing that
 requires another model's opinion.
 
     Agent:      done
-    Ironsight:  build failed, 2 tests failing
+    Sightline:  build failed, 2 tests failing
     task state: not done
 
 The trap is the other direction, and it is worse:
 
     Agent:      done
-    Ironsight:  everything passed
+    Sightline:  everything passed
     task state: still not done
 
 Checks can only refuse. A passing suite says the failures it can express did not
@@ -183,8 +183,8 @@ most useful single feature on this list and needs no organisation above it.
 
 ## Layer 5 — intent
 
-Status: built. A project constitution (`.ironsight/constitution.md`) parsed into
-fixed sections, and `ironsight brief` renders a task-focused packet from it — the
+Status: built. A project constitution (`.sightline/constitution.md`) parsed into
+fixed sections, and `sightline brief` renders a task-focused packet from it — the
 constraints that bear on the task, what done means, and when to escalate.
 
 Two artifacts, both plain files, both readable and editable by a person.
@@ -209,9 +209,9 @@ yourself, and decisions that stop being re-litigated every morning.
 
 ## Layer 6 — supervision and planning
 
-Status: built. The foreman exists as a program — `ironsight foreman` watches for
+Status: built. The foreman exists as a program — `sightline foreman` watches for
 claimed work and runs its checks and refutations, refusing what does not pass.
-`ironsight chief` turns a paragraph of intent into assignments, and cannot
+`sightline chief` turns a paragraph of intent into assignments, and cannot
 exceed the ceilings `limits.rs` holds it to. Neither has been lived with; that
 is Layer 7's job, and it is the only honest next step.
 
@@ -227,9 +227,9 @@ decomposition, and which decisions are too consequential to make alone. It
 converts a paragraph from a human into assignments, and converts results back
 into a report a human can act on.
 
-Neither needs a new runtime. A chief is a session with Ironsight on its path and a
-brief; the recursion falls out — a chief is a session Ironsight manages, managing
-sessions Ironsight manages.
+Neither needs a new runtime. A chief is a session with Sightline on its path and a
+brief; the recursion falls out — a chief is a session Sightline manages, managing
+sessions Sightline manages.
 
 Constraints that are not optional:
 
@@ -263,11 +263,11 @@ session costs roughly 450MB of resident memory, so twenty is nine gigabytes
 before compilers, test runners and databases. A hundred agents is a
 fleet-of-machines problem and a different product.
 
-## What Ironsight does not become
+## What Sightline does not become
 
-- An agent. Ironsight runs other people's agents and does not compete with them.
+- An agent. Sightline runs other people's agents and does not compete with them.
 - A model provider. Whatever you are already authenticated as is what runs;
-  Ironsight never handles a key.
+  Sightline never handles a key.
 - A monolith. Capability grows through layers and adapters, not by adding
   features to the core.
 - A judge of quality. It can tell you the tests passed. It cannot tell you the
@@ -313,7 +313,7 @@ failed, however good its code is.
 
 Terms of use are real. Model subscriptions are for a person working
 interactively. A fleet running continuously belongs on API keys or local models,
-with the cost visibility Ironsight already provides.
+with the cost visibility Sightline already provides.
 
 ## Sequence
 
@@ -326,6 +326,6 @@ with the cost visibility Ironsight already provides.
     7  measure, honestly             a fortnight of real use
     8  organisations                 only with evidence from 7
 
-Every step before 6 improves Ironsight for someone who never builds an organisation
+Every step before 6 improves Sightline for someone who never builds an organisation
 at all. That is the property to protect: add a layer and it gets better, remove
 one and what remains is still a thing worth running.

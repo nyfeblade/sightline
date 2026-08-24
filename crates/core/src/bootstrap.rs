@@ -1,10 +1,10 @@
-//! What has to be true before Ironsight can do anything, and putting it right
+//! What has to be true before Sightline can do anything, and putting it right
 //! where that is possible.
 //!
 //! In a terminal the answer to a missing tool is an error message and a person
 //! who knows what to do with it. An app launched from a dock has neither: the
 //! window opens, nothing works, and there is nowhere for the reason to go. So
-//! the state of the world is a thing Ironsight can be asked about, in the same
+//! the state of the world is a thing Sightline can be asked about, in the same
 //! shape whichever front end is asking — is this present, what does it mean if
 //! it is not, and what exactly should be typed to fix it.
 
@@ -36,7 +36,7 @@ pub struct Check {
 pub struct Probes {
     pub claude: Option<PathBuf>,
     pub multiplexer: bool,
-    /// Ironsight hosts its own sessions and needs no multiplexer
+    /// Sightline hosts its own sessions and needs no multiplexer
     pub hosts_own_sessions: bool,
     pub transcripts: bool,
     pub terminal: Option<String>,
@@ -60,7 +60,7 @@ pub fn assess(p: &Probes) -> Vec<Check> {
             name: "Claude Code",
             ok: false,
             weight: Weight::Required,
-            detail: "not on PATH — Ironsight watches and steers it, so there is \
+            detail: "not on PATH — Sightline watches and steers it, so there is \
                      nothing to do without it"
                 .into(),
             fix: Some("curl -fsSL https://claude.ai/install.sh | bash".into()),
@@ -73,7 +73,7 @@ pub fn assess(p: &Probes) -> Vec<Check> {
             ok: p.multiplexer,
             weight: Weight::Required,
             detail: if p.multiplexer {
-                "sessions are held by tmux, so they outlive Ironsight".into()
+                "sessions are held by tmux, so they outlive Sightline".into()
             } else {
                 "sessions can be watched but not started or typed into".into()
             },
@@ -84,7 +84,7 @@ pub fn assess(p: &Probes) -> Vec<Check> {
             },
         });
     } else {
-        // Held by Ironsight itself — its own process, or the daemon. Nothing to
+        // Held by Sightline itself — its own process, or the daemon. Nothing to
         // install; say which, so `doctor` accounts for every backend rather
         // than falling silent for the two it did not used to know about.
         let daemon = crate::control::backend() == crate::control::Backend::Daemon;
@@ -93,7 +93,7 @@ pub fn assess(p: &Probes) -> Vec<Check> {
             ok: true,
             weight: Weight::Required,
             detail: if daemon {
-                "held by an Ironsight daemon, so they outlive every window".into()
+                "held by an Sightline daemon, so they outlive every window".into()
             } else {
                 "held by this process — they end when it does".into()
             },
@@ -120,7 +120,7 @@ pub fn assess(p: &Probes) -> Vec<Check> {
             weight: Weight::Optional,
             detail: match &p.terminal {
                 Some(t) => format!("{t} — sessions can be opened in their own window"),
-                None => "none found — sessions open inside Ironsight instead".into(),
+                None => "none found — sessions open inside Sightline instead".into(),
             },
             fix: None,
         });

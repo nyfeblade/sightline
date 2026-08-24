@@ -1,8 +1,8 @@
-# Ironsight
+# Sightline
 
 **Never miss the Claude Code session that is waiting on you.**
 
-![Ironsight](docs/demo.gif)
+![Sightline](docs/demo.gif)
 
 The same thing as a desktop app, for anyone who would rather click than type:
 
@@ -10,7 +10,7 @@ The same thing as a desktop app, for anyone who would rather click than type:
 
 Run three or four Claude Code sessions at once and the bottleneck is never the
 model — it is the session sitting on a permission prompt in a window you are not
-looking at. Ironsight watches every session on the machine, puts the blocked one at
+looking at. Sightline watches every session on the machine, puts the blocked one at
 the top, and lets you answer it without leaving the window. Then, when you want
 the detail, it has everything the transcripts know: every file touched, every
 diff, every subagent, every error.
@@ -20,25 +20,25 @@ No hooks to install, no server, no configuration, nothing leaves the machine.
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/nyfeblade/ironsight/master/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/nyfeblade/sightline/master/install.sh | sh
 ```
 
 Or, if you would rather not pipe a script into a shell — it is short, read it
-first — grab a binary from [releases](https://github.com/nyfeblade/ironsight/releases),
+first — grab a binary from [releases](https://github.com/nyfeblade/sightline/releases),
 or build it:
 
 ```sh
-cargo install --git https://github.com/nyfeblade/ironsight
+cargo install --git https://github.com/nyfeblade/sightline
 ```
 
 As a desktop app on Linux, one file, nothing installed:
 
 ```sh
-scripts/appimage.sh            # builds dist/ironsight-<version>-x86_64.AppImage
+scripts/appimage.sh            # builds dist/sightline-<version>-x86_64.AppImage
 ```
 
 Clicking it opens the app. Arguments go to the commands, so
-`./ironsight-0.4.1-x86_64.AppImage doctor` works from the same file.
+`./sightline-0.4.1-x86_64.AppImage doctor` works from the same file.
 `scripts/desktop-entry.sh` puts it in your application menu instead, if you
 would rather run it from a checkout. The app needs webkit2gtk on the host, which
 a normal desktop already has.
@@ -46,18 +46,18 @@ a normal desktop already has.
 On Windows:
 
 ```powershell
-irm https://raw.githubusercontent.com/nyfeblade/ironsight/master/install.ps1 | iex
+irm https://raw.githubusercontent.com/nyfeblade/sightline/master/install.ps1 | iex
 ```
 
-Then run `ironsight-gui` for the window, or `ironsight` for the commands. Linux,
+Then run `sightline-gui` for the window, or `sightline` for the commands. Linux,
 macOS and Windows. On Linux and macOS tmux is optional, and only needed to steer
 sessions rather than watch them.
 
 ### What runs where
 
 The commands run on all three. Linux and macOS steer sessions through
-tmux, so a session outlives Ironsight; Windows has no tmux, so Ironsight hosts the
-session itself and it ends when Ironsight does.
+tmux, so a session outlives Sightline; Windows has no tmux, so Sightline hosts the
+session itself and it ends when Sightline does.
 
 The desktop app is built and tested on Linux. It compiles for macOS and Windows
 and the bundle knows how to make a `.app`, a `.dmg` and an installer, but no
@@ -76,7 +76,7 @@ inventing a number several times too large.
 ![approvals](docs/approvals.png)
 
 A session blocked on a prompt is the only state that cannot make progress on its
-own, so Ironsight treats it as the most important thing on screen: blocked sessions
+own, so Sightline treats it as the most important thing on screen: blocked sessions
 sort to the top, the header counts them, and the question with its options
 appears at the bottom of the window wherever you are.
 
@@ -92,19 +92,19 @@ on internals that can change.
 From a script, without opening the UI:
 
 ```sh
-ironsight waiting              # what is blocked, and what it is asking
-ironsight approve api-7c       # answer it (option 1 by default)
-ironsight adopt nyfe-32        # (re)open a conversation in tmux so it can be steered
-ironsight prune                # close Ironsight sessions whose process has exited
-ironsight owned                # the sessions Ironsight is holding itself
-ironsight hidden --ended       # take every finished session off the list
-ironsight invariants           # try to break what must never stop being true
-ironsight limits               # what a fleet here may do, and where you stand
+sightline waiting              # what is blocked, and what it is asking
+sightline approve api-7c       # answer it (option 1 by default)
+sightline adopt nyfe-32        # (re)open a conversation in tmux so it can be steered
+sightline prune                # close Sightline sessions whose process has exited
+sightline owned                # the sessions Sightline is holding itself
+sightline hidden --ended       # take every finished session off the list
+sightline invariants           # try to break what must never stop being true
+sightline limits               # what a fleet here may do, and where you stand
 ```
 
 ## Managing sessions
 
-Press `enter` on a session and Ironsight shows everything you can do to it, with the
+Press `enter` on a session and Sightline shows everything you can do to it, with the
 reason spelled out for anything it cannot do — so nothing has to be memorised
 and no key is a dead end.
 
@@ -127,21 +127,21 @@ same actions have direct keys once you know them:
 | `R` | resume any conversation on this machine, however old |
 | `W` | start one on its own branch in its own checkout |
 | `M` `X` | merge that branch back · remove the checkout |
-| `x` `P` | close the session · tidy up finished Ironsight sessions |
+| `x` `P` | close the session · tidy up finished Sightline sessions |
 | `F2` | rename the selected session |
-| `Z` | close everything Ironsight started (each one reopens with `A`) |
+| `Z` | close everything Sightline started (each one reopens with `A`) |
 | `L` | launch a whole fleet from a config file |
 
-`F12` always means back to Ironsight: out of passthrough, out of a session shown
+`F12` always means back to Sightline: out of passthrough, out of a session shown
 full-screen, and out of one opened in its own window. The session's own status
 line says so while you are in it. tmux's prefix-then-letter still works, but
 knowing tmux should not be the price of looking at a session.
 
-The key is held for as long as Ironsight is running and given back when it exits,
+The key is held for as long as Sightline is running and given back when it exits,
 and it is only taken when nothing else has it — tmux key tables belong to the
-whole server, so a key you have already bound stays yours and Ironsight tells you
+whole server, so a key you have already bound stays yours and Sightline tells you
 the tmux way instead. If something outside tmux eats F12 first, which a
-drop-down terminal often does, name another one: `IRONSIGHT_WAY_BACK=F9 Ironsight`.
+drop-down terminal often does, name another one: `SIGHTLINE_WAY_BACK=F9 Sightline`.
 
 Sessions started outside tmux are fully visible but cannot be typed into; they
 are marked, so it is always clear which is which. `A` moves one: it resumes the
@@ -155,7 +155,7 @@ disappears — `O` does the same for any session on demand.
 The session list is a window on now — what is running, and what ran recently
 enough to still matter. `R` answers the other question: every conversation on
 this machine, whenever it happened. Type to filter across titles and folders,
-`enter` brings one back inside Ironsight, and the ones already open are marked so
+`enter` brings one back inside Sightline, and the ones already open are marked so
 you do not start a second client on the same conversation.
 
 ![resume](docs/resume.png)
@@ -175,7 +175,7 @@ own worktree.
 
 ### Other agents
 
-Claude Code is what Ironsight grew around, and everything it knows about a session's
+Claude Code is what Sightline grew around, and everything it knows about a session's
 insides — the feed, files, cost, subagents, plans — comes from the transcript
 and registry that only Claude Code writes. What generalises is the part that made
 steering work at all: a session is a program in a terminal, and a terminal can be
@@ -192,13 +192,13 @@ you empty ones.
 ```
 
 Aider is the one that keeps its record somewhere else — `.aider.chat.history.md`,
-beside the code rather than in a central store — and Ironsight reads it, so an
+beside the code rather than in a central store — and Sightline reads it, so an
 Aider session shows what was asked, what came back, its model and what it cost,
 the same as any other.
 
 ### Directing work, not just watching it
 
-Ironsight has two faces, and the Work tab in the app is the other one.
+Sightline has two faces, and the Work tab in the app is the other one.
 
 The one you know is monitoring: what is running, what it is doing, what it is
 asking. The other is workflow, and it answers the question you have when you are
@@ -214,21 +214,21 @@ fill in. It says it is a guess, because it is. It never overwrites anything you
 already wrote, and it only approves the checks when it wrote them itself — a
 checks file that arrived with somebody else's code still has to be read.
 
-Then `c` hands work to a chief: a session with Ironsight on its path, a brief
+Then `c` hands work to a chief: a session with Sightline on its path, a brief
 drawn from your constitution, and a ceiling it cannot raise. It appears in the
 session list like anything else, and you watch it work in the Talk view.
 
-    ironsight chief <what>   hand work to a chief
-    ironsight limits          ceilings — what a fleet here may run and spend
-    ironsight invariants      what must never stop being true here
+    sightline chief <what>   hand work to a chief
+    sightline limits          ceilings — what a fleet here may run and spend
+    sightline invariants      what must never stop being true here
 
-Ceilings are not optional for a chief, and that is the one place Ironsight
+Ceilings are not optional for a chief, and that is the one place Sightline
 insists: something that starts sessions on your behalf does not start without a
 number it cannot change.
 
 ### Reconciling a fork
 
-If you have forked this and customised it, `ironsight glue <version>` brings your
+If you have forked this and customised it, `sightline glue <version>` brings your
 fork onto a newer release without you doing the merge. It ships an ability —
 upstream's own account of the layers, the seams a customisation is meant to live
 in, and the invariants that must survive — installs it into your fork, and
@@ -236,8 +236,8 @@ briefs your own agent, which already knows your fork, to write the adapters in a
 worktree of its own.
 
 ```sh
-ironsight glue --install     # teach your agent, and stop there
-ironsight glue v0.5.0        # reconcile onto that release
+sightline glue --install     # teach your agent, and stop there
+sightline glue v0.5.0        # reconcile onto that release
 ```
 
 It does not decide the merge worked. The bar is the same as everywhere else
@@ -251,23 +251,23 @@ handles badly:
 docs/demo/glue/run.sh
 ```
 
-### Sessions Ironsight holds itself
+### Sessions Sightline holds itself
 
-Everything above watches a session running in a terminal. Ironsight can also
+Everything above watches a session running in a terminal. Sightline can also
 *hold* one: started by it, spoken to over Claude Code's structured JSON, with no
 terminal in the way.
 
 ```sh
-ironsight new ~/api --owned --task "make the auth tests pass"
-ironsight owned                     # what is held, and what each is doing
-ironsight send owned-1 "try the other approach"
-ironsight stop owned-1
+sightline new ~/api --owned --task "make the auth tests pass"
+sightline owned                     # what is held, and what each is doing
+sightline send owned-1 "try the other approach"
+sightline stop owned-1
 ```
 
 It is a session like any other — it appears in the list, it has a feed and files
 and a cost, you talk to it in the window, and `--task` briefs it from the
 project's constitution as its opening message. Two differences are worth knowing.
-It outlives every window, because a process of Ironsight's own is holding it
+It outlives every window, because a process of Sightline's own is holding it
 rather than a terminal. And nothing can be asked of it mid-run: Claude Code in
 this mode refuses a tool its settings do not allow rather than prompting, so what
 it may do is settled when it starts, with the same `--permission-mode` a terminal
@@ -283,7 +283,7 @@ command. `enter` skips.
 
 `F2` renames the selected session. A running one is asked to rename itself —
 `/rename` is a real command, so its own header, the registry and the transcript
-all stay in step. One that has stopped has nobody to ask, so Ironsight writes the
+all stay in step. One that has stopped has nobody to ask, so Sightline writes the
 same record Claude Code writes, and the name is there when the conversation is
 reopened.
 
@@ -295,32 +295,32 @@ a turn in flight, and that is the only case that asks twice.
 
 `A` is also the way back into a session that has stopped, whether you stopped it,
 it crashed, or its terminal closed: the transcript is on disk, so it reopens in
-tmux with its history and picks up where it left off. Anything Ironsight can see it
+tmux with its history and picks up where it left off. Anything Sightline can see it
 can get back to.
 
 Because of that, nothing is closed on a guess. `P` tidies up only sessions with
 no Claude Code process left anywhere in them — a pane sitting at a shell prompt
 while a command runs below it is still working, and closing it would throw away a
-turn nobody asked to end. When Ironsight cannot tell, it leaves the session alone and
+turn nobody asked to end. When Sightline cannot tell, it leaves the session alone and
 says so.
 
 ### On Windows
 
 Windows has no tmux, and no way to reach into a console another program owns, so
-Ironsight is the terminal there: `n` starts Claude Code on a pseudo-console Ironsight
+Sightline is the terminal there: `n` starts Claude Code on a pseudo-console Sightline
 owns, and everything else — send, queue, interrupt, passthrough, approvals, the
-mirror — works the same way it does on Unix, against the screen Ironsight keeps of
+mirror — works the same way it does on Unix, against the screen Sightline keeps of
 what the session drew.
 
 Two differences follow from that, and both are visible in the UI rather than
 hidden:
 
-- Ironsight can only steer sessions it started. One started in another window is
-  still watched in full; `A` reopens that conversation inside Ironsight, which is
+- Sightline can only steer sessions it started. One started in another window is
+  still watched in full; `A` reopens that conversation inside Sightline, which is
   the way to take control of it.
-- A hosted session ends when Ironsight does, because Ironsight is holding it. `q` says
+- A hosted session ends when Sightline does, because Sightline is holding it. `q` says
   how many would stop and waits for a second `q`, and `A` brings any of them
-  back afterwards. On Unix tmux holds the session instead, so it outlives Ironsight.
+  back afterwards. On Unix tmux holds the session instead, so it outlives Sightline.
 
 `a` shows a session full-screen: on Unix by attaching to tmux, on Windows by
 drawing the mirror with every key going to the session — `ctrl+]` or `F12`
@@ -333,14 +333,14 @@ session on a fresh branch in its own git worktree, so each edits its own files
 and commits its own history while your working tree stays untouched. The tree
 pane shows how far ahead the branch is, `M` merges it back with `--no-ff`, `X`
 removes the checkout. Worktrees live under
-`~/.local/share/ironsight/worktrees/`, well away from the repository.
+`~/.local/share/sightline/worktrees/`, well away from the repository.
 
 Merging refuses rather than guesses: if the repository is not on the base branch
 it says so and does nothing, and a conflict is reported for you to resolve.
 
 ### Fleets
 
-`~/.config/ironsight/fleet.json` describes sessions to start together, and `L`
+`~/.config/sightline/fleet.json` describes sessions to start together, and `L`
 launches all of them:
 
 ```json
@@ -416,17 +416,17 @@ Two files Claude Code already writes.
 `CLAUDE_CONFIG_DIR` is honoured; `--root` points at transcripts anywhere.
 
 Steering needs the terminal the session is in, and that is the one part with two
-implementations: tmux on Unix, a pseudo-console Ironsight owns on Windows. Both
+implementations: tmux on Unix, a pseudo-console Sightline owns on Windows. Both
 answer the same two questions — what is on this session's screen, and take this
 key — so everything above them is written once.
 
-Both formats are Claude Code's own and undocumented, so they can change. Ironsight
+Both formats are Claude Code's own and undocumented, so they can change. Sightline
 parses defensively and says so in the footer when it meets a version it was not
 built against or a transcript it cannot read, rather than quietly showing
 figures that are wrong. It was built against Claude Code 2.1.x.
 
 Read that as the maintenance promise it is: a Claude Code release can move a
-field, rename a status or redraw a prompt, and when that happens Ironsight loses a
+field, rename a status or redraw a prompt, and when that happens Sightline loses a
 detail — a status that reads wrong, a prompt it no longer recognises — rather
 than inventing one. If you meet that, open an issue with your Claude Code
 version; the fix is usually a few lines. The same is true of the pane reading
@@ -435,10 +435,10 @@ drawn on screen.
 
 ## The app
 
-The desktop app is the interface, and `ironsight` is the same engine reached from
+The desktop app is the interface, and `sightline` is the same engine reached from
 a shell. Opening the app starts whatever holds sessions — the tmux server on Unix — before the
 window is drawn, so the first thing you click does not wait for it, and it says
-plainly what is missing rather than failing quietly: `ironsight doctor` prints the
+plainly what is missing rather than failing quietly: `sightline doctor` prints the
 same checks in a terminal.
 
 Neither front end is allowed to grow logic the other needs. `crates/core` holds
@@ -448,7 +448,7 @@ conversation is one implementation with two callers.
 
 ## Where it is going
 
-`docs/PLATFORM.md` describes the layers Ironsight could grow — events, lineage,
+`docs/PLATFORM.md` describes the layers Sightline could grow — events, lineage,
 verification, briefing, supervision — what already exists, and the rule that
 keeps each one useful on its own. `docs/BUILD.md` is the working spec for each:
 what it does, where it lives, and what would have to be true for it to count as

@@ -9,10 +9,10 @@
 //! An example rather than a test, because it needs a logged-in Claude Code and
 //! spends quota. Same class as `docs/probes/`.
 //!
-//!     cargo run -p ironsight-core --example gate_live
+//!     cargo run -p sightline-core --example gate_live
 
-use ironsight_core::gate::Policy;
-use ironsight_core::owned::{self, Spec};
+use sightline_core::gate::Policy;
+use sightline_core::owned::{self, Spec};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -21,7 +21,7 @@ fn main() {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let base = std::env::temp_dir().join(format!("ironsight-gate-live-{stamp}"));
+    let base = std::env::temp_dir().join(format!("sightline-gate-live-{stamp}"));
     let root = base.join("worktree");
     let elsewhere = base.join("main-checkout");
     for d in [&root.join("src"), &elsewhere.join("src")] {
@@ -51,7 +51,7 @@ fn main() {
     let spec = Spec {
         model: None,
         // No permission mode: everything asks, so everything reaches the gate.
-        // With acceptEdits the writes would be approved before Ironsight saw
+        // With acceptEdits the writes would be approved before Sightline saw
         // them, and the boundary would be quietly bypassed for exactly the calls
         // it exists to judge.
         mode: None,
@@ -87,10 +87,10 @@ fn main() {
     let (events, _) = owned::drain();
     let mut seen: Vec<String> = Vec::new();
     for ev in &events {
-        if let ironsight_core::bus::Kind::PermissionAnswered { option, by } = &ev.kind {
+        if let sightline_core::bus::Kind::PermissionAnswered { option, by } = &ev.kind {
             let who = match by {
-                ironsight_core::bus::By::Policy { name } => name.clone(),
-                ironsight_core::bus::By::Human => "human".into(),
+                sightline_core::bus::By::Policy { name } => name.clone(),
+                sightline_core::bus::By::Human => "human".into(),
             };
             seen.push(format!("{option} [{who}]"));
         }

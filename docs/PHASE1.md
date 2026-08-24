@@ -65,13 +65,13 @@ Neither was in the plan. Both came from watching it work and finding it wrong.
 One publisher at a time, and the socket settles it. Sequence numbers are what
 make `--since` mean anything, and two processes journalling from their own
 counters would produce two events numbered 12. So publishing is exclusive:
-whoever binds the socket owns the journal, and a second Ironsight keeps its own
+whoever binds the socket owns the journal, and a second Sightline keeps its own
 state, publishes only to itself, and says so. This is also why `assign` and
 `tasks` load the store without touching the stream — a short command has no
 business taking the stream from the window you have open.
 
-The store is shared, so it is re-read. `ironsight assign` is a separate process.
-The Ironsight holding the stream would otherwise stamp every event with lineage
+The store is shared, so it is re-read. `sightline assign` is a separate process.
+The Sightline holding the stream would otherwise stamp every event with lineage
 it read at startup, and an assignment made a minute ago would never appear. The
 store notices the file changing underneath it, writes its own pending work
 first, and otherwise takes what is there. Two processes editing the same task in
@@ -79,8 +79,8 @@ the same second is a race this does not resolve; a lock file would, and nothing
 yet justifies one.
 
 A third thing, which was in the plan but only became concrete in use: a session
-Ironsight starts has no id of its own until it writes its first transcript
-record, so an assignment given at `ironsight new --task` is filed against its
+Sightline starts has no id of its own until it writes its first transcript
+record, so an assignment given at `sightline new --task` is filed against its
 pane. When the session becomes itself, its records move with it. Without that,
 every assignment given at the moment of starting would be orphaned minutes
 later — which is precisely when assignments are most likely to be given.
@@ -89,7 +89,7 @@ later — which is precisely when assignments are most likely to be given.
 
 ### The event bus — `crates/core/src/bus.rs`
 
-Every transition Ironsight already detects becomes a record anything can consume,
+Every transition Sightline already detects becomes a record anything can consume,
 so supervision never has to scrape a screen.
 
     Event { version, seq, at, session, agent, parent, task, kind }
@@ -120,17 +120,17 @@ one.
 
 ### The journal — `crates/core/src/bus.rs`
 
-Events are appended to `~/.local/share/ironsight/events.jsonl`, one JSON object
+Events are appended to `~/.local/share/sightline/events.jsonl`, one JSON object
 per line, capped and rotated so it cannot grow without limit. Replay reads from
 a sequence number, which is what lets a consumer restart without a gap.
 
 ### The gateway — `crates/core/src/gateway.rs`
 
-A Unix domain socket at `~/.local/share/ironsight/events.sock`. Every connected
+A Unix domain socket at `~/.local/share/sightline/events.sock`. Every connected
 client is written the same line the journal receives. Clients are dropped on
 write failure and never block the engine. Windows has no equivalent in the
 standard library, so there the stream is available in-process and through
-`ironsight events`, and the socket is absent rather than faked.
+`sightline events`, and the socket is absent rather than faked.
 
 ### The work store — `crates/core/src/work.rs`
 
@@ -145,16 +145,16 @@ its own and never the second. Phase 2 owns that transition.
 
 Lineage is recorded when one session starts another, which turns a flat list
 into a tree and lets cost roll up it. Records persist to
-`~/.local/share/ironsight/work.json` and survive a restart.
+`~/.local/share/sightline/work.json` and survive a restart.
 
 ### Reaching it from outside
 
-    ironsight events                 follow the stream
-    ironsight events --since <seq>   replay from a point
-    ironsight events --json          one object per line, for piping
-    ironsight tasks                  what exists, and in what state
-    ironsight assign <session> ...   give a session an assignment
-    ironsight note <id> <text>       append what was learned
+    sightline events                 follow the stream
+    sightline events --since <seq>   replay from a point
+    sightline events --json          one object per line, for piping
+    sightline tasks                  what exists, and in what state
+    sightline assign <session> ...   give a session an assignment
+    sightline note <id> <text>       append what was learned
 
 ## How it is proved
 
@@ -169,7 +169,7 @@ Compatibility. `crates/core/tests/compatibility.rs` gains a case that reads the
 Claude transcript fixture and asserts the events it yields, so a format change
 fails here first rather than as a wrong number in the interface.
 
-Live. A real session started under Ironsight, with `ironsight events` beside it:
+Live. A real session started under Sightline, with `sightline events` beside it:
 `SessionStarted`, `SessionWorking`, `ToolCalled`, `CostSpent` and
 `SessionWaiting` arrive in order. The subscriber is killed mid-stream and the
 engine is unaffected.
@@ -187,7 +187,7 @@ that knows.
 Assignments made from the command line never reached the stream. See above: the
 store is now re-read.
 
-`ironsight assign` could not run while Ironsight was open. It tried to take the
+`sightline assign` could not run while Sightline was open. It tried to take the
 socket. Publishing and state are now separate things to ask for.
 
 A consumer starting in the same second as the publisher raced it to the socket
@@ -195,7 +195,7 @@ and failed outright. It now falls back to following the publisher that won.
 
 ## Done when
 
-`ironsight events` prints a correct stream for a real session; a second process
+`sightline events` prints a correct stream for a real session; a second process
 reading the socket sees the same lines; the desktop window takes its status from
 the stream rather than from polling; tasks and lineage survive a restart and
 roll cost up the tree; and the compatibility suite covers the stream.

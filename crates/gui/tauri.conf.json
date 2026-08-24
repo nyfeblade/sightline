@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Ironsight",
+  "productName": "Sightline",
   "version": "0.4.1",
-  "identifier": "dev.nyfe.ironsight",
+  "identifier": "dev.nyfe.sightline",
   "build": {
     "frontendDist": "ui"
   },
@@ -10,7 +10,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Ironsight",
+        "title": "Sightline",
         "width": 1280,
         "height": 840,
         "minWidth": 940,

@@ -1,4 +1,4 @@
-//! Keeping secrets out of the things Ironsight writes down.
+//! Keeping secrets out of the things Sightline writes down.
 //!
 //! The event stream records what every session ran, and it does two things with
 //! that: writes it to a file that stays on disk, and offers it on a socket to
@@ -233,8 +233,8 @@ mod tests {
             "git commit -m \"fix the parser\"",
             "grep -rn TODO crates/core/src",
             "python3 scripts/make-icon.py",
-            "ls -la /home/nyfe/ironsight/target/debug",
-            "cargo check --target x86_64-pc-windows-msvc -p ironsight-core",
+            "ls -la /home/nyfe/sightline/target/debug",
+            "cargo check --target x86_64-pc-windows-msvc -p sightline-core",
         ] {
             assert_eq!(text(plain), plain, "mangled an ordinary command");
         }

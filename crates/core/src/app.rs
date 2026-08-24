@@ -135,7 +135,7 @@ pub struct NewSpec {
     pub effort: Option<String>,
     pub mode: Option<String>,
     pub prompt: Option<String>,
-    /// Start it as a session Ironsight holds itself — driven over structured
+    /// Start it as a session Sightline holds itself — driven over structured
     /// JSON, with no terminal — rather than one running in a terminal.
     pub owned: bool,
 }
@@ -202,7 +202,7 @@ impl ProjectState {
     }
 }
 
-/// Where Ironsight keeps what it knows between runs: the order you chose, the
+/// Where Sightline keeps what it knows between runs: the order you chose, the
 /// names you gave, the event journal and the task store.
 ///
 /// State written under the old name is moved across on first use rather than
@@ -212,7 +212,12 @@ impl ProjectState {
 /// corrupts your working state, and because a supervisor running its own fleet
 /// may want a directory of its own.
 pub fn data_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("IRONSIGHT_DATA_DIR") {
+    // The old name is still honoured: a shell, a script or a systemd unit
+    // written before the rename should not silently point at a different
+    // directory and lose the fleet.
+    if let Ok(dir) =
+        std::env::var("SIGHTLINE_DATA_DIR").or_else(|_| std::env::var("IRONSIGHT_DATA_DIR"))
+    {
         if !dir.is_empty() {
             return PathBuf::from(dir);
         }
@@ -222,10 +227,16 @@ pub fn data_dir() -> PathBuf {
         .filter(|d| !d.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| home().join(".local").join("share"));
-    let dir = base.join("ironsight");
-    let former = base.join("nyfe-scope");
-    if !dir.exists() && former.is_dir() {
-        let _ = std::fs::rename(&former, &dir);
+    let dir = base.join("sightline");
+    // Two former names now, and the same rule for both: move it once, in place,
+    // rather than asking anyone to. Newest first, so a machine that has both
+    // keeps the one that was actually being used.
+    for former in ["ironsight", "nyfe-scope"] {
+        let former = base.join(former);
+        if !dir.exists() && former.is_dir() {
+            let _ = std::fs::rename(&former, &dir);
+            break;
+        }
     }
     dir
 }
@@ -322,7 +333,7 @@ fn write_title(path: &std::path::Path, id: &str, name: &str) -> Result<(), Strin
 }
 
 /// `~` means home, as it does everywhere else a path is typed. Nothing here
-/// goes through a shell, so if Ironsight does not expand it nothing will — the
+/// goes through a shell, so if Sightline does not expand it nothing will — the
 /// fleet file has always documented `~/api` and it never worked.
 pub fn expand(path: &str) -> String {
     match path.strip_prefix("~/") {
@@ -559,8 +570,8 @@ pub struct App {
     /// tmux panes, and the pane each live session is running inside
     pub tmux_ok: bool,
     pub steer: HashMap<String, Pane>,
-    /// the sessions Ironsight holds itself, by the id they appear under in the
-    /// list — their transcript id once the agent has named one, and Ironsight's
+    /// the sessions Sightline holds itself, by the id they appear under in the
+    /// list — their transcript id once the agent has named one, and Sightline's
     /// own name for them until then
     pub owned: HashMap<String, owned::Owned>,
     last_owned_scan: Instant,
@@ -583,7 +594,7 @@ pub struct App {
     quit_asked: Option<Instant>,
     /// which session was asked about stopping, and when
     stop_asked: Option<(String, Instant)>,
-    /// names Ironsight keeps for sessions that have none of their own
+    /// names Sightline keeps for sessions that have none of their own
     names: HashMap<String, String>,
     /// conversations taken off the list, by session id. Hidden, never deleted.
     hidden: Vec<String>,
@@ -621,7 +632,7 @@ pub struct App {
     prev_status: HashMap<String, String>,
     prev_errors: HashMap<String, usize>,
     last_probe: Instant,
-    /// the event stream: what Ironsight has seen, offered to anything that asks
+    /// the event stream: what Sightline has seen, offered to anything that asks
     pub bus: bus::Bus,
     /// what each session was asked to do, and which session asked it
     pub work: work::Store,
@@ -784,7 +795,7 @@ impl App {
                 // transcript under the projects root and no registry entry, so
                 // neither test above can see it. Its file is the test.
                 || (s.record == agent::Record::AiderMarkdown && s.path.exists())
-                // A session Ironsight is holding by pipe has no transcript
+                // A session Sightline is holding by pipe has no transcript
                 // until its agent writes one and never has a registry entry, so
                 // neither test above can see it. Dropping it here and relying on
                 // the owned pass to put it back does not work: that pass is rate
@@ -865,7 +876,7 @@ impl App {
         }
         let claimed: Vec<String> = self.steer.values().map(|p| p.id.clone()).collect();
         for p in panes {
-            // Something Ironsight started is a session whatever it is running:
+            // Something Sightline started is a session whatever it is running:
             // an agent it has an entry for, or a command someone named itself.
             let ours = agent::is_agent(&p.cmd) || control::is_ours(&p.session);
             if !ours || claimed.contains(&p.id) {
@@ -892,7 +903,7 @@ impl App {
                 continue;
             }
             let mut session = Session::from_pane(&p);
-            // A session with no transcript is whatever Ironsight has been told to
+            // A session with no transcript is whatever Sightline has been told to
             // call it, since nothing else will ever name it.
             if let Some(name) = self.names.get(&p.session) {
                 session.title = name.clone();
@@ -920,14 +931,14 @@ impl App {
         agent::aider::found_in(std::path::Path::new(&pane.cwd))
     }
 
-    /// Fold in the sessions Ironsight holds itself, by pipe rather than by
+    /// Fold in the sessions Sightline holds itself, by pipe rather than by
     /// terminal.
     ///
     /// An owned session writes an ordinary transcript, so the session already
     /// in the list *is* it — almost all of this is saying which one, and that
     /// it is alive. Only for the moment before the agent's first line names the
     /// conversation is there nothing to match on, and it stands in the list
-    /// under Ironsight's own name for it until there is.
+    /// under Sightline's own name for it until there is.
     ///
     /// Asked at most twice a second. It is a socket round trip, and the list is
     /// refreshed four times that often.
@@ -942,7 +953,7 @@ impl App {
 
     /// Put what the held sessions did onto the stream.
     ///
-    /// A session Ironsight holds is spoken to over a pipe, so what it does is
+    /// A session Sightline holds is spoken to over a pipe, so what it does is
     /// *witnessed* — the tool call before its result, the decision the kernel
     /// made, the failure with its reason — rather than reconstructed later from
     /// a transcript. None of that reached the feed, the stats or the
@@ -959,7 +970,7 @@ impl App {
         let (events, lost) = control::owned_drain();
         if lost > 0 {
             self.say(format!(
-                "{lost} event(s) from Ironsight's own sessions were dropped before \
+                "{lost} event(s) from Sightline's own sessions were dropped before \
                  anything collected them"
             ));
         }
@@ -990,7 +1001,7 @@ impl App {
             if !self.sessions.iter().any(|s| s.id == id) {
                 self.sessions.push(Session::owned(&id, &o));
             }
-            // A name someone chose for it. Kept under Ironsight's handle rather
+            // A name someone chose for it. Kept under Sightline's handle rather
             // than written into the transcript, because unlike a stopped
             // session this one has the file open and is appending to it.
             if let Some(name) = self.names.get(&o.name).cloned() {
@@ -1023,9 +1034,9 @@ impl App {
     /// Take a conversation off the list.
     ///
     /// Always allowed, whatever the session is and whoever started it. The row
-    /// is a view of the machine, not a claim on it: a session Ironsight cannot
+    /// is a view of the machine, not a claim on it: a session Sightline cannot
     /// steer is exactly the kind it cannot close either, so refusing to remove
-    /// a running one sent people to `x` — which needs a session Ironsight can
+    /// a running one sent people to `x` — which needs a session Sightline can
     /// reach — and left them with a row they could not get rid of.
     ///
     /// A live one is still worth a word, because a hidden session that is
@@ -1096,7 +1107,7 @@ impl App {
     }
 
     /// Whether a session can be spoken to at all — through its terminal, or
-    /// down the pipe Ironsight holds. Every front end asks this rather than
+    /// down the pipe Sightline holds. Every front end asks this rather than
     /// asking about panes, so the two kinds cannot drift apart.
     pub fn steerable(&self, id: &str) -> bool {
         self.steer.contains_key(id) || self.owned.get(id).map(|o| o.alive).unwrap_or(false)
@@ -1135,9 +1146,9 @@ impl App {
         }
     }
 
-    /// Whether quitting can go ahead. Sessions Ironsight hosts itself end with it,
+    /// Whether quitting can go ahead. Sessions Sightline hosts itself end with it,
     /// so the first `q` says what would be lost and the second one means it.
-    /// Where the backend outlives Ironsight there is nothing to lose, and `q` quits.
+    /// Where the backend outlives Sightline there is nothing to lose, and `q` quits.
     pub fn may_quit(&mut self) -> bool {
         let n = control::hosted_count();
         let asked = self
@@ -1149,7 +1160,7 @@ impl App {
         }
         self.quit_asked = Some(Instant::now());
         self.say(format!(
-            "q again to quit — {n} session{} Ironsight is hosting would stop (each reopens with A)",
+            "q again to quit — {n} session{} Sightline is hosting would stop (each reopens with A)",
             if n == 1 { "" } else { "s" }
         ));
         false
@@ -1220,7 +1231,7 @@ impl App {
             },
             Prompt::StopAll => {
                 let n = self.steer.len();
-                format!("stop all {n} sessions Ironsight started? type yes")
+                format!("stop all {n} sessions Sightline started? type yes")
             }
             Prompt::Rename => match self.current() {
                 Some(s) => format!("rename {}", s.label()),
@@ -1435,7 +1446,7 @@ impl App {
         }
     }
 
-    /// How many sessions Ironsight started are running right now.
+    /// How many sessions Sightline started are running right now.
     ///
     /// Deliberately not every session on the machine. The ceiling exists to
     /// bound *autonomy* — what a supervisor can cause — and the sessions you
@@ -1445,21 +1456,21 @@ impl App {
     /// refuses to run without a ceiling, that made the chief unusable on
     /// exactly the machines busy enough to want one.
     ///
-    /// A supervisor cannot start a session by any route other than Ironsight,
+    /// A supervisor cannot start a session by any route other than Sightline,
     /// so this still bounds everything it is able to do.
     pub fn running_sessions(&self) -> usize {
         self.sessions
             .iter()
             .filter(|s| !matches!(s.status(), Status::Ended))
-            .filter(|s| self.started_by_ironsight(&s.id))
+            .filter(|s| self.started_by_sightline(&s.id))
             .count()
     }
 
-    /// Whether Ironsight started this one, as opposed to merely watching it.
+    /// Whether Sightline started this one, as opposed to merely watching it.
     ///
     /// Two ways it can be: held by pipe in the owned fleet, or running in a
-    /// terminal Ironsight opened, which is what that terminal's name says.
-    fn started_by_ironsight(&self, id: &str) -> bool {
+    /// terminal Sightline opened, which is what that terminal's name says.
+    fn started_by_sightline(&self, id: &str) -> bool {
         if self.owned.contains_key(id) {
             return true;
         }
@@ -1507,7 +1518,7 @@ impl App {
     ///
     /// Claude Code is asked to name itself, because it has a name of its own
     /// that its header, the registry and the transcript all share. An agent
-    /// with no such idea gets the name Ironsight keeps for it.
+    /// with no such idea gets the name Sightline keeps for it.
     pub fn start_session(&mut self, spec: &NewSpec) -> Result<String, String> {
         let chosen = spec.agent.as_deref().unwrap_or("claude");
         let known = agent::find(chosen);
@@ -1517,13 +1528,13 @@ impl App {
                 effort: spec.effort.as_deref(),
                 mode: spec.mode.as_deref(),
             }),
-            // Not an agent Ironsight knows: run it as typed, which is how anything
+            // Not an agent Sightline knows: run it as typed, which is how anything
             // else local gets to be a session too.
             None => agent::custom_command(chosen),
         };
         // How a session gets a name is the agent's business: Claude Code
         // renames itself when told, and an agent with no such idea gets the
-        // name Ironsight keeps for it.
+        // name Sightline keeps for it.
         let renames_itself = match known.as_ref().map(|a| a.naming()) {
             Some(agent::Naming::Command(command)) => Some(command),
             _ => None,
@@ -1547,9 +1558,9 @@ impl App {
         Ok(session)
     }
 
-    /// Start a session Ironsight holds itself, and return the id it is listed
+    /// Start a session Sightline holds itself, and return the id it is listed
     /// under — its conversation id when the agent has already named one, and
-    /// Ironsight's own handle for the moment before that.
+    /// Sightline's own handle for the moment before that.
     ///
     /// `opening` is what it is to begin on. Not optional in any useful sense:
     /// an owned agent says nothing at all until it is spoken to, so a session
@@ -1631,7 +1642,7 @@ impl App {
     }
 
     /// The folder the Hub is currently pointed at: the selected session's, or
-    /// wherever Ironsight was started.
+    /// wherever Sightline was started.
     pub fn here(&self) -> PathBuf {
         let cwd = self
             .current()
@@ -1702,7 +1713,7 @@ impl App {
     /// this function's to replace.
     pub fn set_up_project(&mut self, cwd: &std::path::Path) -> Result<String, String> {
         let root = git::repo_root(cwd).unwrap_or_else(|| cwd.to_path_buf());
-        let dir = root.join(".ironsight");
+        let dir = root.join(".sightline");
         std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let mut did: Vec<String> = Vec::new();
 
@@ -1738,14 +1749,14 @@ impl App {
             did.push(format!("wrote {}", brief::FILE));
         }
 
-        // Trusted only when Ironsight wrote it. The gate exists because a checks
+        // Trusted only when Sightline wrote it. The gate exists because a checks
         // file arrives with somebody else's code; one written here, this second,
         // at your asking, is not that. One that was already there still has to
         // be read and approved.
         if wrote_checks {
             if let Some((r, suite)) = checks::Suite::find(&root)? {
                 checks::trust(&r, &suite)?;
-                did.push("approved it, because Ironsight wrote it".into());
+                did.push("approved it, because Sightline wrote it".into());
             }
         }
 
@@ -1864,7 +1875,7 @@ impl App {
         let branch = format!("glue-{}", version.replace(['/', ' '], "-"));
         let worktree = git::create_worktree(&root, &branch)?;
         // The ability goes into the worktree, so the session reads the copy
-        // that shipped with this Ironsight rather than whatever the fork had.
+        // that shipped with this Sightline rather than whatever the fork had.
         glue::install(&worktree)?;
 
         let packet = glue::brief(
@@ -2024,8 +2035,8 @@ impl App {
     }
 
     /// Remember what to call a session that has no name of its own. Anything
-    /// but Claude Code is a program in a terminal as far as Ironsight can tell, so
-    /// the name is Ironsight's to keep.
+    /// but Claude Code is a program in a terminal as far as Sightline can tell, so
+    /// the name is Sightline's to keep.
     pub fn name_pane(&mut self, session: &str, name: &str) {
         self.names.insert(session.to_string(), name.to_string());
         save_names(&self.names);
@@ -2036,7 +2047,7 @@ impl App {
     /// A running session renames itself: `/rename` is a real command, so typing
     /// it is the honest route and everything downstream — its own header, the
     /// registry, the transcript — stays in step. A session that has stopped has
-    /// nobody to type to, so Ironsight appends the same record Claude Code would
+    /// nobody to type to, so Sightline appends the same record Claude Code would
     /// have written, which is where the name actually lives.
     pub fn rename(&mut self, id: &str, name: &str) -> Result<(), String> {
         let name = name.trim();
@@ -2113,11 +2124,11 @@ impl App {
         Ok(())
     }
 
-    /// Say the same thing to every session Ironsight can reach. Returns how many
+    /// Say the same thing to every session Sightline can reach. Returns how many
     /// heard it.
     pub fn broadcast(&mut self, text: &str) -> usize {
         // Everything that can be spoken to, whichever way it is reached. A
-        // broadcast that silently skipped the sessions Ironsight holds itself
+        // broadcast that silently skipped the sessions Sightline holds itself
         // would be the worst kind of wrong: it reports a number, and the number
         // is right about the sessions it thought of.
         let to: Vec<String> = self
@@ -2171,7 +2182,7 @@ impl App {
 
     /// Put one message into one session, whichever way that session is
     /// reached — keystrokes into its terminal, or a line of JSON down the pipe
-    /// Ironsight holds. Returns what to call it when saying so.
+    /// Sightline holds. Returns what to call it when saying so.
     ///
     /// Every path that delivers a message goes through here, so a queued
     /// message and a typed one cannot end up meaning different things.
@@ -2213,7 +2224,7 @@ impl App {
         // that this one cannot be interrupted — not a key sent nowhere.
         if let Some(o) = self.owned.get(&id).cloned() {
             let why = format!(
-                "{} is held by Ironsight and has no terminal to interrupt — close it to end the turn",
+                "{} is held by Sightline and has no terminal to interrupt — close it to end the turn",
                 o.name
             );
             self.say(why.clone());
@@ -2238,8 +2249,8 @@ impl App {
         }
     }
 
-    /// Show a session full-screen. Where Ironsight hosts the session itself there
-    /// is no terminal to hand over, so full-screen is Ironsight's own mirror with
+    /// Show a session full-screen. Where Sightline hosts the session itself there
+    /// is no terminal to hand over, so full-screen is Sightline's own mirror with
     /// every key going to the session — the same thing, drawn by scope.
     pub fn attach(&mut self) {
         let Some(id) = self.current().map(|s| s.id.clone()) else {
@@ -2247,7 +2258,7 @@ impl App {
         };
         if let Some(o) = self.owned.get(&id).cloned() {
             self.say(format!(
-                "{} is held by Ironsight over a pipe — there is no screen to attach to",
+                "{} is held by Sightline over a pipe — there is no screen to attach to",
                 o.name
             ));
             return;
@@ -2282,8 +2293,8 @@ impl App {
         for s in &mut self.sessions {
             s.pump();
             s.live = live.get(&s.id).cloned();
-            // A session Ironsight holds does not register itself with Claude
-            // Code — it has no terminal to register from — so Ironsight is the
+            // A session Sightline holds does not register itself with Claude
+            // Code — it has no terminal to register from — so Sightline is the
             // only thing that knows it is alive, and says so here in the same
             // shape the registry would have.
             if let Some(o) = self.owned.get(&s.id) {
@@ -2444,7 +2455,7 @@ impl App {
     ///
     /// Safe for anything to call. It reads and writes one file and takes
     /// nothing exclusively, which is what a short command like `assign` needs
-    /// while an Ironsight is running beside it.
+    /// while an Sightline is running beside it.
     ///
     /// Deliberately not part of `new`. Constructing an App should not touch the
     /// real state directory — a test watching a fixture would otherwise write
@@ -2462,7 +2473,7 @@ impl App {
     /// without a gap — would quietly stop meaning anything.
     ///
     /// So finding the socket already held is not a failure: it means another
-    /// Ironsight is publishing. This one keeps its state and its in-process
+    /// Sightline is publishing. This one keeps its state and its in-process
     /// stream, writes nothing to the shared journal, and says so by returning
     /// false.
     pub fn with_stream(&mut self) -> Result<bool, String> {
@@ -2491,7 +2502,7 @@ impl App {
         match gateway::serve(dir.join("events.sock"), self.bus.subscribe()) {
             Ok(gw) => self.gateway = Some(gw),
             // No Unix socket on this platform. The stream is still journalled
-            // and still readable through `ironsight events`; only the socket is
+            // and still readable through `sightline events`; only the socket is
             // absent, and the lock has already guaranteed we are the one writer.
             Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {}
             Err(e) => return Err(e.to_string()),
@@ -2506,7 +2517,7 @@ impl App {
 
     /// Which agent this session is, as opposed to what it is called.
     ///
-    /// The pane's command line is the only honest answer for a session Ironsight
+    /// The pane's command line is the only honest answer for a session Sightline
     /// started — `--agent aider` and `--agent claude` look identical from the
     /// transcript, and the session's own name says nothing about what is
     /// running. Without a pane, it is whatever wrote the transcript being read,
@@ -2570,7 +2581,7 @@ impl App {
     ///
     /// A session assigned something the moment it was started is filed under
     /// its pane, because that is all it had. This is where it takes ownership
-    /// of that record, and it is why an assignment given at `ironsight new
+    /// of that record, and it is why an assignment given at `sightline new
     /// --task` is still attached to the session an hour later.
     fn adopt_pane_records(&mut self) {
         // The handoff window: a session started with an assignment has this
@@ -2774,7 +2785,7 @@ impl App {
         self.reopen(id, cwd, original);
     }
 
-    /// Bring one conversation up somewhere Ironsight can steer it, whether it is
+    /// Bring one conversation up somewhere Sightline can steer it, whether it is
     /// still running or finished months ago. `original` is the process holding
     /// it now, if any: two clients on one conversation would both append to the
     /// same transcript, so it goes as soon as the new one is up.
@@ -2895,7 +2906,7 @@ impl App {
                 return;
             }
         }
-        // A conversation still held by a process outside Ironsight has to be taken
+        // A conversation still held by a process outside Sightline has to be taken
         // from it, exactly as adopting does.
         let original = self
             .sessions
@@ -2961,7 +2972,7 @@ impl App {
                 label: "Interrupt what it is doing",
                 enabled: has_terminal,
                 why: if steerable {
-                    "Ironsight holds this one by pipe — there is no terminal to interrupt".into()
+                    "Sightline holds this one by pipe — there is no terminal to interrupt".into()
                 } else {
                     why_steer.clone()
                 },
@@ -2971,7 +2982,7 @@ impl App {
                 label: "Type into it directly",
                 enabled: has_terminal,
                 why: if steerable {
-                    "Ironsight holds this one by pipe — send it a message instead".into()
+                    "Sightline holds this one by pipe — send it a message instead".into()
                 } else {
                     why_steer.clone()
                 },
@@ -2985,7 +2996,7 @@ impl App {
                 },
                 enabled: has_terminal,
                 why: if steerable {
-                    "Ironsight holds this one by pipe — there is no screen to attach to".into()
+                    "Sightline holds this one by pipe — there is no screen to attach to".into()
                 } else {
                     why_steer
                 },
@@ -3029,7 +3040,7 @@ impl App {
             key: 'x',
             label: "Close this session",
             enabled: steerable,
-            why: "only sessions Ironsight can reach can be stopped".into(),
+            why: "only sessions Sightline can reach can be stopped".into(),
         });
         // Closing and removing are different things and both are wanted. `x`
         // ends the process; this takes the row off the list. The conversation
@@ -3062,16 +3073,16 @@ impl App {
             label: "Open it in its own window",
             enabled: has_terminal,
             why: if steerable {
-                "Ironsight holds this one by pipe — there is no terminal to open".into()
+                "Sightline holds this one by pipe — there is no terminal to open".into()
             } else {
                 why_steer_open
             },
         });
         v.push(Action {
             key: 'Z',
-            label: "Stop everything Ironsight started",
+            label: "Stop everything Sightline started",
             enabled: !self.steer.is_empty() || !self.owned.is_empty(),
-            why: "nothing of Ironsight's is running".into(),
+            why: "nothing of Sightline's is running".into(),
         });
         v.push(Action {
             key: 'R',
@@ -3081,7 +3092,7 @@ impl App {
         });
         v.push(Action {
             key: 'P',
-            label: "Tidy up finished Ironsight sessions",
+            label: "Tidy up finished Sightline sessions",
             enabled: self.tmux_ok,
             why: control::unavailable_hint().into(),
         });
@@ -3185,7 +3196,7 @@ impl App {
                 let closed = control::prune();
                 self.say(match closed.len() {
                     0 => {
-                        "nothing to tidy up — everything Ironsight started is still running".into()
+                        "nothing to tidy up — everything Sightline started is still running".into()
                     }
                     _ => format!("closed {}", closed.join(", ")),
                 });
@@ -3486,7 +3497,7 @@ impl App {
         }
     }
 
-    /// Launch every session described in ~/.config/ironsight/fleet.json.
+    /// Launch every session described in ~/.config/sightline/fleet.json.
     pub fn launch_fleet(&mut self) {
         if !self.may_spawn() {
             return;
@@ -3524,7 +3535,7 @@ impl App {
                 effort: g("effort"),
                 mode: g("permission_mode"),
                 prompt: g("prompt"),
-                // `"owned": true` starts one Ironsight holds itself. A fleet
+                // `"owned": true` starts one Sightline holds itself. A fleet
                 // file is exactly where this belongs: a fleet meant to outlive
                 // the window should not be a list of terminals.
                 owned: item.get("owned").and_then(|v| v.as_bool()).unwrap_or(false),
@@ -3701,7 +3712,7 @@ impl App {
 
     /// (output tokens, estimated dollars, sessions currently working)
     /// A warning to show once when this Claude Code install looks newer or
-    /// stranger than what Ironsight was built against.
+    /// stranger than what Sightline was built against.
     pub fn compatibility(&self) -> Option<String> {
         for s in &self.sessions {
             if s.unreadable() {
@@ -3770,10 +3781,10 @@ pub fn config_dir() -> PathBuf {
 pub fn fleet_path() -> PathBuf {
     if let Ok(dir) = std::env::var("XDG_CONFIG_HOME") {
         if !dir.is_empty() {
-            return PathBuf::from(dir).join("ironsight").join("fleet.json");
+            return PathBuf::from(dir).join("sightline").join("fleet.json");
         }
     }
-    home().join(".config").join("ironsight").join("fleet.json")
+    home().join(".config").join("sightline").join("fleet.json")
 }
 
 /// Home, or the current directory when there is no home to speak of.
@@ -3842,7 +3853,7 @@ mod tests {
         // hides a session must not hide one of yours.
         app.hidden.clear();
         app.hidden_file = std::env::temp_dir().join(format!(
-            "ironsight-test-hidden-{}-{:?}.json",
+            "sightline-test-hidden-{}-{:?}.json",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3891,7 +3902,7 @@ mod tests {
     #[test]
     fn any_row_can_be_removed_however_it_got_there() {
         // Refusing to remove a running row sent people to `x`, which needs a
-        // session Ironsight can steer — so for anything it merely watches, the
+        // session Sightline can steer — so for anything it merely watches, the
         // row could not be got rid of at all. The row is a view of the machine,
         // not a claim on it.
         let mut app = bare_app();
@@ -3939,7 +3950,7 @@ mod tests {
         app.hide("busy-1").unwrap();
         assert!(
             app.owned.contains_key("busy-1"),
-            "Ironsight still holds it; it is simply not listed"
+            "Sightline still holds it; it is simply not listed"
         );
     }
 
@@ -4070,7 +4081,7 @@ mod tests {
 
     #[test]
     fn setting_a_project_up_writes_a_draft_and_approves_only_what_it_wrote() {
-        let dir = std::env::temp_dir().join(format!("ironsight-setup-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("sightline-setup-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
@@ -4106,9 +4117,9 @@ mod tests {
         // A checks file that exists arrived with somebody's judgement in it, or
         // with somebody else's code. Neither is this function's to replace, and
         // the second must not be approved on their behalf.
-        let dir = std::env::temp_dir().join(format!("ironsight-setup2-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("sightline-setup2-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join(".ironsight")).unwrap();
+        std::fs::create_dir_all(dir.join(".sightline")).unwrap();
         std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
         let theirs = "[[check]]\nname = \"theirs\"\nrun = \"echo do not touch\"\n";
         std::fs::write(dir.join(checks::FILE), theirs).unwrap();
@@ -4130,7 +4141,7 @@ mod tests {
 
     #[test]
     fn a_project_nobody_can_guess_says_so_rather_than_writing_nonsense() {
-        let dir = std::env::temp_dir().join(format!("ironsight-setup3-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("sightline-setup3-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut app = bare_app();
@@ -4143,7 +4154,7 @@ mod tests {
     }
 
     #[test]
-    fn a_ceiling_counts_what_ironsight_started_and_not_your_own_work() {
+    fn a_ceiling_counts_what_sightline_started_and_not_your_own_work() {
         // It counted every session on the machine, which meant a dozen of your
         // own open sessions ate the whole allowance and no worker could start.
         // A chief refuses to run without a ceiling, so that made the chief
@@ -4177,7 +4188,7 @@ mod tests {
             "and room for one more is room for one more"
         );
 
-        // A session Ironsight only watches — someone's own, in their own
+        // A session Sightline only watches — someone's own, in their own
         // terminal — does not count against what a supervisor may start.
         app.sessions.push(Session::pending(
             "not-ours".into(),
@@ -4193,7 +4204,7 @@ mod tests {
         assert_eq!(
             app.running_sessions(),
             2,
-            "it is running, and it is not Ironsight's to count"
+            "it is running, and it is not Sightline's to count"
         );
         assert_eq!(
             app.ceiling_refusal_given(&three, 0.0),
@@ -4254,7 +4265,7 @@ mod tests {
     #[test]
     fn an_owned_session_that_has_not_spoken_yet_still_appears() {
         // Between starting the agent and its first line there is a process
-        // doing work and nothing at all to see. It stands under Ironsight's own
+        // doing work and nothing at all to see. It stands under Sightline's own
         // name until the conversation has one.
         let mut app = bare_app();
         app.fold_owned(vec![an_owned("owned-1", "", true)]);
@@ -4319,7 +4330,7 @@ mod tests {
     }
 
     #[test]
-    fn liveness_for_an_owned_session_comes_from_ironsight_itself() {
+    fn liveness_for_an_owned_session_comes_from_sightline_itself() {
         // Claude Code writes no registry entry for a session driven over pipes,
         // so without this the fleet would show every owned session as ended
         // while it was working.
@@ -4346,7 +4357,7 @@ mod tests {
         assert_eq!(spec.agent.as_deref(), Some("codex"));
         assert_eq!(spec.name.as_deref(), Some("refactor"));
         assert_eq!(spec.prompt.as_deref(), Some("fix the auth tests"));
-        // Nothing said, so it is Claude Code and Ironsight asks for a name.
+        // Nothing said, so it is Claude Code and Sightline asks for a name.
         let plain = parse_new("~/api");
         assert!(plain.agent.is_none() && plain.name.is_none());
     }
@@ -4392,7 +4403,7 @@ mod tests {
     }
 
     #[test]
-    fn asks_for_a_session_ironsight_holds_itself() {
+    fn asks_for_a_session_sightline_holds_itself() {
         let spec = parse_new("~/api --owned --model opus fix the failing tests");
         assert!(spec.owned, "--owned is what asks for one");
         assert_eq!(
@@ -4413,9 +4424,9 @@ mod tests {
 
     #[test]
     fn a_name_written_here_is_read_back_as_a_name() {
-        // The record Ironsight appends and the record Claude Code appends are the
+        // The record Sightline appends and the record Claude Code appends are the
         // same record, so the test is: write one, then read it the way every
-        // other part of Ironsight reads a title.
+        // other part of Sightline reads a title.
         let dir = std::env::temp_dir().join(format!("scope-rename-{}", std::process::id()));
         let project = dir.join("-home-someone");
         std::fs::create_dir_all(&project).unwrap();

@@ -1,4 +1,4 @@
-//! Claude Code, which Ironsight grew around.
+//! Claude Code, which Sightline grew around.
 //!
 //! It writes a JSONL transcript per conversation under `~/.claude/projects`,
 //! keeps a registry of live sessions under `~/.claude/sessions`, draws numbered
@@ -52,7 +52,7 @@ impl Adapter for ClaudeCode {
     }
 
     /// Every conversation on the machine, wherever it was held: Claude Code
-    /// keeps them all in one place, so the folders Ironsight has seen do not come
+    /// keeps them all in one place, so the folders Sightline has seen do not come
     /// into it.
     fn conversations(&self, _roots: &[PathBuf]) -> Vec<Found> {
         crate::history::scan(&crate::app::default_root())

@@ -1,6 +1,6 @@
 //! Claimed → Checked → Verified, and the reasons for stopping short.
 //!
-//! This is Ironsight's opinion about what finished means, and it is the part of
+//! This is Sightline's opinion about what finished means, and it is the part of
 //! the product that is not plumbing. A wrapper around one session cannot hold
 //! it, because two of the three steps depend on things that outlive the session:
 //! what the project's checks are and whether a person approved them, and whether
@@ -198,7 +198,7 @@ pub fn adjudicate(store: &mut work::Store, session: &str, cwd: &Path) -> Result<
         let reached = Reached::Checked {
             why_not_verified: format!(
                 "nothing says what wrong would look like for this work. Write one: \
-                 `ironsight refute {id} <a command that should fail>`"
+                 `sightline refute {id} <a command that should fail>`"
             ),
         };
         return Ok(finish(store, task, reached, outcomes, tried, events));

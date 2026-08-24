@@ -20,27 +20,27 @@ for size in 32 128 256 512; do
         512) src=icon.png ;;
     esac
     mkdir -p "$icons/${size}x${size}/apps"
-    cp "$here/crates/gui/icons/$src" "$icons/${size}x${size}/apps/ironsight.png"
+    cp "$here/crates/gui/icons/$src" "$icons/${size}x${size}/apps/sightline.png"
 done
 mkdir -p "$icons/scalable/apps"
-cp "$here/crates/gui/icons/icon.svg" "$icons/scalable/apps/ironsight.svg"
+cp "$here/crates/gui/icons/icon.svg" "$icons/scalable/apps/sightline.svg"
 
 mkdir -p "$apps"
-cat > "$apps/ironsight.desktop" <<DESKTOP
+cat > "$apps/sightline.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=Ironsight
+Name=Sightline
 GenericName=Coding agent sessions
 Comment=Watch and steer every coding agent running on your machine
-Exec=$here/target/release/ironsight-gui
-Icon=ironsight
+Exec=$here/target/release/sightline-gui
+Icon=sightline
 Terminal=false
 Categories=Development;Utility;
 Keywords=claude;agent;session;tmux;
-StartupWMClass=ironsight-gui
+StartupWMClass=sightline-gui
 DESKTOP
 
 gtk-update-icon-cache -f -t "$icons" 2>/dev/null || true
 update-desktop-database "$apps" 2>/dev/null || true
-echo "installed · icon theme $icons · entry $apps/ironsight.desktop"
+echo "installed · icon theme $icons · entry $apps/sightline.desktop"

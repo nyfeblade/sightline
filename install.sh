@@ -1,12 +1,12 @@
 #!/usr/bin/env sh
-# Install Ironsight from the latest GitHub release.
-#   curl -fsSL https://raw.githubusercontent.com/nyfeblade/ironsight/master/install.sh | sh
+# Install Sightline from the latest GitHub release.
+#   curl -fsSL https://raw.githubusercontent.com/nyfeblade/sightline/master/install.sh | sh
 # Or read this file first and run the three commands yourself — it is short on
 # purpose.
 set -eu
 
-REPO=nyfeblade/ironsight
-DEST="${IRONSIGHT_INSTALL_DIR:-$HOME/.local/bin}"
+REPO=nyfeblade/sightline
+DEST="${SIGHTLINE_INSTALL_DIR:-$HOME/.local/bin}"
 
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64)  TARGET=x86_64-unknown-linux-gnu ;;
@@ -18,17 +18,17 @@ esac
 TAG="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)"
 [ -n "$TAG" ] || { echo "could not find the latest release" >&2; exit 1; }
 
-URL="https://github.com/$REPO/releases/download/$TAG/ironsight-$TAG-$TARGET.tar.gz"
+URL="https://github.com/$REPO/releases/download/$TAG/sightline-$TAG-$TARGET.tar.gz"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-echo "downloading Ironsight $TAG for $TARGET"
+echo "downloading Sightline $TAG for $TARGET"
 curl -fsSL "$URL" | tar -xz -C "$TMP"
 mkdir -p "$DEST"
-install -m 755 "$TMP"/*/ironsight "$DEST/ironsight"
+install -m 755 "$TMP"/*/sightline "$DEST/sightline"
 
-echo "installed $DEST/ironsight"
-echo "the desktop app is a separate download: ironsight-$TAG-x86_64.AppImage"
+echo "installed $DEST/sightline"
+echo "the desktop app is a separate download: sightline-$TAG-x86_64.AppImage"
 case ":$PATH:" in
   *":$DEST:"*) ;;
   *) echo "note: $DEST is not on your PATH" ;;

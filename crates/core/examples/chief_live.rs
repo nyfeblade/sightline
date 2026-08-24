@@ -12,12 +12,12 @@
 //! Needs a logged-in Claude Code and spends quota, so it is an example rather
 //! than a test.
 //!
-//!     IRONSIGHT_DATA_DIR=/tmp/some-scratch \
-//!       cargo run -p ironsight-core --example chief_live
+//!     SIGHTLINE_DATA_DIR=/tmp/some-scratch \
+//!       cargo run -p sightline-core --example chief_live
 
-use ironsight_core::gate::Policy;
-use ironsight_core::owned::{self, Spec};
-use ironsight_core::{brief, chief, limits, work};
+use sightline_core::gate::Policy;
+use sightline_core::owned::{self, Spec};
+use sightline_core::{brief, chief, limits, work};
 use std::time::{Duration, Instant};
 
 /// The numbers the worker has to add up. Chosen so the answer is not guessable
@@ -33,7 +33,7 @@ fn main() {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let project = std::env::temp_dir().join(format!("ironsight-chief-live-{stamp}"));
+    let project = std::env::temp_dir().join(format!("sightline-chief-live-{stamp}"));
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(
         project.join("numbers.txt"),
@@ -145,10 +145,10 @@ fn main() {
     let (events, _) = owned::drain();
     let mut decisions: Vec<String> = Vec::new();
     for ev in &events {
-        if let ironsight_core::bus::Kind::PermissionAnswered { option, by } = &ev.kind {
+        if let sightline_core::bus::Kind::PermissionAnswered { option, by } = &ev.kind {
             let who = match by {
-                ironsight_core::bus::By::Policy { name } => name.as_str(),
-                ironsight_core::bus::By::Human => "human",
+                sightline_core::bus::By::Policy { name } => name.as_str(),
+                sightline_core::bus::By::Human => "human",
             };
             decisions.push(format!("{option} [{who}]"));
         }

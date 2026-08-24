@@ -86,7 +86,7 @@ pub struct Policy {
     ///
     /// A flag rather than the task's id, because the task a session is doing can
     /// change while it runs and the id here would go stale. Which task it is, is
-    /// looked up by session name — a name Ironsight chose, that the session
+    /// looked up by session name — a name Sightline chose, that the session
     /// never gets to pick or change.
     #[serde(default)]
     pub assigned: bool,
@@ -186,7 +186,7 @@ const KERNELS: [(&str, Kernel); 6] = [
 
 /// Nothing happens for a fleet that has spent what it was allowed.
 ///
-/// The ceiling is read from Ironsight's own directory, outside every worktree,
+/// The ceiling is read from Sightline's own directory, outside every worktree,
 /// so a session cannot answer this question in its own favour by editing a file
 /// it can reach.
 ///
@@ -295,7 +295,7 @@ fn scope(a: &Asking) -> Option<Decision> {
 
 /// Work nobody asked for is not work.
 ///
-/// Ironsight wrote down what this session was assigned before it started, and
+/// Sightline wrote down what this session was assigned before it started, and
 /// the session has never seen that record. So this is a question only the host
 /// can answer, and it answers two things: a session with no assignment is not
 /// supposed to be changing anything, and a session whose assignment is finished
@@ -340,7 +340,7 @@ fn task(a: &Asking) -> Option<Decision> {
 /// Two things, both of which use a record kept outside the repository:
 ///
 /// A project's `checks.toml` is shell that arrived with somebody else's code,
-/// and it does not run until `ironsight trust` has approved those exact
+/// and it does not run until `sightline trust` has approved those exact
 /// commands. An agent that reads the file and runs what it found would route
 /// straight around that, so the commands are refused here by the same record.
 ///
@@ -383,7 +383,7 @@ fn trust(a: &Asking) -> Option<Decision> {
         why: format!(
             "`{}` is one of this project's checks, and nobody has approved this \
              project's checks yet. They are shell that arrived with the code, so \
-             they do not run until a person has read them: `ironsight trust {}`. \
+             they do not run until a person has read them: `sightline trust {}`. \
              Report that rather than working around it.",
             hit.name,
             root.display()
@@ -393,8 +393,8 @@ fn trust(a: &Asking) -> Option<Decision> {
 
 /// Files that decide whether work is any good, and are therefore not the work.
 const GOVERNING: [&str; 3] = [
-    ".ironsight/checks.toml",
-    ".ironsight/constitution.md",
+    ".sightline/checks.toml",
+    ".sightline/constitution.md",
     "limits.toml",
 ];
 
@@ -751,8 +751,8 @@ mod tests {
         // and the next session is refused for a call that never happened.
         let dir = tempdir();
         let policy = bare(&dir);
-        let forbidden = dir.join(".ironsight/checks.toml");
-        std::fs::create_dir_all(dir.join(".ironsight")).unwrap();
+        let forbidden = dir.join(".sightline/checks.toml");
+        std::fs::create_dir_all(dir.join(".sightline")).unwrap();
         let call = json!({"file_path": forbidden.to_string_lossy()});
 
         let (d, by) = decide(&policy, "owned-1", "Write", &call);
@@ -770,8 +770,8 @@ mod tests {
     #[test]
     fn the_rules_a_session_is_judged_by_are_not_its_to_edit() {
         let dir = tempdir();
-        std::fs::create_dir_all(dir.join(".ironsight")).unwrap();
-        for target in [".ironsight/checks.toml", ".ironsight/constitution.md"] {
+        std::fs::create_dir_all(dir.join(".sightline")).unwrap();
+        for target in [".sightline/checks.toml", ".sightline/constitution.md"] {
             let (d, by) = decide(
                 &bare(&dir),
                 "owned-1",
@@ -786,9 +786,9 @@ mod tests {
     #[test]
     fn a_projects_own_checks_do_not_run_until_someone_approved_them() {
         let dir = tempdir();
-        std::fs::create_dir_all(dir.join(".ironsight")).unwrap();
+        std::fs::create_dir_all(dir.join(".sightline")).unwrap();
         std::fs::write(
-            dir.join(".ironsight/checks.toml"),
+            dir.join(".sightline/checks.toml"),
             "[[check]]\nname = \"tests\"\nrun = \"cargo test --all\"\n",
         )
         .unwrap();
@@ -802,7 +802,7 @@ mod tests {
         );
         assert_eq!(by, "trust", "whitespace must not be a way around it");
         assert!(d.denied(), "{d:?}");
-        assert!(d.why().contains("ironsight trust"), "{}", d.why());
+        assert!(d.why().contains("sightline trust"), "{}", d.why());
 
         // Something that is not one of the project's checks is not this
         // kernel's business.
@@ -848,7 +848,7 @@ mod tests {
 
     fn tempdir() -> PathBuf {
         let p = std::env::temp_dir().join(format!(
-            "ironsight-gate-{}-{:?}",
+            "sightline-gate-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));

@@ -1,7 +1,7 @@
 //! Reconciling a fork onto a new upstream release, by teaching the fork's own
 //! agent rather than by merging text.
 //!
-//! The problem this exists for: people fork Ironsight, customise it, and then
+//! The problem this exists for: people fork Sightline, customise it, and then
 //! every release pulls them further out of step. `git merge` matches line
 //! numbers and file paths, knows nothing about what a module is for, and hands
 //! back conflict markers for a human to resolve — so in practice nobody
@@ -28,7 +28,7 @@
 //! Nothing here is clever. The reconciliation is done by an agent, in a
 //! worktree, and the result counts only when the project's checks pass and its
 //! refutations do not fire — which is the same bar every other piece of work in
-//! Ironsight has to clear. An agent's own confidence that the merge is fine is
+//! Sightline has to clear. An agent's own confidence that the merge is fine is
 //! worth exactly what it is worth everywhere else in this codebase, which is
 //! nothing.
 //!
@@ -43,22 +43,22 @@ use std::path::Path;
 
 /// The ability, carried in the binary so a fork can be taught without fetching
 /// anything. Compiled in rather than read from disk: the copy that matters is
-/// the one that shipped with this version of Ironsight, and a file next to the
+/// the one that shipped with this version of Sightline, and a file next to the
 /// binary is a file that can be edited to say something upstream never said.
-pub const ABILITY: &str = include_str!("../../../.claude/skills/ironsight-glue/SKILL.md");
+pub const ABILITY: &str = include_str!("../../../.claude/skills/sightline-glue/SKILL.md");
 
 /// What the ability is called, and where a fork keeps it.
-pub const ABILITY_NAME: &str = "ironsight-glue";
+pub const ABILITY_NAME: &str = "sightline-glue";
 
 /// What a reconciling session is granted without being asked.
 ///
 /// The brief tells it to run the project's checks and invariants through
-/// `ironsight`, and a headless session cannot be asked for permission — so a
+/// `sightline`, and a headless session cannot be asked for permission — so a
 /// command the machine's settings do not already cover is refused outright and
 /// the session spends its turn saying so. A chief was blocked by exactly this,
 /// before anyone noticed the brief was asking for something the session had not
 /// been allowed to do.
-pub const GRANTED: &[&str] = &["Bash(ironsight:*)", "Bash(ironsight *)"];
+pub const GRANTED: &[&str] = &["Bash(sightline:*)", "Bash(sightline *)"];
 
 /// Where it installs to, relative to the fork's root.
 pub fn ability_path(root: &Path) -> std::path::PathBuf {
@@ -69,7 +69,7 @@ pub fn ability_path(root: &Path) -> std::path::PathBuf {
 }
 
 /// Install the ability into a fork, so the fork's own agent can use it whether
-/// or not anyone ever runs `ironsight glue`.
+/// or not anyone ever runs `sightline glue`.
 ///
 /// Returns where it went. Overwrites deliberately: the ability is upstream's
 /// and a stale copy is worse than none, because it describes seams that have
@@ -250,7 +250,7 @@ pub fn brief(
 
     out.push_str(
         "You are reconciling this fork onto a newer release of its upstream.\n\n\
-         Read the `ironsight-glue` skill first. It is upstream's own account of how\n\
+         Read the `sightline-glue` skill first. It is upstream's own account of how\n\
          the project is put together: the layers, the seams a customisation is meant\n\
          to live in, the invariants that must survive a merge, and how it is tested.\n\
          You know this fork; that skill is what you do not know.\n\n",
@@ -301,8 +301,8 @@ pub fn brief(
              \x20 This project says what done means in {file}. Run it from the\n\
              \x20 worktree — both halves, because they answer different questions:\n\
              \n\
-             \x20   ironsight check <this session>   did the work finish\n\
-             \x20   ironsight invariants             did it break something that was\n\
+             \x20   sightline check <this session>   did the work finish\n\
+             \x20   sightline invariants             did it break something that was\n\
              \x20                                    never its business\n\
              \n\
              \x20 Run the invariants before you start as well, so you know which were\n\
@@ -312,7 +312,7 @@ pub fn brief(
         )),
         None => out.push_str(
             "THE GATE\n\
-             \x20 This project has no .ironsight/checks.toml, so there is nothing\n\
+             \x20 This project has no .sightline/checks.toml, so there is nothing\n\
              \x20 mechanical to hold the merge to and the result can only ever be\n\
              \x20 unverified. Find whatever it builds and tests with, from its README\n\
              \x20 and its own configuration, run that, and say plainly in your report\n\
@@ -408,14 +408,14 @@ mod tests {
             "/w/fork",
             "/w/fork/../glue-v0.5.0",
             &d,
-            Some(".ironsight/checks.toml"),
+            Some(".sightline/checks.toml"),
             false,
         );
         assert!(out.contains("crates/core/src/app.rs"), "the contested file");
         assert!(out.contains("v0.5.0"), "what it is being reconciled onto");
         assert!(out.contains("glue-v0.5.0"), "and where to do the work");
         assert!(
-            out.contains("ironsight-glue"),
+            out.contains("sightline-glue"),
             "and that the knowledge is in the skill: {out}"
         );
         assert!(
@@ -436,11 +436,11 @@ mod tests {
             "/w",
             "/w2",
             &Divergence::default(),
-            Some(".ironsight/checks.toml"),
+            Some(".sightline/checks.toml"),
             false,
         );
         assert!(
-            out.contains("ironsight check") && out.contains("ironsight invariants"),
+            out.contains("sightline check") && out.contains("sightline invariants"),
             "it points at the project's own definition of done: {out}"
         );
         assert!(
@@ -448,8 +448,8 @@ mod tests {
             "and does not assume the project is built the way upstream is"
         );
         assert!(
-            !out.contains("fork of Ironsight"),
-            "nor that the thing being forked is Ironsight itself"
+            !out.contains("fork of Sightline"),
+            "nor that the thing being forked is Sightline itself"
         );
     }
 
@@ -506,7 +506,7 @@ mod tests {
     #[test]
     fn what_the_brief_asks_for_is_what_the_session_is_allowed_to_do() {
         // The failure this guards is quiet and total: a brief that says "run
-        // ironsight check", handed to a session that may not run it. It reports
+        // sightline check", handed to a session that may not run it. It reports
         // itself blocked, and nothing is reconciled.
         let out = brief(
             "v2",
@@ -514,14 +514,14 @@ mod tests {
             "/w",
             "/w2",
             &Divergence::default(),
-            Some(".ironsight/checks.toml"),
+            Some(".sightline/checks.toml"),
             false,
         );
-        for asked in ["ironsight check", "ironsight invariants"] {
+        for asked in ["sightline check", "sightline invariants"] {
             assert!(out.contains(asked), "the brief asks for {asked}: {out}");
         }
         assert!(
-            GRANTED.iter().any(|g| g.contains("ironsight")),
+            GRANTED.iter().any(|g| g.contains("sightline")),
             "so the session is granted it"
         );
     }
@@ -530,7 +530,7 @@ mod tests {
     fn the_ability_is_carried_in_the_binary() {
         // A fork can be taught with nothing fetched, and the copy that teaches
         // it is the one that shipped with this version.
-        assert!(ABILITY.contains("ironsight-glue"), "it is the right file");
+        assert!(ABILITY.contains("sightline-glue"), "it is the right file");
         assert!(
             ABILITY.contains("Invariants") || ABILITY.contains("invariant"),
             "and it carries the part that cannot be worked out from the diff"
@@ -543,14 +543,14 @@ mod tests {
 
     #[test]
     fn installing_it_puts_it_where_an_agent_will_look() {
-        let dir = std::env::temp_dir().join(format!("ironsight-glue-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("sightline-glue-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = install(&dir).expect("it installs into a fresh fork");
         assert!(path.ends_with("SKILL.md"));
         assert!(
             path.to_string_lossy()
-                .contains(".claude/skills/ironsight-glue"),
+                .contains(".claude/skills/sightline-glue"),
             "where Claude Code looks for a skill: {}",
             path.display()
         );
@@ -569,7 +569,7 @@ mod tests {
     fn a_folder_that_is_not_a_repository_is_told_so_rather_than_panicking() {
         // This runs inside someone else's project, which may be laid out
         // nothing like this one. Every step that can fail says what it wanted.
-        let dir = std::env::temp_dir().join(format!("ironsight-notrepo-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("sightline-notrepo-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let out = divergence(&dir, "v1.0.0");

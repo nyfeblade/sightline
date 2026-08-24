@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# Watch `ironsight glue` reconcile a fork that has genuinely diverged.
+# Watch `sightline glue` reconcile a fork that has genuinely diverged.
 #
 #   ./run.sh            build the scenario and show what a plain merge does
 #   ./run.sh --brief    also print the packet the reconciling agent is given
 #   ./run.sh --start    also start the reconciliation (this runs a real agent)
 #
-# Everything happens in /tmp/glue-demo and a scratch Ironsight state directory.
+# Everything happens in /tmp/glue-demo and a scratch Sightline state directory.
 # Your own fleet, your own session list and your own settings are not touched.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEMO=/tmp/glue-demo
-export IRONSIGHT_DATA_DIR=/tmp/glue-demo-state
+export SIGHTLINE_DATA_DIR=/tmp/glue-demo-state
 
-IRONSIGHT="${IRONSIGHT:-$(command -v ironsight || true)}"
-if [ -z "$IRONSIGHT" ]; then
-  echo "ironsight is not on PATH. Set IRONSIGHT=/path/to/ironsight and try again." >&2
+SIGHTLINE="${SIGHTLINE:-$(command -v sightline || true)}"
+if [ -z "$SIGHTLINE" ]; then
+  echo "sightline is not on PATH. Set SIGHTLINE=/path/to/sightline and try again." >&2
   exit 1
 fi
 
@@ -28,7 +28,7 @@ pause() {
   read -r _ || true
 }
 
-rm -rf "$IRONSIGHT_DATA_DIR"; mkdir -p "$IRONSIGHT_DATA_DIR"
+rm -rf "$SIGHTLINE_DATA_DIR"; mkdir -p "$SIGHTLINE_DATA_DIR"
 
 say "1. A fork that has drifted"
 bash "$HERE/setup.sh" "$DEMO" >/dev/null
@@ -61,22 +61,22 @@ git checkout -q main; git branch -qD naive; rm -rf __pycache__ .pytest_cache
 pause
 
 say "3. What this fork says must never stop being true"
-sed -n '/\[\[invariant\]\]/,$p' .ironsight/checks.toml | grep -E '^(name|must)' | sed 's/^/   /'
+sed -n '/\[\[invariant\]\]/,$p' .sightline/checks.toml | grep -E '^(name|must)' | sed 's/^/   /'
 note ""
 note "these are commands that must FAIL. One that succeeds has found the very"
 note "thing it was written to look for. Approving them first, because nothing"
 note "runs out of a repository until it has been read:"
-"$IRONSIGHT" trust "$DEMO" | tail -3
+"$SIGHTLINE" trust "$DEMO" | tail -3
 note ""
-"$IRONSIGHT" invariants
+"$SIGHTLINE" invariants
 pause
 
 say "4. What glue sees"
-"$IRONSIGHT" glue v2.0.0 --dry-run 2>&1 | head -22
+"$SIGHTLINE" glue v2.0.0 --dry-run 2>&1 | head -22
 if [ "${1:-}" = "--brief" ]; then
   note ""
   note "the whole packet the reconciling agent is opened with:"
-  "$IRONSIGHT" glue v2.0.0 --dry-run 2>&1 | tail -n +2
+  "$SIGHTLINE" glue v2.0.0 --dry-run 2>&1 | tail -n +2
 fi
 pause
 
@@ -93,20 +93,20 @@ say "5. Reconciling"
 note "a worktree is cut, the ability is installed into it, and an agent is"
 note "briefed and started there. Watch it in another terminal with:"
 note ""
-note "   IRONSIGHT_DATA_DIR=$IRONSIGHT_DATA_DIR ironsight"
+note "   SIGHTLINE_DATA_DIR=$SIGHTLINE_DATA_DIR sightline"
 note ""
-"$IRONSIGHT" glue v2.0.0
+"$SIGHTLINE" glue v2.0.0
 
-WORKTREE="$("$IRONSIGHT" owned | awk '{print $NF}' | head -1)"
+WORKTREE="$("$SIGHTLINE" owned | awk '{print $NF}' | head -1)"
 say "6. Watching"
 note "worktree: $WORKTREE"
 note ""
-note "while it works:   IRONSIGHT_DATA_DIR=$IRONSIGHT_DATA_DIR ironsight owned"
+note "while it works:   SIGHTLINE_DATA_DIR=$SIGHTLINE_DATA_DIR sightline owned"
 note "when it is idle:  the reconciliation is done, and then you judge it:"
 note ""
 note "   cd $WORKTREE"
 note "   python3 -m pytest -q"
-note "   IRONSIGHT_DATA_DIR=$IRONSIGHT_DATA_DIR ironsight invariants"
+note "   SIGHTLINE_DATA_DIR=$SIGHTLINE_DATA_DIR sightline invariants"
 note ""
 note "the checks say whether it built. The invariants say whether it kept the"
 note "things the fork could not afford to lose. Nothing merged: the branch is"

@@ -25,7 +25,14 @@ use crate::work::Task;
 use std::path::{Path, PathBuf};
 
 /// Where a project keeps its standing decisions.
-pub const FILE: &str = ".ironsight/constitution.md";
+pub const FILE: &str = ".sightline/constitution.md";
+
+/// Where it used to live, and still may.
+///
+/// A project's own files are committed with its code, so a repository written
+/// before the rename has the old directory and there is no upgrade step anyone
+/// would think to run. Both are read; only the new one is written.
+pub const FORMER: &str = ".ironsight/constitution.md";
 
 /// A project's constitution, parsed into the sections a brief draws from.
 ///
@@ -53,9 +60,10 @@ impl Constitution {
     pub fn find(from: &Path) -> Option<(PathBuf, Constitution)> {
         let mut at = Some(from);
         while let Some(dir) = at {
-            let path = dir.join(FILE);
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                return Some((dir.to_path_buf(), Constitution::parse(&text)));
+            for name in [FILE, FORMER] {
+                if let Ok(text) = std::fs::read_to_string(dir.join(name)) {
+                    return Some((dir.to_path_buf(), Constitution::parse(&text)));
+                }
             }
             at = dir.parent();
         }

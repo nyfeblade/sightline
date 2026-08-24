@@ -21,10 +21,10 @@ machine usage per session.
 Everything above is exercised against real sessions rather than only unit tests.
 
 And, since Phase 1, the layer everything else is meant to consume. Every
-transition Ironsight detects is published as a versioned JSON event: to a journal
+transition Sightline detects is published as a versioned JSON event: to a journal
 that survives a restart, to a Unix socket anything on the machine can read, and
-to the window, which is pushed to rather than polling. `ironsight events` follows
-it — attaching to a running Ironsight when there is one, and watching the machine
+to the window, which is pushed to rather than polling. `sightline events` follows
+it — attaching to a running Sightline when there is one, and watching the machine
 itself when there is not, which is the property that makes the layer worth
 having on its own.
 
@@ -67,8 +67,8 @@ that is there.
 
 ## A second kind of session
 
-A session Ironsight holds itself, driven over Claude Code's structured JSON with
-no terminal in the way. `ironsight new <path> --owned` starts one; it takes the
+A session Sightline holds itself, driven over Claude Code's structured JSON with
+no terminal in the way. `sightline new <path> --owned` starts one; it takes the
 same folder, model, permission mode, name, task, parent and brief as any other
 session, and only the way in is different.
 
@@ -76,14 +76,14 @@ The thing that makes it a session rather than a second sort of object is that
 Claude Code in this mode writes an *ordinary* transcript — the same
 `~/.claude/projects/<slug>/<id>.jsonl` every watched session writes. So the feed,
 the files, the plan, the tree, the cost, the Talk view and the stream all work
-for it already: Ironsight only has to say which transcript is which session, and
+for it already: Sightline only has to say which transcript is which session, and
 that it is alive. The conversation id comes off the wire on the agent's first
 line, and everything downstream keys on it.
 
 Two things it needs that a watched session does not:
 
 - **Liveness.** A session driven over pipes never writes a Claude Code registry
-  entry, so nothing else on the machine knows it is running. Ironsight says so
+  entry, so nothing else on the machine knows it is running. Sightline says so
   itself, in the registry's own shape (`registry::Live::owned`), which is why
   every judgement downstream — working, waiting, ended — is made by the same
   code for both kinds.
@@ -97,14 +97,14 @@ window: that is the whole reason for owning a session rather than shelling out.
 `control::owned_home` is the rule, and it is separate from where
 pseudo-terminals live, because tmux cannot hold a pipe.
 
-    ironsight new <path> --owned [--task WHAT] [--permission-mode P]
-    ironsight owned                 what is held, and what each is doing
-    ironsight send <who> <text>     the same command for both kinds
-    ironsight stop <who>            and the same for stopping one
+    sightline new <path> --owned [--task WHAT] [--permission-mode P]
+    sightline owned                 what is held, and what each is doing
+    sightline send <who> <text>     the same command for both kinds
+    sightline stop <who>            and the same for stopping one
 
 Proved end to end: started with a task, briefed from the project's constitution
 as its opening message, answered, spoken to again from a *different* process
-minutes later, both turns in one transcript, listed by `ironsight` and
+minutes later, both turns in one transcript, listed by `sightline` and
 talked to in the window — then stopped by name.
 
 ### What it cannot do, and why
@@ -113,11 +113,11 @@ Nobody can be asked anything mid-run. Claude Code 2.1.241 has no
 `--permission-prompt-tool`, and in `--input-format stream-json` a tool the
 session's settings do not allow is refused outright: the stream carries a
 `system/permission_denied` and the call comes back as an error. There is no
-request to answer, so there is nothing for Ironsight to route to a person.
+request to answer, so there is nothing for Sightline to route to a person.
 
 What there is instead is honesty about it. The permission mode is chosen when
 the session starts (`--permission-mode`, the same flag a terminal session takes)
-and shown in `ironsight owned`, because it decides every tool call for the life
+and shown in `sightline owned`, because it decides every tool call for the life
 of the session. And a refusal is published as `PermissionAnswered` by a
 `Policy` named after that mode — the first thing to produce that event, and the
 truthful reading of it: a decision was made on your behalf, by settings, and you
@@ -164,7 +164,7 @@ resident size elsewhere, because only Linux keeps the shared figure. The second
 number undercounts; it does not overcount, which is the failure that matters.
 
 Sessions created before the rename are named `scope-N`. They are still
-recognised, and new ones are `ironsight-N`. Sessions Ironsight holds by pipe are
+recognised, and new ones are `sightline-N`. Sessions Sightline holds by pipe are
 `owned-N` — a name space of their own on purpose, so that typing the name of a
 terminal session cannot reach one of these.
 
@@ -178,10 +178,10 @@ the running session will watch it claim the wrong pane, which cost an hour once.
 Cross-checking the app crate for Windows from Linux needs `llvm-rc`. Everything
 else checks from here:
 
-    cargo check --target x86_64-pc-windows-msvc -p ironsight-core -p ironsight
+    cargo check --target x86_64-pc-windows-msvc -p sightline-core -p sightline
 
 The event socket is Unix-only — the standard library has no Windows equivalent —
-so there the stream is reached in-process and through `ironsight events`, and
+so there the stream is reached in-process and through `sightline events`, and
 `gateway::serve` says so rather than pretending. The window's UI is compiled
 into the binary, so editing anything under `crates/gui/ui/` needs a rebuild
 before it has any effect; an hour can go into wondering why a change did not
@@ -189,10 +189,10 @@ take.
 
 ## Intent: the constitution and the brief
 
-A project writes its standing decisions once, in `.ironsight/constitution.md` —
+A project writes its standing decisions once, in `.sightline/constitution.md` —
 mission, architecture, constraints, preferences, rejected approaches, what done
 means, open questions — and a decision recorded there outlives the session that
-made it. `ironsight brief <who>` renders a worker's brief from it: the standing
+made it. `sightline brief <who>` renders a worker's brief from it: the standing
 constraints that bear on the task, its success criteria, and its escalation
 conditions, and nothing else, because a brief is not a transcript. A `[tag]`
 prefix scopes a constraint to tasks that mention it, so a database worker is not
@@ -212,10 +212,10 @@ writes exactly the path it showed you.
 
 ## Supervision, and the ceilings under it
 
-A chief is a session with Ironsight on its path, a brief, and a ceiling it cannot
-raise. `ironsight chief <path> <what you want done>` starts one. It is not a new
+A chief is a session with Sightline on its path, a brief, and a ceiling it cannot
+raise. `sightline chief <path> <what you want done>` starts one. It is not a new
 runtime — that is the point, and the recursion falls out: a chief is a session
-Ironsight manages, managing sessions Ironsight manages.
+Sightline manages, managing sessions Sightline manages.
 
 Its brief carries the intent unparaphrased, the project's constitution, the fleet
 as it stands, and three prohibitions. It does not answer permission prompts,
@@ -227,24 +227,24 @@ since an owned chief starts with the editing tools denied.
 
 `limits.rs` is the part that does not depend on the chief reading carefully. A
 count of sessions and an amount of spend, checked at both doors a session can
-come through, refusing with the reason. The real file lives in Ironsight's data
+come through, refusing with the reason. The real file lives in Sightline's data
 directory, outside every worktree, because a ceiling a supervised agent can edit
 is a suggestion in a file it has write access to; a project's
-`.ironsight/limits.toml` may lower it and never raise it, and `effective` is a
+`.sightline/limits.toml` may lower it and never raise it, and `effective` is a
 pure function with a test that a greedy repository gets what the machine allows.
 
-The count is of sessions *Ironsight started*, not of every session on the
+The count is of sessions *Sightline started*, not of every session on the
 machine. It counted everything at first, which meant a dozen of your own open
 sessions ate the whole allowance and no worker could start — and since a chief
 refuses to run without a ceiling, that made the chief unusable on exactly the
 machines busy enough to want one. A supervisor cannot start a session by any
-route other than Ironsight, so this still bounds everything it can do.
-`ironsight limits` shows where you stand, because picking a number without
+route other than Sightline, so this still bounds everything it can do.
+`sightline limits` shows where you stand, because picking a number without
 knowing the current one is guessing.
 
 Spend is counted from the event journal rather than from the sessions currently
 open, since spend you can reset by closing a window is not a ceiling. That has a
-real limit and the command says so: the journal is written while an Ironsight is
+real limit and the command says so: the journal is written while an Sightline is
 running, so a spend ceiling on a machine that only ever runs the commands is
 measuring nothing yet.
 
@@ -256,7 +256,7 @@ A live chief was run against a real project with a real failing check. It read
 the fleet, the constitution and the checks, diagnosed the bug, wrote an
 assignment more precise than the one it was given — including an edge case the
 tests did not cover — started a worker on a worktree, polled its state, and ran
-`ironsight check` and `ironsight trust` against it. A session rate limit stopped
+`sightline check` and `sightline trust` against it. A session rate limit stopped
 it, not a design fault. Two things were learned only by running it: a headless
 supervisor needs an explicit grant for the commands its job is made of, because
 `--allowedTools` grants rather than restricts and nothing can be asked mid-run;
@@ -296,7 +296,7 @@ second ago is not that.
 
 ## Invariants: guarantees that can fire
 
-`.ironsight/checks.toml` takes `[[invariant]]` beside `[[check]]`, and they point
+`.sightline/checks.toml` takes `[[invariant]]` beside `[[check]]`, and they point
 in opposite directions. A check must pass, and a passing check says only that the
 failures it can express did not happen. An invariant is stated as the thing that
 must not be found, so its command must *fail* — one that succeeds has
@@ -304,8 +304,8 @@ demonstrated the very defect it was written to look for.
 
 That direction is what makes them survive a merge. "The tests pass" survives an
 adapter that quietly broke something load-bearing; a command looking for the
-breakage does not. `ironsight invariants` runs them and a quiet run is the good
-one. A broken invariant refuses work: `ironsight check` runs them before the
+breakage does not. `sightline invariants` runs them and a quiet run is the good
+one. A broken invariant refuses work: `sightline check` runs them before the
 suite and sends the task back to Working, because they answer a different
 question — not "is this finished" but "did it break something that was never its
 business".
@@ -334,12 +334,12 @@ layers, the seams a customisation is meant to live in, the invariants that must
 survive, and how upstream tests. That is the same for every fork, so it is
 written once and shipped in the binary as an ability.
 
-    ironsight glue --install     teach this fork's agent, and stop there
-    ironsight glue <version>     compute the divergence, cut a worktree, and
+    sightline glue --install     teach this fork's agent, and stop there
+    sightline glue <version>     compute the divergence, cut a worktree, and
                                  brief an owned session to do the work
 
 `--install` matters on its own: after it, the fork's own agent can be asked to
-reconcile without going through Ironsight at all, which is the point of shipping
+reconcile without going through Sightline at all, which is the point of shipping
 an ability rather than a tool. Maintenance then scales with forks rather than
 with the author's time.
 
@@ -354,7 +354,7 @@ unchanged, uncommitted work in the tree.
 
 A machine that has run agents for a week has a list mostly made of sessions that
 ended days ago. `x` ends a process; `-` ends a row. `=` takes every finished row
-off, `+` puts everything back, and `ironsight hidden --ended` does it from a
+off, `+` puts everything back, and `sightline hidden --ended` does it from a
 shell. Both front ends have it.
 
 Hidden, never deleted: the transcript stays where Claude Code wrote it, `R` still
@@ -362,7 +362,7 @@ finds the conversation and `A` still reopens it.
 
 Any row comes off, running or not, whoever started it. The first version refused
 a running one and said to close it first with `x` — but `x` needs a session
-Ironsight can steer, so for anything it merely watches that was a dead end with
+Sightline can steer, so for anything it merely watches that was a dead end with
 no way out. A live one says so as it goes.
 
 The filter runs on both the fast tick and the slow one. It ran only in `discover`
@@ -382,9 +382,9 @@ would have failed before it:
   errs towards hiding and is tested both ways, including that `-p` is not treated
   as `--password` (which would have masked half the commands here).
 
-- **Nothing runs from a repository until it is read.** `.ironsight/checks.toml`
-  is shell that arrives with someone else's code; `ironsight check` refuses it
-  until those exact commands are approved with `ironsight trust`, and asks again
+- **Nothing runs from a repository until it is read.** `.sightline/checks.toml`
+  is shell that arrives with someone else's code; `sightline check` refuses it
+  until those exact commands are approved with `sightline trust`, and asks again
   if the file changes.
 
 - **A refutation counts only once it has fired.** One that cannot fire stood for
@@ -438,10 +438,10 @@ app with no explanation. Errors now land in the status line.
 ## Where sessions live
 
 Three answers now, chosen at startup rather than at compile time, and asked for
-with `IRONSIGHT_BACKEND`:
+with `SIGHTLINE_BACKEND`:
 
-    tmux        tmux holds them. Outlives Ironsight; needs tmux installed.
-    daemon      a process of Ironsight's own holds them. Outlives every window,
+    tmux        tmux holds them. Outlives Sightline; needs tmux installed.
+    daemon      a process of Sightline's own holds them. Outlives every window,
                 and needs nothing installed.
     hosted      this process holds them. They end when it does.
 
@@ -455,12 +455,12 @@ The daemon owns pseudo-terminals and nothing else. Everything about what a
 session *means* — status, cost, transcripts, tasks — stays in the front ends,
 reading the same files they always read. A daemon that starts making judgements
 is a daemon that has to be restarted to change one. It answers one JSON object
-per line on `~/.local/share/ironsight/control.sock`, and it is started for you
+per line on `~/.local/share/sightline/control.sock`, and it is started for you
 the first time something needs it, in a session of its own so that closing the
 terminal that happened to start it cannot hang it up.
 
-    ironsight serve          run it yourself, to watch it
-    ironsight attach <who>   hand this terminal to a session it holds
+    sightline serve          run it yourself, to watch it
+    sightline attach <who>   hand this terminal to a session it holds
 
 Owned sessions are held by the daemon too, and by a rule of their own
 (`control::owned_home`): the daemon wherever there can be one, this process
@@ -474,7 +474,7 @@ answers questions and does not push, which costs a frame of latency and buys a
 protocol nobody has to debug while a fleet is wedged.
 
 Proved end to end: a session started through the daemon, typed into over the
-socket by a Python client that knows nothing about Ironsight, answering
+socket by a Python client that knows nothing about Sightline, answering
 correctly, still running after the process that created it had exited — and the
 daemon confirmed to be a session leader with no controlling terminal.
 
@@ -492,7 +492,7 @@ to a file that outlives the session.
 
 It errs towards redacting, and its tests run both ways: seven credential shapes
 that must not survive, and ordinary commands — `cargo check --target
-x86_64-pc-windows-msvc -p ironsight-core`, a forty-character git object name, a
+x86_64-pc-windows-msvc -p sightline-core`, a forty-character git object name, a
 long scratch path — that must come through untouched. The first version of that
 test caught `-p` being treated as `--password`, which would have redacted half
 the commands in this repository.
@@ -515,7 +515,7 @@ to answer when one first needs to act.
 
 The v0.4.0 release published artifacts named `scope-*`, built before the rename,
 which the installers no longer match. v0.4.1 exists to correct that; check its
-assets are named `ironsight-*` before pointing anyone at the install line.
+assets are named `sightline-*` before pointing anyone at the install line.
 
 The default branch is `master`, and the installers fetch from it. If the branch
 is ever renamed to `main`, both installers and the README need the same change.

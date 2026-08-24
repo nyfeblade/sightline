@@ -9,7 +9,7 @@ upstream; `run.sh` walks you through what happens to it.
     ./run.sh --brief    also print the packet the reconciling agent is opened with
     ./run.sh --start    also start the reconciliation — this runs a real agent
 
-Everything lives in `/tmp/glue-demo`, with a scratch Ironsight state directory at
+Everything lives in `/tmp/glue-demo`, with a scratch Sightline state directory at
 `/tmp/glue-demo-state`. Your own fleet, session list and settings are untouched.
 
 ## The scenario
@@ -31,13 +31,13 @@ resolving it.
 
 ## What the fork writes down
 
-`.ironsight/checks.toml` says what finished means — its test suite — and, beside
+`.sightline/checks.toml` says what finished means — its test suite — and, beside
 it, two `[[invariant]]` entries: commands that must *fail*, written to succeed
 only when a guarantee has stopped being true. One says every message carries the
 estate tag. The other says the mute switch survives. A merge that drops either
 is caught by something mechanical rather than by somebody noticing weeks later.
 
-`.ironsight/constitution.md` says why, in the fork's own words, and the
+`.sightline/constitution.md` says why, in the fork's own words, and the
 reconciling agent is given it.
 
 ## What to watch
@@ -45,7 +45,7 @@ reconciling agent is given it.
 Step 5 starts an agent in a worktree of its own and prints the command to watch
 it with. In another terminal:
 
-    IRONSIGHT_DATA_DIR=/tmp/glue-demo-state ironsight
+    SIGHTLINE_DATA_DIR=/tmp/glue-demo-state sightline
 
 The session appears in the list with its assignment. Open it and the Talk view
 shows the brief it was opened with and everything it does. When it goes idle,
@@ -57,14 +57,14 @@ away, which is the point: glue does not get to decide the merge worked.
 
 ## One honest note
 
-The `ironsight-glue` ability that ships in the binary is Ironsight's own account
+The `sightline-glue` ability that ships in the binary is Sightline's own account
 of itself — its layers, its seams, its invariants. About half of it is the
 general method (how to classify an upstream change, how to reconcile without
 losing either side, what counts as done, when to stop and ask) and applies to any
-fork. The other half describes Ironsight specifically and does not apply to this
+fork. The other half describes Sightline specifically and does not apply to this
 little Python project.
 
 This demo is therefore showing you the mechanism rather than a perfect fit: the
-divergence, the containment, the brief, and the gate. For a fork of Ironsight
+divergence, the containment, the brief, and the gate. For a fork of Sightline
 itself the whole ability lands. For anything else, that document is the part an
 upstream would write for its own project.

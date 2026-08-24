@@ -1,12 +1,12 @@
 // The desktop front end. It owns no logic: every command here is a thin
-// translation between the window and `ironsight-core`, so the app and the terminal
+// translation between the window and `sightline-core`, so the app and the terminal
 // view cannot answer the same question differently.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use ironsight_core::app::App;
-use ironsight_core::session::Status;
-use ironsight_core::{app as core_app, bootstrap, brief, bus, control, history, usage, work};
 use serde::Serialize;
+use sightline_core::app::App;
+use sightline_core::session::Status;
+use sightline_core::{app as core_app, bootstrap, brief, bus, control, history, usage, work};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::State;
@@ -101,7 +101,7 @@ struct CheckDto {
 struct ReadinessDto {
     ready: bool,
     checks: Vec<CheckDto>,
-    /// what holds sessions here: "tmux", or "Ironsight" where it hosts its own
+    /// what holds sessions here: "tmux", or "Sightline" where it hosts its own
     backend: String,
 }
 
@@ -145,7 +145,7 @@ struct SessionDto {
     /// the tools it has reached for, most used first
     tools: Vec<String>,
     /// It can be spoken to at all — through a terminal, or down a pipe
-    /// Ironsight holds.
+    /// Sightline holds.
     steerable: bool,
     /// It has a terminal behind it. Everything that needs a screen — opening it
     /// in a window, attaching, typing keys — needs this rather than the above.
@@ -194,7 +194,7 @@ struct PastDto {
     open: bool,
 }
 
-fn state_of(s: &ironsight_core::session::Session) -> (String, Option<String>) {
+fn state_of(s: &sightline_core::session::Session) -> (String, Option<String>) {
     match s.status() {
         Status::Running(tool) => ("running".into(), Some(tool)),
         Status::Working => ("working".into(), None),
@@ -282,7 +282,7 @@ fn sessions(shared: State<Shared>) -> Vec<SessionDto> {
             .map(|s| {
                 let (state, tool) = state_of(s);
                 let pane = app.pane_of(&s.id).map(|p| p.session.clone());
-                // A session Ironsight holds has no terminal, but it is held
+                // A session Sightline holds has no terminal, but it is held
                 // somewhere and saying where is the same fact.
                 let held = pane
                     .clone()
@@ -541,7 +541,7 @@ fn errors(shared: State<Shared>, id: String) -> Vec<EventDto> {
         .unwrap_or_default()
 }
 
-/// Every mention of this across every session Ironsight is watching — the same
+/// Every mention of this across every session Sightline is watching — the same
 /// search the terminal view does with `/`.
 #[derive(Serialize)]
 struct HitDto {
@@ -583,7 +583,7 @@ fn queue(shared: State<Shared>, id: String, text: String) -> Result<usize, Strin
     shared.raw(|app| app.queue_for(&id, &text))
 }
 
-/// Say the same thing to every session Ironsight can reach.
+/// Say the same thing to every session Sightline can reach.
 #[tauri::command]
 fn broadcast(shared: State<Shared>, text: String) -> usize {
     shared.raw(|app| app.broadcast(&text))
@@ -639,7 +639,7 @@ fn fleet() -> (String, String) {
     (path.to_string_lossy().into_owned(), text)
 }
 
-/// Close everything Ironsight started, or just what has already finished.
+/// Close everything Sightline started, or just what has already finished.
 #[tauri::command]
 fn close_all() -> Vec<String> {
     control::stop_all()
@@ -718,7 +718,7 @@ fn start(shared: State<Shared>, line: String, name: Option<String>) -> Result<St
         spec.name = Some(n);
     }
     if spec.owned {
-        // A session Ironsight holds itself. Its first message is what names the
+        // A session Sightline holds itself. Its first message is what names the
         // conversation, so the line's prompt is sent as the opening rather than
         // typed in afterwards.
         let opening = spec.prompt.clone();
@@ -733,7 +733,7 @@ fn start(shared: State<Shared>, line: String, name: Option<String>) -> Result<St
     shared.raw(|app| app.start_session(&spec))
 }
 
-/// Bring a conversation somewhere Ironsight can steer it — the one it is showing,
+/// Bring a conversation somewhere Sightline can steer it — the one it is showing,
 /// or any conversation on the machine by id.
 #[tauri::command]
 fn reopen(shared: State<Shared>, id: String, cwd: String) -> Result<String, String> {
@@ -890,7 +890,7 @@ fn open_file(path: String, base: Option<String>) -> Result<FileTextDto, String> 
 fn file_diff(shared: State<Shared>, id: String, path: String) -> Option<String> {
     shared.raw(|app| {
         let cwd = app.sessions.iter().find(|s| s.id == id)?.cwd.clone();
-        ironsight_core::git::diff(std::path::Path::new(&cwd), &path)
+        sightline_core::git::diff(std::path::Path::new(&cwd), &path)
     })
 }
 
@@ -1023,7 +1023,7 @@ fn constitution(shared: State<Shared>, id: String) -> Option<ConstitutionDto> {
     // None yet. Say where one would go, so writing the first is one step
     // rather than a question about where it belongs: the repository, because a
     // constitution is about the project and not about one folder in it.
-    let root = ironsight_core::git::repo_root(here).unwrap_or_else(|| here.to_path_buf());
+    let root = sightline_core::git::repo_root(here).unwrap_or_else(|| here.to_path_buf());
     Some(ConstitutionDto {
         path: root.join(brief::FILE).to_string_lossy().into_owned(),
         text: String::new(),
@@ -1077,7 +1077,7 @@ fn workflow(shared: State<Shared>) -> WorkflowDto {
     shared.raw(|app| {
         let here = app.here();
         let state = app.project_state(&here);
-        let limits = ironsight_core::limits::in_force(&here).unwrap_or_default();
+        let limits = sightline_core::limits::in_force(&here).unwrap_or_default();
         WorkflowDto {
             where_: here.to_string_lossy().into_owned(),
             checks: state.checks,
@@ -1209,13 +1209,13 @@ fn main() {
             // what decides the rate rather than this.
             let ticker = handle.handle().clone();
             std::thread::Builder::new()
-                .name("ironsight-engine".into())
+                .name("sightline-engine".into())
                 .spawn(move || {
                     use tauri::Manager;
                     loop {
                         std::thread::sleep(ENGINE_TICK);
                         // A panic in one tick — an unexpected shape from a file
-                        // Ironsight does not write, some future change — must not
+                        // Sightline does not write, some future change — must not
                         // wedge the engine for the rest of the session. Catch it,
                         // and take the next tick. The lock is poison-tolerant
                         // already (raw() recovers an into_inner), so the state is
@@ -1234,11 +1234,11 @@ fn main() {
             // happened at the moment it happens, and stops asking otherwise.
             let emitter = handle.handle().clone();
             std::thread::Builder::new()
-                .name("ironsight-window-feed".into())
+                .name("sightline-window-feed".into())
                 .spawn(move || {
                     use tauri::Emitter;
                     while let Some(ev) = subscription.recv() {
-                        if emitter.emit("ironsight://event", &ev).is_err() {
+                        if emitter.emit("sightline://event", &ev).is_err() {
                             break;
                         }
                     }

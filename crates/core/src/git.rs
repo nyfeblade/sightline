@@ -257,7 +257,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         run(&dir, &["init", "-q", "-b", "main"]);
-        // The repository carries the identity, not each commit: Ironsight's own
+        // The repository carries the identity, not each commit: Sightline's own
         // merge makes a commit too, and on a machine that has never had git
         // configured — every fresh runner — git refuses without one.
         run(&dir, &["config", "user.email", "test@scope.invalid"]);
@@ -278,7 +278,7 @@ mod tests {
                 "-c",
                 "user.email=test@scope.invalid",
                 "-c",
-                "user.name=Ironsight tests",
+                "user.name=Sightline tests",
                 "commit",
                 "-qm",
                 message,
@@ -347,7 +347,7 @@ mod tests {
         );
         assert_eq!(message, "second");
 
-        let empty = std::env::temp_dir().join("ironsight-git-test-nothing");
+        let empty = std::env::temp_dir().join("sightline-git-test-nothing");
         let _ = std::fs::remove_dir_all(&empty);
         std::fs::create_dir_all(&empty).unwrap();
         assert!(

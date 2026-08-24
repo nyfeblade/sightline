@@ -1592,45 +1592,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a756c3fac73139e83f14c2d742155dd2b78d3ee56597b419a0579b7bdd6dd78"
 
 [[package]]
-name = "ironsight"
-version = "0.4.1"
-dependencies = [
- "anyhow",
- "chrono",
- "crossterm",
- "ironsight-core",
- "libc",
- "serde_json",
-]
-
-[[package]]
-name = "ironsight-core"
-version = "0.4.1"
-dependencies = [
- "chrono",
- "crossterm",
- "libc",
- "portable-pty",
- "serde",
- "serde_json",
- "toml 0.9.12+spec-1.1.0",
- "vt100",
-]
-
-[[package]]
-name = "ironsight-gui"
-version = "0.4.1"
-dependencies = [
- "chrono",
- "crossterm",
- "ironsight-core",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
-]
-
-[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3005,6 +2966,45 @@ name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
+
+[[package]]
+name = "sightline"
+version = "0.4.1"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "crossterm",
+ "libc",
+ "serde_json",
+ "sightline-core",
+]
+
+[[package]]
+name = "sightline-core"
+version = "0.4.1"
+dependencies = [
+ "chrono",
+ "crossterm",
+ "libc",
+ "portable-pty",
+ "serde",
+ "serde_json",
+ "toml 0.9.12+spec-1.1.0",
+ "vt100",
+]
+
+[[package]]
+name = "sightline-gui"
+version = "0.4.1"
+dependencies = [
+ "chrono",
+ "crossterm",
+ "serde",
+ "serde_json",
+ "sightline-core",
+ "tauri",
+ "tauri-build",
+]
 
 [[package]]
 name = "signal-hook"

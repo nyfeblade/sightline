@@ -1,6 +1,6 @@
 //! The event stream, offered to anything else on the machine.
 //!
-//! A Unix domain socket at `~/.local/share/ironsight/events.sock`. Connect to it
+//! A Unix domain socket at `~/.local/share/sightline/events.sock`. Connect to it
 //! and you are written the same JSON lines the journal receives, from the
 //! moment you connect. Nothing is read back: this phase publishes, and does not
 //! take instructions. A command channel is a different decision, with a
@@ -14,7 +14,7 @@
 //! latency to the sessions being watched.
 //!
 //! Windows has no Unix socket in the standard library, so there the stream is
-//! reached in-process and through `ironsight events`. The socket is absent
+//! reached in-process and through `sightline events`. The socket is absent
 //! rather than faked, because a consumer would rather be told than connect to
 //! something that never speaks.
 
@@ -97,7 +97,7 @@ pub fn serve(path: PathBuf, sub: Subscriber) -> io::Result<Gateway> {
     {
         let (stop, clients, pool) = (Arc::clone(&stop), Arc::clone(&clients), Arc::clone(&pool));
         std::thread::Builder::new()
-            .name("ironsight-gateway-accept".into())
+            .name("sightline-gateway-accept".into())
             .spawn(move || {
                 while !stop.load(Ordering::Relaxed) {
                     match listener.accept() {
@@ -129,7 +129,7 @@ pub fn serve(path: PathBuf, sub: Subscriber) -> io::Result<Gateway> {
             Arc::clone(&pool),
         );
         std::thread::Builder::new()
-            .name("ironsight-gateway-fanout".into())
+            .name("sightline-gateway-fanout".into())
             .spawn(move || {
                 while !stop.load(Ordering::Relaxed) {
                     let Some(ev) = sub.recv_timeout(POLL) else {
@@ -173,12 +173,12 @@ pub fn serve(path: PathBuf, sub: Subscriber) -> io::Result<Gateway> {
 pub fn serve(_path: PathBuf, _sub: Subscriber) -> io::Result<Gateway> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
-        "the event socket needs a Unix domain socket; on Windows use `ironsight events`",
+        "the event socket needs a Unix domain socket; on Windows use `sightline events`",
     ))
 }
 
 /// Read the stream from a socket, one event per line, for a consumer that is
-/// not Ironsight. Blocks until the far end closes.
+/// not Sightline. Blocks until the far end closes.
 #[cfg(unix)]
 pub fn follow(path: &Path, mut on: impl FnMut(Event)) -> io::Result<()> {
     for ev in connect(path)? {
@@ -227,7 +227,7 @@ mod tests {
     use std::os::unix::net::UnixStream;
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("ironsight-gw-{name}"));
+        let dir = std::env::temp_dir().join(format!("sightline-gw-{name}"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("events.sock")

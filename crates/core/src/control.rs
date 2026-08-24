@@ -1,26 +1,26 @@
-//! What Ironsight can do to a session, whichever way it reaches one.
+//! What Sightline can do to a session, whichever way it reaches one.
 //!
 //! Steering needs the terminal a session is running inside. Unix has tmux,
-//! which already holds sessions that outlive Ironsight, so that is the backend
+//! which already holds sessions that outlive Sightline, so that is the backend
 //! there. Windows has neither tmux nor any way to reach into a console another
-//! process owns, so Ironsight hosts the pseudo-terminal itself — see `host`. Both
+//! process owns, so Sightline hosts the pseudo-terminal itself — see `host`. Both
 //! backends offer the same functions under the same names, and the rest of
-//! Ironsight is written against these rather than against either one.
+//! Sightline is written against these rather than against either one.
 
 /// Where sessions live.
 ///
-/// This used to be settled at compile time — tmux on Unix, Ironsight's own
+/// This used to be settled at compile time — tmux on Unix, Sightline's own
 /// pseudo-terminals on Windows — which made "self-contained" a thing you could
 /// only have by not having tmux. It is now one decision, made once at startup
 /// and asked for by name.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Backend {
-    /// tmux holds them. Outlives Ironsight, and needs tmux installed.
+    /// tmux holds them. Outlives Sightline, and needs tmux installed.
     Tmux,
     /// This process holds them. Nothing else to install, and they end when it
     /// does — which is why it is not the default anywhere a person is watching.
     Hosted,
-    /// A daemon of Ironsight's own holds them. Nothing else to install, and they
+    /// A daemon of Sightline's own holds them. Nothing else to install, and they
     /// outlive every window.
     Daemon,
 }
@@ -46,10 +46,10 @@ pub fn backend() -> Backend {
 ///
 /// tmux still wins by default where it exists. It is what any sessions already
 /// running are in, and switching underneath them would make a fleet vanish from
-/// the list. `IRONSIGHT_BACKEND=daemon` opts in; when the daemon has been lived
+/// the list. `SIGHTLINE_BACKEND=daemon` opts in; when the daemon has been lived
 /// with, that becomes the default and this comment is the thing to delete.
 fn choose() -> Backend {
-    let asked = std::env::var("IRONSIGHT_BACKEND").ok();
+    let asked = std::env::var("SIGHTLINE_BACKEND").ok();
     #[cfg(windows)]
     let has_tmux = false;
     #[cfg(not(windows))]
@@ -64,7 +64,7 @@ fn choose() -> Backend {
 fn chosen_from(asked: Option<&str>, has_tmux: bool, windows: bool) -> Backend {
     if let Some(asked) = asked {
         match asked.trim().to_lowercase().as_str() {
-            "daemon" | "self" | "ironsight" => return Backend::Daemon,
+            "daemon" | "self" | "sightline" => return Backend::Daemon,
             "hosted" | "process" => return Backend::Hosted,
             // Asking for tmux where there is none would leave every session
             // unreachable, so it is honoured only if it can be.
@@ -100,9 +100,9 @@ macro_rules! on_backend {
     }};
 }
 
-/// Whether sessions survive Ironsight exiting.
-pub fn outlives_ironsight() -> bool {
-    on_backend!(outlives_ironsight())
+/// Whether sessions survive Sightline exiting.
+pub fn outlives_sightline() -> bool {
+    on_backend!(outlives_sightline())
 }
 
 /// What holds them, for saying so to a person.
@@ -138,7 +138,7 @@ pub fn inside_tmux() -> bool {
     on_backend!(inside_tmux())
 }
 
-/// The key Ironsight uses for the way back, whatever it has been named.
+/// The key Sightline uses for the way back, whatever it has been named.
 pub fn way_back_key() -> String {
     #[cfg(windows)]
     {
@@ -154,13 +154,13 @@ pub fn way_back_key() -> String {
 pub fn way_back_state() -> String {
     #[cfg(windows)]
     {
-        "F12 — Ironsight draws the session itself here, so the key is its own".to_string()
+        "F12 — Sightline draws the session itself here, so the key is its own".to_string()
     }
     #[cfg(not(windows))]
     {
         match backend() {
             Backend::Tmux => crate::tmux::way_back_state(),
-            _ => "F12 — Ironsight draws the session itself here, so the key is its own".to_string(),
+            _ => "F12 — Sightline draws the session itself here, so the key is its own".to_string(),
         }
     }
 }
@@ -217,7 +217,7 @@ pub fn open_window(session: &str) -> Result<String, String> {
     on_backend!(open_window(session))
 }
 
-/// End every session Ironsight can end: the terminals, and the ones it holds by
+/// End every session Sightline can end: the terminals, and the ones it holds by
 /// pipe. A person who says "close everything" does not mean "close the ones
 /// that happen to have a terminal".
 pub fn stop_all() -> Vec<String> {
@@ -269,10 +269,10 @@ pub struct Pane {
     pub cwd: String,
 }
 
-/// What a session Ironsight started is called. Sessions made before the rename
+/// What a session Sightline started is called. Sessions made before the rename
 /// carry the old one and are still ours: a rename must not orphan work that is
 /// already running.
-pub const PREFIX: &str = "ironsight-";
+pub const PREFIX: &str = "sightline-";
 pub const FORMER_PREFIX: &str = "scope-";
 
 /// Whether a session is one of ours, under either name.
@@ -280,7 +280,7 @@ pub fn is_ours(session: &str) -> bool {
     session.starts_with(PREFIX) || session.starts_with(FORMER_PREFIX)
 }
 
-/// The next free ironsight-N. Counting up from the highest existing name rather
+/// The next free sightline-N. Counting up from the highest existing name rather
 /// than searching a fixed range means the pool can never be "full" — an early
 /// version scanned scope-1..scope-98 and refused to start anything once those
 /// were taken.
@@ -515,7 +515,7 @@ fn owned_home_from(asked: Option<&str>, unix: bool) -> Home {
 /// Where this run holds owned sessions.
 pub fn owned_home() -> Home {
     owned_home_from(
-        std::env::var("IRONSIGHT_BACKEND").ok().as_deref(),
+        std::env::var("SIGHTLINE_BACKEND").ok().as_deref(),
         cfg!(unix),
     )
 }
@@ -568,7 +568,7 @@ pub fn owned_all() -> Vec<crate::owned::Owned> {
     }
 }
 
-/// Everything the sessions Ironsight holds have said since the last drain.
+/// Everything the sessions Sightline holds have said since the last drain.
 ///
 /// Wherever they are held. In-process the events are buffered beside each
 /// session; under a daemon they are buffered there, and this is the only way
@@ -586,7 +586,7 @@ pub fn owned_drain() -> (Vec<crate::bus::Event>, u64) {
     }
 }
 
-/// Say something to one, by Ironsight's name for it or by its transcript id.
+/// Say something to one, by Sightline's name for it or by its transcript id.
 pub fn owned_say(who: &str, text: &str) -> Result<(), String> {
     match owned_home() {
         Home::Here => crate::owned::say(who, text),
@@ -629,7 +629,7 @@ pub fn owned_reap() -> Vec<String> {
 /// The command that runs Claude Code. On PATH by the name it installs as; an
 /// owned session runs this in stream-json mode.
 pub fn claude_program() -> String {
-    std::env::var("IRONSIGHT_CLAUDE")
+    std::env::var("SIGHTLINE_CLAUDE")
         .ok()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "claude".to_string())
@@ -656,7 +656,7 @@ const TERMINALS: [&str; 8] = [
 ];
 
 /// Run a command in a terminal window of its own. Used to watch a session
-/// outside Ironsight, and to hand the whole thing over to the terminal view from
+/// outside Sightline, and to hand the whole thing over to the terminal view from
 /// the desktop app.
 pub fn open_terminal_with(command: &str) -> Result<String, String> {
     use std::process::{Command, Stdio};
@@ -754,7 +754,7 @@ mod backend_choice {
 
     #[test]
     fn asking_is_honoured() {
-        for word in ["daemon", "self", "ironsight", "DAEMON", " daemon "] {
+        for word in ["daemon", "self", "sightline", "DAEMON", " daemon "] {
             assert_eq!(
                 chosen_from(Some(word), true, false),
                 Backend::Daemon,
@@ -813,19 +813,19 @@ mod tests {
 
     #[test]
     fn names_never_run_out() {
-        assert_eq!(next_name_after(""), "ironsight-1");
-        assert_eq!(next_name_after("work\nnotes"), "ironsight-1");
-        assert_eq!(next_name_after("ironsight-1\nironsight-2"), "ironsight-3");
+        assert_eq!(next_name_after(""), "sightline-1");
+        assert_eq!(next_name_after("work\nnotes"), "sightline-1");
+        assert_eq!(next_name_after("sightline-1\nsightline-2"), "sightline-3");
         // The pool used to stop at 98; it must simply keep counting.
-        let many: String = (1..=98).map(|n| format!("ironsight-{n}\n")).collect();
-        assert_eq!(next_name_after(&many), "ironsight-99");
+        let many: String = (1..=98).map(|n| format!("sightline-{n}\n")).collect();
+        assert_eq!(next_name_after(&many), "sightline-99");
         // Sessions started before the rename still count, so a new one cannot
         // be given a name that is already taken.
         assert_eq!(
-            next_name_after("scope-7\nother\nironsight-3"),
-            "ironsight-8"
+            next_name_after("scope-7\nother\nsightline-3"),
+            "sightline-8"
         );
-        assert!(is_ours("scope-4") && is_ours("ironsight-4") && !is_ours("work"));
+        assert!(is_ours("scope-4") && is_ours("sightline-4") && !is_ours("work"));
     }
 
     const TRUST: &str = "\

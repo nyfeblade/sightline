@@ -14,7 +14,7 @@ typed, a screen actually read back. Three rounds of continuous integration
 failures on other platforms came from tests that asserted something about one
 laptop rather than about the code.
 
-Pin other people's formats. Anything read from a file Ironsight does not write gets
+Pin other people's formats. Anything read from a file Sightline does not write gets
 a fixture in `crates/core/tests/fixtures/` and an assertion that names what
 moved. See `crates/core/tests/compatibility.rs`.
 
@@ -23,7 +23,7 @@ guessing: no reading rather than a made-up number, "cannot tell" rather than a
 confident wrong status. Nothing is closed, killed or answered on a guess.
 
 One implementation, two callers. The commands and the desktop app are front
-ends over `ironsight-core`. Any behaviour that both need lives in core; anything a
+ends over `sightline-core`. Any behaviour that both need lives in core; anything a
 front end knows that the other does not is a bug waiting to be reported twice.
 
 Every layer standalone. Dependencies point downward only. If a layer cannot be
@@ -33,14 +33,14 @@ described as a product with nothing above it, it is not a layer.
 
 ### What it does
 
-Turns state changes Ironsight already detects into a stream anything can consume,
+Turns state changes Sightline already detects into a stream anything can consume,
 so supervision never has to scrape a screen.
 
 ### Where it lives
 
     crates/core/src/event_stream.rs      the types, the bus, the subscribers
     crates/core/src/app.rs               emission points (already the detector)
-    crates/tui/src/main.rs               `ironsight events` subcommand
+    crates/tui/src/main.rs               `sightline events` subcommand
     crates/gui/src/main.rs               a Tauri channel for the window
 
 ### The shape
@@ -52,7 +52,7 @@ pub struct Event {
     pub at: DateTime<Utc>,
     pub session: String,
     pub agent: String,
-    /// the session that started this one, when Ironsight started it
+    /// the session that started this one, when Sightline started it
     pub parent: Option<String>,
     /// the assignment that session was given, when it has one
     pub task: Option<String>,
@@ -99,9 +99,9 @@ Nothing new is detected. Every event has an existing detection point:
 
 Three transports, one format — JSON, one event per line:
 
-    ironsight events                     follow the stream in a terminal
-    ironsight events --since <id>        replay from a point, for a consumer restart
-    ~/.local/share/ironsight/events.sock   a socket for anything else
+    sightline events                     follow the stream in a terminal
+    sightline events --since <id>        replay from a point, for a consumer restart
+    ~/.local/share/sightline/events.sock   a socket for anything else
     Tauri channel                    the window, which stops polling for status
 
 Consumers are never assumed. The bus drops events for a subscriber that has
@@ -121,14 +121,14 @@ sequence of events, asserted whole rather than by sampling.
 Fixture: `compatibility.rs` gains a case that reads the Claude transcript
 fixture and asserts the events it yields, so a format change fails here first.
 
-Live: start a real session under Ironsight, run `ironsight events` beside it, send a
+Live: start a real session under Sightline, run `sightline events` beside it, send a
 message, watch `SessionWorking`, `ToolCalled`, `ChecksFailed` and `SessionWaiting`
 arrive in order; kill the subscriber mid-stream and confirm the engine is
 unaffected.
 
 ### Done when
 
-`ironsight events` prints a correct stream for a real session, the window uses it
+`sightline events` prints a correct stream for a real session, the window uses it
 instead of polling for status, and the compatibility suite covers it.
 
 ## Layer 3 — lineage and task records
@@ -141,7 +141,7 @@ list becomes a tree with work attached to it.
 ### Where it lives
 
     crates/core/src/work.rs                       the types and the store
-    ~/.local/share/ironsight/work.json           the store on disk
+    ~/.local/share/sightline/work.json           the store on disk
     crates/core/src/app.rs                        set on start, read on refresh
 
 ### The shape
@@ -181,9 +181,9 @@ says so, and to `Verified` only by layer 4.
 Front ends: the session list indents children under their parent and shows the
 assignment beneath the name; cost rolls up the tree.
 
-    ironsight tasks                  what exists, and in what state
-    ironsight assign <session> ...   give a session an assignment
-    Ironsight task <id> --note ...   append what was learned
+    sightline tasks                  what exists, and in what state
+    sightline assign <session> ...   give a session an assignment
+    Sightline task <id> --note ...   append what was learned
 
 ### How it is tested
 
@@ -207,13 +207,13 @@ Refuses to accept "done" without evidence. The single highest-value layer.
 ### Where it lives
 
     crates/core/src/checks.rs                     the runner
-    <project>/.ironsight/checks.toml                  what the checks are, per project
+    <project>/.sightline/checks.toml                  what the checks are, per project
 
 ### The shape
 
 ```toml
-# .ironsight/checks.toml — committed with the project, so it is the project's
-# definition of done rather than Ironsight's
+# .sightline/checks.toml — committed with the project, so it is the project's
+# definition of done rather than Sightline's
 [[check]]
 name    = "build"
 run     = "cargo build --release"
@@ -254,7 +254,7 @@ A refutation: a command written to succeed only if the work is wrong. It must
 fail. If it succeeds it has demonstrated the defect it was written to find, and
 the claim is refused with that as the reason.
 
-    ironsight refute t7 "curl -s localhost:8080/admin | grep -q 'secret'"
+    sightline refute t7 "curl -s localhost:8080/admin | grep -q 'secret'"
 
 This inverts where the burden sits. A check asks "did anything I know how to
 look for go wrong"; a refutation asks "what would it look like if this were
@@ -274,7 +274,7 @@ one level down.
 ### A refutation counts only once it has caught something
 
 The same mistake has one more level, and it was live in this codebase until it
-was tested for: `ironsight refute t1 "false"` cannot fire, therefore always
+was tested for: `sightline refute t1 "false"` cannot fire, therefore always
 stands, therefore verified anything. An instrument nobody has watched catch
 anything has demonstrated nothing.
 
@@ -289,7 +289,7 @@ never caught anything.
 ### Nothing runs from a repository until it is read
 
 A checks file is a list of shell commands that arrives with someone else's code.
-`ironsight check` refuses to run any of it until those exact commands have been
+`sightline check` refuses to run any of it until those exact commands have been
 approved, and prints them so there is something to approve. What is remembered
 is the file's contents, so a repository that changes its checks asks again.
 
@@ -312,7 +312,7 @@ code, confirm it verifies.
 A task cannot reach `Verified` while any required check fails — and cannot
 reach it on the strength of passing checks either. The failure is visible to the
 agent that claimed it, in both front ends and from the command line, and
-`ironsight tasks` shows what was tried against a verified task and did not
+`sightline tasks` shows what was tried against a verified task and did not
 fire.
 
 ## Layer 5 — intent
@@ -324,7 +324,7 @@ only the context it needs.
 
 ### Where it lives
 
-    <project>/.ironsight/constitution.md      the project's standing decisions
+    <project>/.sightline/constitution.md      the project's standing decisions
     crates/core/src/brief.rs              rendering a packet from it
 
 ### The constitution
@@ -340,7 +340,7 @@ the session that decided it.
 ### The packet
 
 ```
-ironsight brief <session> --task "implement the OAuth callback"
+sightline brief <session> --task "implement the OAuth callback"
 ```
 
 Renders the assignment, the constraints that apply, the success criteria, and
@@ -367,13 +367,13 @@ recorded once is visible to every session started afterwards.
 
 ### What they are
 
-Not new runtimes. A foreman and a chief are sessions with `ironsight` on their path,
+Not new runtimes. A foreman and a chief are sessions with `sightline` on their path,
 a brief, and permission to run a specific set of commands.
 
-    Foreman: reads `ironsight events`, runs `ironsight check`, appends notes, returns
+    Foreman: reads `sightline events`, runs `sightline check`, appends notes, returns
              claimed work that fails, escalates stalls. Never writes code.
-    Chief:   reads the constitution and `ironsight tasks`, writes assignments, starts
-             workers with `ironsight new --task`, reports to the human, and asks
+    Chief:   reads the constitution and `sightline tasks`, writes assignments, starts
+             workers with `sightline new --task`, reports to the human, and asks
              when a decision exceeds its threshold.
 
 ### Safety, which is not optional
@@ -385,7 +385,7 @@ a brief, and permission to run a specific set of commands.
   marked `By::Policy`.
 - Stalls escalate, never restart. From outside, thinking and wedged look the
   same.
-- Spend and agent-count ceilings are enforced by Ironsight, not by the supervisor's
+- Spend and agent-count ceilings are enforced by Sightline, not by the supervisor's
   good intentions: a start that would exceed them fails with the reason.
 
 ### How it is tested
@@ -432,7 +432,7 @@ implementations found later; decisions re-litigated after being recorded.
 
 Throughput: work verified per hour of wall clock.
 
-Cost: tokens and estimate, from data Ironsight already has, per unit of verified
+Cost: tokens and estimate, from data Sightline already has, per unit of verified
 work rather than per session.
 
 ### What counts as a result
@@ -450,6 +450,6 @@ hierarchy always looks good.
 ### If the answer is no
 
 Layers 0 through 5 stay. Events, lineage, verification and briefing improve
-Ironsight for one person running agents by hand, which is what it is for today. That
+Sightline for one person running agents by hand, which is what it is for today. That
 is the reason for this order: the experiment is cheap because everything under
 it was worth building anyway.

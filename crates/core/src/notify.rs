@@ -18,7 +18,7 @@ pub fn send(title: &str, body: &str) {
     }
     if cfg!(windows) {
         // A toast through PowerShell: no module to install, and it survives
-        // Ironsight being in the background, which is the whole point.
+        // Sightline being in the background, which is the whole point.
         let esc = |s: &str| s.replace('\'', "''");
         let script = format!(
             "$ErrorActionPreference='Stop';\
@@ -37,7 +37,7 @@ pub fn send(title: &str, body: &str) {
         return;
     }
     let mut c = Command::new("notify-send");
-    c.args(["-a", "ironsight", title, body]);
+    c.args(["-a", "sightline", title, body]);
     quiet(c);
 }
 

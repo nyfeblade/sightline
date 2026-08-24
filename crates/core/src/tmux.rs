@@ -1,11 +1,11 @@
 //! Steering sessions through tmux, the backend everywhere but Windows.
 //!
 //! Claude Code's own cross-session channel is a token-authenticated private
-//! socket, so Ironsight drives the terminal instead: a session running in a tmux
+//! socket, so Sightline drives the terminal instead: a session running in a tmux
 //! pane can be typed into exactly as a person would type into it. That keeps
 //! permission prompts, slash commands and every other interactive affordance
 //! working, and it does not depend on Claude Code internals. Sessions outlive
-//! Ironsight, because tmux holds them, not scope.
+//! Sightline, because tmux holds them, not scope.
 //!
 //! Sessions started outside tmux are observable but not steerable. Nothing here
 //! fails loudly when tmux is missing — the control keys simply say so.
@@ -119,7 +119,7 @@ pub fn send_key(pane: &str, key: &str) -> Result<(), String> {
         .map(|_| ())
 }
 
-/// True when Ironsight is itself running inside tmux. Attaching from there is
+/// True when Sightline is itself running inside tmux. Attaching from there is
 /// refused by tmux — the client has to be switched instead.
 pub fn inside_tmux() -> bool {
     std::env::var_os("TMUX").is_some()
@@ -139,14 +139,14 @@ fn show_way_back(session: &str, hint: &str) {
 /// A desktop or a terminal can take a key before tmux ever sees it — F12 is a
 /// drop-down console in more than one setup — so it can be named.
 pub fn way_back() -> String {
-    std::env::var("IRONSIGHT_WAY_BACK")
+    std::env::var("SIGHTLINE_WAY_BACK")
         .ok()
         .filter(|k| !k.trim().is_empty())
         .unwrap_or_else(|| "F12".into())
 }
 
 /// What it should do depends on how you got to the session, and tmux can work
-/// that out itself: a client that has a previous session came from Ironsight and
+/// that out itself: a client that has a previous session came from Sightline and
 /// switches back to it, and a client that was made by attaching has nowhere to
 /// switch to, so it detaches.
 const WAY_BACK_ACTION: [&str; 4] = [
@@ -157,7 +157,7 @@ const WAY_BACK_ACTION: [&str; 4] = [
 ];
 
 /// Whether the key is free. tmux key tables belong to the whole server rather
-/// than to one session, so a key someone has already bound is theirs, and Ironsight
+/// than to one session, so a key someone has already bound is theirs, and Sightline
 /// says the tmux way out instead of quietly taking it.
 fn way_back_is_free() -> bool {
     let Some(table) = tmux(&["list-keys", "-T", "root"]) else {
@@ -168,7 +168,7 @@ fn way_back_is_free() -> bool {
 
 /// Whether the key can be taken, from the table as tmux prints it.
 ///
-/// Free means unbound — or bound to Ironsight's own action, which is not
+/// Free means unbound — or bound to Sightline's own action, which is not
 /// somebody else's binding at all. tmux key tables belong to the whole server
 /// and outlive any one client, so a run that was killed rather than closed
 /// leaves the key bound behind it. Reading that as "taken" is how the next run
@@ -185,10 +185,10 @@ fn free_in(table: &str, key: &str) -> bool {
     }
 }
 
-/// Take the key for as long as Ironsight is running.
+/// Take the key for as long as Sightline is running.
 ///
 /// It used to be taken for the length of one attach, which meant the key worked
-/// from `a` and from nowhere else — while the hint Ironsight had written on the
+/// from `a` and from nowhere else — while the hint Sightline had written on the
 /// session's status line stayed there, promising a key that was no longer
 /// bound. Returns whether it was taken, which is also whether to promise it.
 pub fn hold_way_back() -> bool {
@@ -211,7 +211,7 @@ pub fn drop_way_back(held: bool) {
 
 /// What the way back actually is right now, for saying so to a person.
 ///
-/// Three different answers, and only one of them is the one Ironsight prints
+/// Three different answers, and only one of them is the one Sightline prints
 /// everywhere else, so it is worth being able to ask.
 pub fn way_back_state() -> String {
     if !available() {
@@ -223,18 +223,18 @@ pub fn way_back_state() -> String {
     };
     let ours = holds_way_back();
     if ours {
-        format!("{key} — bound, and it is Ironsight's")
+        format!("{key} — bound, and it is Sightline's")
     } else if free_in(&table, &key) {
-        format!("{key} — free, and taken when Ironsight starts")
+        format!("{key} — free, and taken when Sightline starts")
     } else {
         format!(
-            "{key} is bound by something else, so Ironsight leaves it alone and \
-             the way back is tmux's own detach. Name another with IRONSIGHT_WAY_BACK"
+            "{key} is bound by something else, so Sightline leaves it alone and \
+             the way back is tmux's own detach. Name another with SIGHTLINE_WAY_BACK"
         )
     }
 }
 
-/// Whether Ironsight currently holds it, for anything that wants to say so.
+/// Whether Sightline currently holds it, for anything that wants to say so.
 pub fn holds_way_back() -> bool {
     tmux(&["list-keys", "-T", "root"])
         .map(|table| {
@@ -252,22 +252,22 @@ pub fn holds_way_back() -> bool {
 /// What to tell someone about getting back.
 ///
 /// Both ways, when there are two. The single key is the nicer one and it is
-/// what Ironsight offers — but a desktop, a terminal emulator or a keyboard that
+/// what Sightline offers — but a desktop, a terminal emulator or a keyboard that
 /// does not send the function key at all will swallow it before tmux ever sees
 /// it, and then the status line is promising something that does nothing and
 /// the person is stuck in a session with no way out that they know of. tmux's
 /// own detach always works, so it is always named.
 fn hint(taken: bool, tmux_way: &str) -> String {
     if taken {
-        format!(" {} → back to Ironsight · or {tmux_way} ", way_back())
+        format!(" {} → back to Sightline · or {tmux_way} ", way_back())
     } else {
-        format!(" {tmux_way} → back to Ironsight ")
+        format!(" {tmux_way} → back to Sightline ")
     }
 }
 
-/// Show a session full-screen. Returns true when Ironsight's own terminal was
+/// Show a session full-screen. Returns true when Sightline's own terminal was
 /// handed over and must be taken back afterwards; false when the tmux client
-/// was switched instead, which leaves Ironsight running where it is.
+/// was switched instead, which leaves Sightline running where it is.
 pub fn attach(session: &str) -> Result<bool, String> {
     let held = holds_way_back();
     if inside_tmux() {
@@ -647,7 +647,7 @@ pub fn end_process(pid: i64) -> bool {
 }
 
 /// Open a session in a new terminal window, attached to its tmux session, so
-/// it can be watched without giving up the Ironsight view.
+/// it can be watched without giving up the Sightline view.
 pub fn open_window(session: &str) -> Result<String, String> {
     // A window opened this way is a client like any other, so it gets the same
     // way back — and is told the truth about which one.
@@ -655,7 +655,7 @@ pub fn open_window(session: &str) -> Result<String, String> {
     crate::control::open_terminal_with(&format!("tmux attach -t {session}"))
 }
 
-/// Close every session Ironsight started or adopted, leaving any tmux session the
+/// Close every session Sightline started or adopted, leaving any tmux session the
 /// user made themselves alone. Returns the names that were closed.
 pub fn stop_all() -> Vec<String> {
     let Some(out) = tmux(&["list-sessions", "-F", "#{session_name}"]) else {
@@ -670,11 +670,11 @@ pub fn stop_all() -> Vec<String> {
     closed
 }
 
-/// Whether sessions outlive the Ironsight process that started them. tmux holds
+/// Whether sessions outlive the Sightline process that started them. tmux holds
 /// them, so they do; that is what makes the one-shot subcommands meaningful.
 pub const OUTLIVES_SCOPE: bool = true;
 
-/// What to call the place Ironsight steers sessions from, in a sentence.
+/// What to call the place Sightline steers sessions from, in a sentence.
 pub const WHERE: &str = "tmux";
 
 /// How to look at a session outside scope.
@@ -693,19 +693,19 @@ pub fn unavailable_hint() -> &'static str {
     "tmux is not installed"
 }
 
-/// Where a session Ironsight can steer is running, for the session card.
+/// Where a session Sightline can steer is running, for the session card.
 pub fn where_hint(session: &str) -> String {
     format!("steerable · tmux {session}")
 }
 
-/// Sessions that would end if Ironsight exited now. tmux holds its own, so none.
+/// Sessions that would end if Sightline exited now. tmux holds its own, so none.
 pub fn hosted_count() -> usize {
     0
 }
 
 /// The two facts about a backend, as functions, so one dispatcher can ask every
 /// backend the same question.
-pub fn outlives_ironsight() -> bool {
+pub fn outlives_sightline() -> bool {
     OUTLIVES_SCOPE
 }
 
@@ -745,7 +745,7 @@ mod way_back_tests {
     }
 
     #[test]
-    fn a_binding_left_behind_by_ironsight_is_ironsights_to_take_back() {
+    fn a_binding_left_behind_by_sightline_is_sightlines_to_take_back() {
         // The bug this is here for. tmux key tables belong to the server and
         // outlive any one client, so a run that was killed rather than closed
         // leaves the key bound. Reading that as somebody else's meant the next
@@ -761,7 +761,7 @@ mod way_back_tests {
     #[test]
     fn a_key_somebody_else_bound_stays_theirs() {
         // The other half, and the one that must not regress: a key you have
-        // already bound is yours, and Ironsight tells you the tmux way instead
+        // already bound is yours, and Sightline tells you the tmux way instead
         // of stealing it.
         let table = format!("{UNRELATED}\n{SOMEBODY_ELSES}\n");
         assert!(!free_in(&table, "F12"));

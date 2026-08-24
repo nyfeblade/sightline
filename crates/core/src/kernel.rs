@@ -46,13 +46,13 @@ pub fn schemas() -> Vec<Value> {
         }),
         json!({
             "name": "fleet",
-            "description": "What Ironsight is running right now: every worker, whether \
+            "description": "What Sightline is running right now: every worker, whether \
                             it is busy, and what it is doing.",
             "inputSchema": {"type": "object", "properties": {}},
         }),
         json!({
             "name": "claim",
-            "description": "Say the work you were assigned is finished. Ironsight runs                             the project's checks and its refutations and tells you what                             they actually showed. Saying you are done does not make it                             so, and this is how you find out.",
+            "description": "Say the work you were assigned is finished. Sightline runs                             the project's checks and its refutations and tells you what                             they actually showed. Saying you are done does not make it                             so, and this is how you find out.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -94,7 +94,7 @@ pub fn call(session: &str, name: &str, args: &Value) -> Result<String, String> {
         "fleet" => Ok(fleet()),
         "tell" => tell(args),
         "claim" => claim(session, args),
-        other => Err(format!("{other} is not one of Ironsight's tools")),
+        other => Err(format!("{other} is not one of Sightline's tools")),
     }
 }
 
@@ -112,7 +112,7 @@ pub fn call(session: &str, name: &str, args: &Value) -> Result<String, String> {
 ///   spent the thing the ceiling was protecting;
 /// - it is given no permission mode, so every call prompts and every prompt is
 ///   this kernel. `acceptEdits` would be the obvious kindness and it is the one
-///   thing that must not be done: it approves writes before Ironsight is asked,
+///   thing that must not be done: it approves writes before Sightline is asked,
 ///   which blinds the scope kernel to exactly the calls it exists for.
 fn assign(args: &Value) -> Result<String, String> {
     let path = args
@@ -157,7 +157,7 @@ fn assign(args: &Value) -> Result<String, String> {
         // until the session has a name — so the task is handed over *after* it is
         // written down. Given as the opening message instead, the worker could
         // reach its first write before its own assignment existed and be refused
-        // for something Ironsight had not finished doing.
+        // for something Sightline had not finished doing.
         opening: None,
         policy: Some(policy.on_assigned_work()),
         kernel_tools: false,
@@ -222,7 +222,7 @@ fn claim(session: &str, args: &Value) -> Result<String, String> {
         .ok_or("claim needs a summary of what you did")?;
     let here = owned::get(session)
         .map(|o| std::path::PathBuf::from(o.cwd))
-        .ok_or("this session is not one Ironsight is holding")?;
+        .ok_or("this session is not one Sightline is holding")?;
 
     let path = crate::work::path_in(&crate::app::data_dir());
     let mut store = crate::work::Store::load(path);
@@ -271,7 +271,7 @@ mod tests {
         // Which of the two the tool sees is not documented, and guessing wrong
         // means a supervisor is told its tool does not exist.
         assert!(call("owned-1", "fleet", &json!({})).is_ok());
-        assert!(call("owned-1", "mcp__ironsight__fleet", &json!({})).is_ok());
+        assert!(call("owned-1", "mcp__sightline__fleet", &json!({})).is_ok());
         assert!(call("owned-1", "nonsense", &json!({})).is_err());
     }
 
@@ -316,7 +316,7 @@ mod tests {
             let name = tool["name"].as_str().unwrap();
             let answer = call("owned-1", name, &json!({}));
             assert!(
-                !matches!(&answer, Err(e) if e.contains("not one of Ironsight's tools")),
+                !matches!(&answer, Err(e) if e.contains("not one of Sightline's tools")),
                 "{name} is offered but not implemented"
             );
         }

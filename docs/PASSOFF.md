@@ -1,4 +1,4 @@
-# Passoff — resume the Ironsight build
+# Passoff — resume the Sightline build
 
 Written 2026-08-24. Read this, then `docs/STATE.md` (what is true now),
 `docs/PLATFORM.md` (the layers and why), and `docs/BUILD.md` (how each layer is
@@ -20,11 +20,11 @@ published `v0.4.1` base (`aa01afa`) and are untouched. The stack, bottom to top:
     master (v0.4.1)
       └─ review/1-platform     event model, verification, daemon, hardening
           └─ review/2-gui      Talk view, redesign, icon
-              └─ review/3-stream-json  owned sessions   (== ironsight-integration)
+              └─ review/3-stream-json  owned sessions   (== sightline-integration)
                   └─ layer-5-intent    constitution + brief, tasks --json
                       └─ solidify      engine panic-resilience, then this work
 
-Three PRs are open on GitHub (`nyfeblade/ironsight`), each reviewing exactly one
+Three PRs are open on GitHub (`nyfeblade/sightline`), each reviewing exactly one
 slice (base is the slice below):
 
 - PR #1 `review/1-platform → master`
@@ -32,7 +32,7 @@ slice (base is the slice below):
 - PR #3 `review/3-stream-json → review/2-gui`
 
 All three had a cloud ultrareview; 20 findings across them, all real, all fixed
-with tests. `ironsight-integration` is stale — it sits at the PR #3 tip.
+with tests. `sightline-integration` is stale — it sits at the PR #3 tip.
 `solidify` is the one to build from and to base any new branch on.
 
 Layer 5 and everything after it is **not yet in a review PR**, and that is now
@@ -47,17 +47,17 @@ before building on top of it.
 ## What is built (layers)
 
 - **0 substrate, 1 compatibility, 2 events, 3 lineage/tasks** — built earlier.
-- **4 verification** — checks + fire-once refutations + `ironsight foreman`.
+- **4 verification** — checks + fire-once refutations + `sightline foreman`.
   Checks only ever *refuse*; a task reaches Verified only when a refutation
   written to show the work wrong was run, did not fire, and has been seen to
-  fire at least once. Nothing runs from a repo's `.ironsight/checks.toml` until
-  `ironsight trust` approves those exact commands.
-- **5 intent** — `.ironsight/constitution.md`, parsed into fixed sections;
-  `ironsight brief <who>` renders a task-focused packet. `--task` briefs a
+  fire at least once. Nothing runs from a repo's `.sightline/checks.toml` until
+  `sightline trust` approves those exact commands.
+- **5 intent** — `.sightline/constitution.md`, parsed into fixed sections;
+  `sightline brief <who>` renders a task-focused packet. `--task` briefs a
   session as its opening message. Both halves are now in the window: a session's
   brief, and the constitution read and edited in place.
 - **6 supervision** — both halves. The foreman refuses claimed work that does not
-  pass. `ironsight chief` starts a supervisor: Ironsight on its path, a brief,
+  pass. `sightline chief` starts a supervisor: Sightline on its path, a brief,
   and a ceiling it cannot raise. It will not start without ceilings in force,
   because granting something else the power to start sessions is exactly the
   case they exist for.
@@ -66,26 +66,26 @@ before building on top of it.
   only from a command: hand work to a chief, set a project up, ceilings, run the
   invariants. `App::start_chief`, `set_up_project`, `run_invariants` and
   `set_ceilings` live in the engine and the commands call them.
-- **Ceilings** — `limits.rs`. A count of Ironsight's own running sessions and an
+- **Ceilings** — `limits.rs`. A count of Sightline's own running sessions and an
   amount of spend, checked at both doors, in a file outside every worktree. A
   project may lower them and never raise them.
-- **Invariants** — `[[invariant]]` in `.ironsight/checks.toml`, commands that
-  must *fail*. `ironsight invariants` runs them; a broken one refuses work.
+- **Invariants** — `[[invariant]]` in `.sightline/checks.toml`, commands that
+  must *fail*. `sightline invariants` runs them; a broken one refuses work.
 - **Glue** — an ability shipped in the binary that teaches a fork's own agent
-  upstream's architecture, seams and invariants, plus `ironsight glue` to drive
+  upstream's architecture, seams and invariants, plus `sightline glue` to drive
   the reconciliation in a worktree.
-- **Off-roadmap:** the daemon (`ironsight serve`), and owned sessions.
+- **Off-roadmap:** the daemon (`sightline serve`), and owned sessions.
 
 ## Owned sessions, which everything above is built on
 
-`ironsight new <path> --owned` starts a session Ironsight holds itself, spoken to
+`sightline new <path> --owned` starts a session Sightline holds itself, spoken to
 over Claude Code's stream-json with no terminal. It takes the same folder, model,
 permission mode, name, task, parent and brief as any other session.
 
 The design turns on one fact, which was checked against the real tool before a
 line was written: **a headless stream-json session writes an ordinary
 transcript**, at the usual `~/.claude/projects/<slug>/<id>.jsonl`. So every view
-already works on it, and Ironsight only supplies the two things a watched session
+already works on it, and Sightline only supplies the two things a watched session
 gets for free — liveness (no registry entry is ever written for one) and a way in
 (no pane to type into). See `## A second kind of session` in `STATE.md`.
 
@@ -95,7 +95,7 @@ this one assumed that seam existed. It does not; `claude --help` has no such
 flag. In this mode a tool the settings do not allow is refused outright — the
 stream carries `system/permission_denied` and the call returns an error — so
 there is no request to route to a person. What was done instead: the permission
-mode is chosen at start and shown in `ironsight owned`, and a refusal is
+mode is chosen at start and shown in `sightline owned`, and a refusal is
 published as `PermissionAnswered` by a `Policy` named after that mode. If a later
 Claude Code adds a permission seam, `owned::Parser` is where it lands.
 
@@ -113,7 +113,7 @@ what would actually be worth the effort:
    the same agents by hand (Layer 7/8 of `PLATFORM.md`)? Everything it needs
    exists now. `BUILD.md` has the protocol; it is a bet to run, not code.
 3. **Live with the daemon**, and with a chief. Both work; neither has been used
-   for a week. Sustained daily use on `IRONSIGHT_BACKEND=daemon` is the only
+   for a week. Sustained daily use on `SIGHTLINE_BACKEND=daemon` is the only
    thing that will find what is left.
 4. **Glue against a real fork.** It is proved end to end against a fixture with
    a genuine two-sided divergence, and never against a fork someone actually
@@ -133,18 +133,18 @@ what would actually be worth the effort:
 - A chief has run once, well, until a session rate limit stopped it. That is
   evidence it starts and orients, and no evidence about a long run.
 - The spend ceiling is measured from the event journal, which is only written
-  while an Ironsight window or terminal view is running. On a machine that only
-  ever runs the commands it measures nothing, and `ironsight limits` says so.
+  while an Sightline window or terminal view is running. On a machine that only
+  ever runs the commands it measures nothing, and `sightline limits` says so.
 
 ## Gotchas that will cost you time
 
-- **NEVER `pkill`/`killall` by process name** (`ironsight`, `ironsight-gui`,
+- **NEVER `pkill`/`killall` by process name** (`sightline`, `sightline-gui`,
   `claude`). It kills the user's own running TUI/app, and a killed TUI strands
   their terminal in mouse-reporting mode. Kill only specific pids you recorded,
   and `tmux kill-session -t <exact name>` for tmux. `pkill -f` also matches the
   Bash-tool's own shell → bare `Exit code 144`. To rescue a stranded terminal:
   `printf '\033[?1003l\033[?1002l\033[?1000l\033[?1006l\033[?25h' > /dev/pts/N`.
-- **Run tests and experiments under `IRONSIGHT_DATA_DIR=<scratch>`.** The daemon
+- **Run tests and experiments under `SIGHTLINE_DATA_DIR=<scratch>`.** The daemon
   socket, journal and task store all live there, so an experiment cannot then
   touch the user's real fleet — and the daemon you start is one you can kill by
   the pid you recorded.
@@ -161,7 +161,7 @@ what would actually be worth the effort:
   failing on the tip unnoticed, which means somebody had been reading
   `cargo test --lib` and calling it green.
 - **The stack is a real dependency chain.** review/1-platform builds as
-  `-p ironsight-core -p ironsight` only. Fixes flow bottom-up: fix a lower
+  `-p sightline-core -p sightline` only. Fixes flow bottom-up: fix a lower
   branch, rebase the upper ones, force-push with `--force-with-lease`.
 - **Match arms are ordered, and this bit three times in one afternoon.** An
   unguarded `KeyCode::Char('w')` swallows a guarded `Char('w') if ctrl` written

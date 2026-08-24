@@ -102,7 +102,7 @@ pub struct Task {
     /// Refutations that have been seen to fire at least once.
     ///
     /// A refutation nobody has ever watched catch anything is an unvalidated
-    /// instrument. `ironsight refute t1 "false"` cannot fire, stands for ever,
+    /// instrument. `sightline refute t1 "false"` cannot fire, stands for ever,
     /// and would otherwise verify anything — which is the same mistake as
     /// trusting a passing suite, one level further down.
     ///
@@ -232,7 +232,7 @@ impl Store {
 
     /// Pick up a store another process has written.
     ///
-    /// `ironsight assign` is a separate, short-lived process, so the Ironsight
+    /// `sightline assign` is a separate, short-lived process, so the Sightline
     /// holding the stream would otherwise stamp events with lineage it read at
     /// startup and never hear about an assignment made a minute ago.
     ///
@@ -473,7 +473,7 @@ impl Store {
 
     /// Move every record from one session id to another.
     ///
-    /// A session Ironsight has just started is known only by the pane it is
+    /// A session Sightline has just started is known only by the pane it is
     /// running in — it has no transcript yet, so it has no id of its own — and
     /// an assignment given at that moment is filed under `pane:%7`. Minutes
     /// later the session writes its first record and acquires a real id. Without
@@ -585,7 +585,7 @@ mod tests {
     use super::*;
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("ironsight-work-{name}"));
+        let dir = std::env::temp_dir().join(format!("sightline-work-{name}"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("work.json")
@@ -817,18 +817,18 @@ mod tests {
         watching.save().unwrap();
         assert!(watching.task_for("worker").is_none());
 
-        // What `ironsight assign` does, in a process of its own.
+        // What `sightline assign` does, in a process of its own.
         {
             let mut elsewhere = Store::load(path.clone());
-            elsewhere.assign("worker", "something asked for while Ironsight was running");
+            elsewhere.assign("worker", "something asked for while Sightline was running");
             elsewhere.save().unwrap();
         }
 
         watching.reload_if_stale();
         assert_eq!(
             watching.task_for("worker").map(|t| t.assignment.as_str()),
-            Some("something asked for while Ironsight was running"),
-            "an assignment made beside a running Ironsight reaches the stream it stamps"
+            Some("something asked for while Sightline was running"),
+            "an assignment made beside a running Sightline reaches the stream it stamps"
         );
     }
 
@@ -887,7 +887,7 @@ mod tests {
     #[test]
     fn a_session_keeps_its_work_when_it_acquires_a_real_name() {
         let mut s = Store::new();
-        // What Ironsight knows at the moment it starts a session: a pane, and
+        // What Sightline knows at the moment it starts a session: a pane, and
         // nothing else.
         s.record_lineage("pane:%7", "chief");
         let id = s.assign("pane:%7", "write the parser");
@@ -952,7 +952,7 @@ mod tests {
         let path = scratch("corrupt");
         std::fs::write(&path, "{ this is not json").unwrap();
         let s = Store::load(path.clone());
-        assert!(s.is_empty(), "Ironsight still starts");
+        assert!(s.is_empty(), "Sightline still starts");
         assert!(
             path.with_extension("json.unreadable").exists(),
             "and what could not be read is kept, not deleted"

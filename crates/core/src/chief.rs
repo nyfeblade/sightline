@@ -1,12 +1,12 @@
 //! The brief that turns a session into a supervisor.
 //!
-//! A chief is not a new runtime. It is a session with `ironsight` on its path, a
+//! A chief is not a new runtime. It is a session with `sightline` on its path, a
 //! brief, and a ceiling it cannot raise — which is exactly what a worker is,
-//! one level up. The recursion is the point: a chief is a session Ironsight
-//! manages, managing sessions Ironsight manages, and everything it does shows
+//! one level up. The recursion is the point: a chief is a session Sightline
+//! manages, managing sessions Sightline manages, and everything it does shows
 //! up in the same list and the same stream as everything else.
 //!
-//! What is written here is Ironsight's opinion about supervision, so it lives in
+//! What is written here is Sightline's opinion about supervision, so it lives in
 //! the binary rather than in your repository. What is yours — mission,
 //! architecture, constraints, what done means — comes from the constitution and
 //! is quoted into the brief beside it. The chief is told what it may do by this
@@ -42,14 +42,14 @@ pub const DENIED: &[&str] = &["Write", "Edit", "NotebookEdit"];
 /// Not a sandbox — an allow list grants and does not restrict. It is here
 /// because a headless session cannot be asked anything, so a command the
 /// machine's own settings do not already cover is refused outright. The first
-/// live chief could not run a single `ironsight` command for exactly this
+/// live chief could not run a single `sightline` command for exactly this
 /// reason, and correctly reported itself blocked rather than working around it.
 /// These are the commands the job is made of.
 pub const GRANTED: &[&str] = &["Read", "Grep", "Glob"];
 
 /// What a chief is *not* granted, and why the list above is now short.
 ///
-/// A chief used to be given `Bash(ironsight:*)`, because the way it started a
+/// A chief used to be given `Bash(sightline:*)`, because the way it started a
 /// worker was to run a command. That is no longer how it works — it asks the
 /// kernel — and the grants had to go with it for a reason worth stating: a
 /// granted tool does not prompt, and a call that does not prompt never reaches
@@ -74,7 +74,7 @@ pub fn brief(
 
     out.push_str(
         "You are the chief of a fleet of coding agents, driven through a tool called\n\
-         Ironsight. You decide what work is to be done and by whom, you check that it\n\
+         Sightline. You decide what work is to be done and by whom, you check that it\n\
          was actually done, and you report back. You do not write the code.\n\n",
     );
 
@@ -128,7 +128,7 @@ pub fn brief(
     out.push_str("CEILINGS\n");
     out.push_str(&format!("  {}\n", limits.describe()));
     out.push_str(
-        "\x20 Ironsight enforces these. A start that would exceed one fails and tells\n\
+        "\x20 Sightline enforces these. A start that would exceed one fails and tells\n\
          \x20 you so; there is nothing you can do about it from here, and nothing you\n\
          \x20 need to do about it except plan within them. If they are too tight for\n\
          \x20 the work, say so in your report — do not work around them.\n\n",
@@ -138,14 +138,14 @@ pub fn brief(
 
     out.push_str(
         "HOW TO WORK\n\
-         \x20 You do not start processes. Ironsight does, when you ask it to, and it\n\
+         \x20 You do not start processes. Sightline does, when you ask it to, and it\n\
          \x20 gives you three tools for the purpose:\n\
          \n\
          \x20   assign(path, task)   start a worker on one assignment\n\
          \x20   fleet()              every worker, whether it is busy, what it is doing\n\
          \x20   tell(who, text)      say something to a worker you started\n\
          \n\
-         \x20 This is not a formality. A worker Ironsight starts is confined to its\n\
+         \x20 This is not a formality. A worker Sightline starts is confined to its\n\
          \x20 directory, counted against the ceilings, and stopped when the fleet is\n\
          \x20 stopped. One you started yourself would be none of those things, so\n\
          \x20 there is no way to start one and no reason to look for one.\n\
@@ -165,7 +165,7 @@ pub fn brief(
          \x20 Claimed when the worker says so, Checked when the project's checks pass,\n\
          \x20 and Verified only when something written to show the work wrong was run,\n\
          \x20 did not fire, and has been seen to fire at some point. Do not report work\n\
-         \x20 as done on a worker's word. Run `ironsight check`.\n\n",
+         \x20 as done on a worker's word. Run `sightline check`.\n\n",
     );
 
     out.push_str(
@@ -319,7 +319,7 @@ mod tests {
         assert!(out.contains("at most 3 sessions of its own running"));
         assert!(out.contains("at most $10.00"));
         assert!(
-            out.contains("Ironsight enforces these"),
+            out.contains("Sightline enforces these"),
             "and that it is not being asked to respect them: {out}"
         );
     }
@@ -343,7 +343,7 @@ mod tests {
 
     #[test]
     fn nothing_the_chief_is_granted_can_bypass_the_boundary() {
-        // This test used to assert the opposite: that `Bash(ironsight:*)` was
+        // This test used to assert the opposite: that `Bash(sightline:*)` was
         // granted, because running a command was how a chief started a worker.
         // It asks the kernel now, and the grant had to go — a granted tool does
         // not prompt, and a call that does not prompt never reaches the gate.
@@ -375,7 +375,7 @@ mod tests {
             "the way to create work has to be in the brief"
         );
         assert!(
-            !brief.contains("ironsight new"),
+            !brief.contains("sightline new"),
             "a chief told to shell out is the copy-paster this replaced"
         );
         assert!(

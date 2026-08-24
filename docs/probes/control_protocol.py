@@ -229,7 +229,7 @@ def probe_kernel_tools(work):
     kernel executing it.
     """
     tool = {"name": "remember",
-            "description": "Store a note in Ironsight's kernel. Use this when asked to remember something.",
+            "description": "Store a note in Sightline's kernel. Use this when asked to remember something.",
             "inputSchema": {"type": "object",
                             "properties": {"note": {"type": "string"}},
                             "required": ["note"]}}
@@ -251,7 +251,7 @@ PROBES = {"allow": probe_allow, "deny": probe_deny, "rewrite": probe_rewrite,
 if __name__ == "__main__":
     which = sys.argv[1:] or ["all"]
     names = list(PROBES) if which == ["all"] else which
-    work = tempfile.mkdtemp(prefix="ironsight-probe-")
+    work = tempfile.mkdtemp(prefix="sightline-probe-")
     print(f"working in {work}\n")
     results = [PROBES[n](work) for n in names]
     print(f"\n{sum(1 for r in results if r)}/{len(results)} proved")

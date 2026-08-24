@@ -1,11 +1,11 @@
 ---
-name: ironsight-glue
-description: Reconcile a customised fork of Ironsight onto a new upstream release. Use when running `ironsight glue <version>`, when a fork has diverged from upstream and needs merging, when an upstream change breaks a local customisation, or when asked to update/rebase/reconcile an Ironsight fork. Encodes upstream's architecture, seams, invariants and testing procedure so the merge can be done by adapters rather than by hand.
+name: sightline-glue
+description: Reconcile a customised fork of Sightline onto a new upstream release. Use when running `sightline glue <version>`, when a fork has diverged from upstream and needs merging, when an upstream change breaks a local customisation, or when asked to update/rebase/reconcile an Sightline fork. Encodes upstream's architecture, seams, invariants and testing procedure so the merge can be done by adapters rather than by hand.
 ---
 
-# Reconciling an Ironsight fork
+# Reconciling an Sightline fork
 
-You are updating someone's customised fork of Ironsight onto a newer upstream
+You are updating someone's customised fork of Sightline onto a newer upstream
 release. You know their fork; this document is what upstream knows. Read it
 before you touch the diff.
 
@@ -57,7 +57,7 @@ Inside `core`, roughly bottom to top:
     checks.rs       the project's definition of done, and refutations
     brief.rs        the constitution, and the packet a worker is briefed with
     limits.rs       ceilings a supervisor cannot raise
-    owned.rs        sessions Ironsight holds by pipe rather than by terminal
+    owned.rs        sessions Sightline holds by pipe rather than by terminal
     chief.rs        the brief that turns a session into a supervisor
     app.rs          the engine: discovery, refresh, steering, everything wired
 
@@ -78,7 +78,7 @@ rather than to revert the trait.
 function names. Upstream adding a function to that set breaks a fork's custom
 backend loudly, at compile time, which is the good case: implement it.
 
-**Project configuration** — everything under a project's `.ironsight/`:
+**Project configuration** — everything under a project's `.sightline/`:
 `checks.toml`, `constitution.md`, `limits.toml`. These are data, never code. A
 fork that wants new project-level configuration should add a file here rather
 than a flag.
@@ -108,7 +108,7 @@ it exists, use it.
 2. **The event vocabulary is a promise.** `bus::VERSION` is 1. Fields are added,
    never removed or repurposed; kinds are added, never renamed. Anything else
    bumps the version, with both emitted for one release. A fork that renames a
-   kind has broken every consumer, including `ironsight events`.
+   kind has broken every consumer, including `sightline events`.
 
 3. **Redaction is on the way out, never on the way in.** Command lines are
    masked before they reach the journal or the socket. The interface still shows
@@ -121,13 +121,13 @@ it exists, use it.
    `Verified`, and only a refutation that *has been seen to fire* can carry a
    task to `Verified`. Never let a passing check write "verified".
 
-5. **Nothing runs from a repository until it is read.** `.ironsight/checks.toml`
-   is shell arriving with someone else's code; `ironsight trust` approves those
+5. **Nothing runs from a repository until it is read.** `.sightline/checks.toml`
+   is shell arriving with someone else's code; `sightline trust` approves those
    exact commands, and it asks again if the file changes. Never add a path that
    executes project configuration without the trust gate.
 
-6. **A ceiling lives outside the worktree.** `limits.toml` in Ironsight's data
-   directory is the real ceiling; a project's `.ironsight/limits.toml` may only
+6. **A ceiling lives outside the worktree.** `limits.toml` in Sightline's data
+   directory is the real ceiling; a project's `.sightline/limits.toml` may only
    lower it. A fork that moves ceilings into the repository has made them
    editable by the thing they constrain.
 
@@ -176,7 +176,7 @@ two texts.
 **A change to an invariant above.** Stop. Do not reconcile this automatically.
 Report it to the user with the invariant named and what upstream did to it.
 
-**A rename or a move.** Follow it. Upstream renamed `scope` to `ironsight` once
+**A rename or a move.** Follow it. Upstream renamed `scope` to `sightline` once
 and left the old names recognised so running sessions were not orphaned; expect
 that pattern and preserve both sides of it if the fork depends on either.
 
@@ -184,9 +184,9 @@ that pattern and preserve both sides of it if the fork depends on either.
 
 The list above is prose, and prose cannot fire. Upstream also ships the same
 guarantees as commands, in the `[[invariant]]` entries of
-`.ironsight/checks.toml`:
+`.sightline/checks.toml`:
 
-    ironsight invariants
+    sightline invariants
 
 Each is written to *fail*. One that succeeds has found the very thing it was
 looking for, so a quiet run is the good one. This is the part of the gate that
@@ -203,11 +203,11 @@ you wrote, that is not a test to adjust: it is the merge being wrong.
 This is the gate. Run all of it from the worktree, not from the fork's main
 checkout.
 
-    ironsight invariants
+    sightline invariants
     cargo fmt --check
     cargo test
     node crates/gui/ui/tokenize.test.mjs
-    cargo check --target x86_64-pc-windows-msvc -p ironsight-core -p ironsight
+    cargo check --target x86_64-pc-windows-msvc -p sightline-core -p sightline
 
 Notes that will cost you time if nobody says them:
 
@@ -228,7 +228,7 @@ it. A reconciliation with no new tests has not been shown to reconcile anything.
 
 ## The protocol
 
-1. **Read before diffing.** The fork's `README`, its `.ironsight/constitution.md`
+1. **Read before diffing.** The fork's `README`, its `.sightline/constitution.md`
    if it has one, and `git log` on the fork's own commits. You are about to make
    decisions about what the fork was for; find out.
 

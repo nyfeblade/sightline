@@ -1,7 +1,7 @@
-//! Ironsight holding its own sessions.
+//! Sightline holding its own sessions.
 //!
 //! On Unix, sessions have lived in tmux because tmux outlives the program that
-//! started them: close Ironsight and your agents keep working. That is the only
+//! started them: close Sightline and your agents keep working. That is the only
 //! reason for the dependency, and it is a good one — losing a fleet because a
 //! window was closed would be indefensible.
 //!
@@ -97,7 +97,7 @@ pub enum Request {
     },
     /// Every owned session this daemon holds.
     OwnedAll,
-    /// Say something to one, by Ironsight's name for it or by its transcript id.
+    /// Say something to one, by Sightline's name for it or by its transcript id.
     Say {
         who: String,
         text: String,
@@ -267,7 +267,7 @@ pub fn serve(path: PathBuf) -> std::io::Result<()> {
         // A client that stalls mid-request must not stall the others, and a
         // client that dies must not take the daemon with it.
         std::thread::Builder::new()
-            .name("ironsight-client".into())
+            .name("sightline-client".into())
             .spawn(move || {
                 let reader = BufReader::new(match stream.try_clone() {
                     Ok(s) => s,
@@ -360,7 +360,7 @@ pub fn ensure_running() -> Result<(), String> {
     if let Ok(Reply::Hello { wire, pid }) = ask(&Request::Hello) {
         return Err(format!(
             "a daemon (pid {pid}) is already holding sessions and speaks wire {wire}, not {WIRE} \
-             — it is running an older Ironsight. Stop it, or leave this to it."
+             — it is running an older Sightline. Stop it, or leave this to it."
         ));
     }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
@@ -506,7 +506,7 @@ mod tests {
     use super::*;
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("ironsight-daemon-{name}"));
+        let dir = std::env::temp_dir().join(format!("sightline-daemon-{name}"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("control.sock")
@@ -598,9 +598,9 @@ pub mod backend {
     use crate::host;
 
     pub const OUTLIVES_SCOPE: bool = true;
-    pub const WHERE: &str = "Ironsight";
+    pub const WHERE: &str = "Sightline";
 
-    pub fn outlives_ironsight() -> bool {
+    pub fn outlives_sightline() -> bool {
         OUTLIVES_SCOPE
     }
 
@@ -698,7 +698,7 @@ pub mod backend {
     }
 
     /// tmux binds a key so a person can get back out of a session. Here the
-    /// way back is closing the window Ironsight put the session in, so there is
+    /// way back is closing the window Sightline put the session in, so there is
     /// nothing to hold.
     pub fn hold_way_back() -> bool {
         false
@@ -706,29 +706,29 @@ pub mod backend {
 
     pub fn drop_way_back(_held: bool) {}
 
-    /// Handing a terminal over to a session is `ironsight attach`, which is a
+    /// Handing a terminal over to a session is `sightline attach`, which is a
     /// command rather than something the engine does to the caller.
     pub fn attach(_session: &str) -> Result<bool, String> {
-        Err("run `ironsight attach <session>` from a terminal".into())
+        Err("run `sightline attach <session>` from a terminal".into())
     }
 
     pub fn open_window(session: &str) -> Result<String, String> {
-        crate::control::open_terminal_with(&format!("ironsight attach {session}"))
+        crate::control::open_terminal_with(&format!("sightline attach {session}"))
     }
 
     pub fn attach_hint(session: &str) -> String {
-        format!("attach with: ironsight attach {session}")
+        format!("attach with: sightline attach {session}")
     }
 
     pub fn steer_hint(name: &str) -> String {
-        format!("{name} is held by Ironsight and can be typed into from here")
+        format!("{name} is held by Sightline and can be typed into from here")
     }
 
     pub fn unavailable_hint() -> &'static str {
-        "Ironsight could not start the process that holds sessions"
+        "Sightline could not start the process that holds sessions"
     }
 
     pub fn where_hint(session: &str) -> String {
-        format!("held by Ironsight · ironsight attach {session}")
+        format!("held by Sightline · sightline attach {session}")
     }
 }

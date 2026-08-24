@@ -1,5 +1,5 @@
 [package]
-name = "ironsight-gui"
+name = "sightline-gui"
 description = "Desktop app for watching and steering Claude Code sessions"
 version.workspace = true
 edition.workspace = true
@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [[bin]]
-name = "ironsight-gui"
+name = "sightline-gui"
 path = "src/main.rs"
 
 [features]
@@ -19,11 +19,11 @@ custom-protocol = ["tauri/custom-protocol"]
 # The Windows icon is compiled into the binary by a resource compiler that only
 # exists on a Windows host (or with llvm-rc installed), so cross-checking this
 # crate from Linux needs one. `cargo check --target x86_64-pc-windows-msvc
-# -p ironsight-core -p ironsight` checks everything that does not.
+# -p sightline-core -p sightline` checks everything that does not.
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-ironsight-core = { path = "../core" }
+sightline-core = { path = "../core" }
 crossterm.workspace = true
 chrono.workspace = true
 tauri = { version = "2", features = [] }

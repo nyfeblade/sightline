@@ -1,8 +1,8 @@
-//! Sessions Ironsight owns, spoken to over a protocol instead of a terminal.
+//! Sessions Sightline owns, spoken to over a protocol instead of a terminal.
 //!
 //! Everything else here watches sessions a person started in their own
 //! terminal: it reads the transcript they leave and scrapes the screen they
-//! draw, because that is all an outsider gets. A session Ironsight *starts* has
+//! draw, because that is all an outsider gets. A session Sightline *starts* has
 //! a better option. Claude Code will speak structured JSON — one object per
 //! line in, one per line out — with no pseudo-terminal in the middle:
 //!
@@ -17,9 +17,9 @@
 //! change here is a documented, versioned interface changing, not a screen
 //! that quietly stops parsing.
 //!
-//! This module is the adapter: the protocol parsed into Ironsight's own event
+//! This module is the adapter: the protocol parsed into Sightline's own event
 //! model, and the process driven over its pipes. It does not replace watched
-//! sessions — those are why Ironsight exists — it adds a second kind that a
+//! sessions — those are why Sightline exists — it adds a second kind that a
 //! foreman and a chief can drive without a terminal in the way.
 //!
 //! What it does not yet do: interactive permissions. In this mode a tool is
@@ -59,7 +59,7 @@ pub struct Parser {
     /// session to the transcript at
     /// `~/.claude/projects/<slug>/<session_id>.jsonl` that every other view
     /// already reads. Without it an owned session would need a second
-    /// implementation of everything Ironsight shows about a session.
+    /// implementation of everything Sightline shows about a session.
     claude_session: Option<String>,
     /// The permission mode the agent says it is running under, off the init
     /// line. It is what decides every tool call in this mode, and it is the
@@ -301,7 +301,7 @@ pub fn argv(spec: &Spec) -> Vec<String> {
     // permitted. What it is for is the opposite problem — a headless session
     // cannot be asked, so a command it needs and the settings do not cover is
     // simply refused, and the session spends its turn saying so. That is not
-    // hypothetical: a chief with no grant could not run a single `ironsight`
+    // hypothetical: a chief with no grant could not run a single `sightline`
     // command and correctly reported itself blocked.
     //
     // Not passed when a policy is attached, and this is not a tidiness
@@ -324,7 +324,7 @@ pub fn argv(spec: &Spec) -> Vec<String> {
         }
     }
     // The seam `claude --help` does not mention, and the reason any of this is
-    // more than advice: every permission decision is routed to a tool Ironsight
+    // more than advice: every permission decision is routed to a tool Sightline
     // serves in-process, so `gate::decide` runs before the call does.
     if spec.policy.is_some() {
         v.push("--permission-prompt-tool".into());
@@ -343,12 +343,12 @@ pub fn argv(spec: &Spec) -> Vec<String> {
     v
 }
 
-/// The MCP server Ironsight serves to its own sessions, in this process.
+/// The MCP server Sightline serves to its own sessions, in this process.
 ///
 /// In-process on purpose. A server on a socket, or a CLI on the session's PATH,
 /// is a second way to reach the kernel and therefore a second thing to secure.
 /// This one exists only for the length of a pipe.
-pub const SERVER: &str = "ironsight";
+pub const SERVER: &str = "sightline";
 /// The tool every permission decision arrives at.
 pub const APPROVE: &str = "approve";
 
@@ -387,13 +387,13 @@ pub struct Spec {
     pub opening: Option<String>,
     /// What it may do, decided here rather than by the settings it inherited.
     ///
-    /// With a policy the session is started with a permission tool Ironsight
+    /// With a policy the session is started with a permission tool Sightline
     /// serves itself, so every call stops at `gate::decide` before it happens.
     /// Without one the session runs under whatever its permission mode allows,
     /// which is the older behaviour and still what a one-shot wants.
     #[serde(default)]
     pub policy: Option<crate::gate::Policy>,
-    /// Whether Ironsight also offers this session tools of its own.
+    /// Whether Sightline also offers this session tools of its own.
     ///
     /// This is how a supervisor creates work: not by starting a process, which
     /// would put it outside everything below, but by asking the kernel to.
@@ -447,7 +447,7 @@ pub fn user_message(text: &str) -> String {
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Owned {
-    /// What Ironsight calls it: the handle a person or a foreman uses.
+    /// What Sightline calls it: the handle a person or a foreman uses.
     pub name: String,
     pub cwd: String,
     /// The model it was asked for; empty means the agent's own default.
@@ -577,7 +577,7 @@ impl Control {
         )
     }
 
-    /// The JSON-RPC server Ironsight serves in this process.
+    /// The JSON-RPC server Sightline serves in this process.
     fn mcp(&mut self, id: &str, inner: Value, session: &str) -> Vec<Event> {
         let method = inner.get("method").and_then(Value::as_str).unwrap_or("");
         let call_id = inner.get("id").cloned().unwrap_or(Value::Null);
@@ -783,7 +783,7 @@ impl OwnedSession {
         let serving = spec.kernel_tools;
         if let Some(stdout) = stdout {
             let spawned = std::thread::Builder::new()
-                .name("ironsight-owned-read".into())
+                .name("sightline-owned-read".into())
                 .spawn(move || {
                     // One parser for the whole session, so a failed result can
                     // name the tool that produced it.
@@ -902,7 +902,7 @@ impl OwnedSession {
     /// May block for as long as the agent takes to read it. Only the input is
     /// held while it does, so the session can still be asked about and still be
     /// stopped.
-    /// Tell the session which servers Ironsight serves, so the permission tool
+    /// Tell the session which servers Sightline serves, so the permission tool
     /// it was started with resolves to this process.
     ///
     /// Sent before the opening message, because the first thing the session does
@@ -911,7 +911,7 @@ impl OwnedSession {
         use std::io::Write;
         let line = serde_json::json!({
             "type": "control_request",
-            "request_id": "ironsight-init",
+            "request_id": "sightline-init",
             "request": {"subtype": "initialize", "sdkMcpServers": [SERVER]},
         });
         let mut held = take(&self.stdin);
@@ -991,9 +991,9 @@ impl Drop for OwnedSession {
 // because an owned session writes an ordinary transcript. A store that also
 // held meaning would be a second implementation of the whole program.
 
-/// The name space for sessions Ironsight holds by pipe rather than by terminal.
+/// The name space for sessions Sightline holds by pipe rather than by terminal.
 ///
-/// Distinct from `ironsight-N` on purpose: those are terminal sessions, and a
+/// Distinct from `sightline-N` on purpose: those are terminal sessions, and a
 /// person who types the name of one should not reach the other.
 pub const PREFIX: &str = "owned-";
 
@@ -1109,7 +1109,7 @@ pub fn start(
         Stderr::Quiet,
         // Kept, not dropped. What the session does arrives here live, on the
         // pipe, as it happens — the tool call before its result, the failure
-        // with its reason. Ironsight used to learn the same things by re-reading
+        // with its reason. Sightline used to learn the same things by re-reading
         // the transcript on a poll, which is archaeology: later, lossier, and
         // reconstructed rather than witnessed.
         //
@@ -1180,7 +1180,7 @@ pub fn list() -> Vec<Owned> {
     all
 }
 
-/// One of them, by the name Ironsight gave it or by the transcript id the agent
+/// One of them, by the name Sightline gave it or by the transcript id the agent
 /// gave it. Both are how a caller might know it: a person says `owned-3`, a
 /// front end that has matched it to a transcript says the session id.
 pub fn get(who: &str) -> Option<Owned> {
@@ -1550,7 +1550,7 @@ mod tests {
         // reads one user message from stdin and answers with a real init line,
         // a tool call, and a result — proving spawn, write, read and parse
         // without an API call.
-        let dir = std::env::temp_dir().join("ironsight-owned-shim");
+        let dir = std::env::temp_dir().join("sightline-owned-shim");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let shim = dir.join("fake-claude");
@@ -1670,7 +1670,7 @@ mod tests {
         );
         assert!(is_owned_name("owned-3"));
         assert!(
-            !is_owned_name("ironsight-3"),
+            !is_owned_name("sightline-3"),
             "a terminal session is not one of these"
         );
     }
@@ -1682,7 +1682,7 @@ mod tests {
     #[cfg(unix)]
     fn multi_turn_shim(tag: &str, id: &str) -> std::path::PathBuf {
         use std::os::unix::fs::PermissionsExt;
-        let dir = std::env::temp_dir().join(format!("ironsight-fleet-{tag}"));
+        let dir = std::env::temp_dir().join(format!("sightline-fleet-{tag}"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let shim = dir.join("fake-claude");
@@ -1784,7 +1784,7 @@ mod tests {
         // A shim that answers nothing and exits at once: the failure mode of a
         // missing binary, a bad flag, or an agent that is not logged in.
         use std::os::unix::fs::PermissionsExt;
-        let dir = std::env::temp_dir().join("ironsight-fleet-dead");
+        let dir = std::env::temp_dir().join("sightline-fleet-dead");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let shim = dir.join("fake-claude");
@@ -1837,7 +1837,7 @@ mod tests {
 
         let _turn = fleet_turn();
         use std::os::unix::fs::PermissionsExt;
-        let dir = std::env::temp_dir().join("ironsight-fleet-deaf");
+        let dir = std::env::temp_dir().join("sightline-fleet-deaf");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         // Reads nothing, ever, and stays alive. Its input pipe fills and the
@@ -1997,12 +1997,12 @@ mod tests {
         // The half that is not a guarantee but is still necessary: a headless
         // session cannot be asked, so a command it needs and the machine's
         // settings do not cover is refused outright.
-        let v = argv(&Spec::default().allowing(&["Bash(ironsight *)", "Read"]));
+        let v = argv(&Spec::default().allowing(&["Bash(sightline *)", "Read"]));
         let at = v
             .iter()
             .position(|a| a == "--allowedTools")
             .unwrap_or_else(|| panic!("the grant is passed: {v:?}"));
-        assert_eq!(v[at + 1], "Bash(ironsight *)");
+        assert_eq!(v[at + 1], "Bash(sightline *)");
         assert_eq!(v[at + 2], "Read");
     }
 
@@ -2029,12 +2029,12 @@ mod tests {
         // as a restriction looks like a sandbox and is not one.
         let v = argv(
             &Spec::default()
-                .allowing(&["Bash(ironsight *)"])
+                .allowing(&["Bash(sightline *)"])
                 .denying(&["Write"]),
         );
         let allow = v.iter().position(|a| a == "--allowedTools").unwrap();
         let deny = v.iter().position(|a| a == "--disallowedTools").unwrap();
-        assert_eq!(v[allow + 1], "Bash(ironsight *)");
+        assert_eq!(v[allow + 1], "Bash(sightline *)");
         assert_eq!(v[deny + 1], "Write");
         assert!(allow < deny, "and both survive being passed together");
     }

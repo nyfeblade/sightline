@@ -1,4 +1,4 @@
-# Ironsight redesign — for review
+# Sightline redesign — for review
 
 Written 2026-08-24, to be argued with. This is a proposal, not a plan of record.
 `PLATFORM.md` is the current direction and `STATE.md` is what is actually built;
@@ -7,12 +7,12 @@ parts are opinion and which are established fact.
 
 ## The one-line version
 
-Ironsight stops being a thing that watches other people's agents and becomes the
+Sightline stops being a thing that watches other people's agents and becomes the
 thing that runs them: its own session type, its own supervision loop, its own
 permission model, driven from a surface you type into. Monitoring stops being
 the product and becomes a kernel service.
 
-## What Ironsight is today
+## What Sightline is today
 
 Three crates, one engine, two front ends. It watches Claude Code sessions by
 reading the transcripts and registry Claude Code writes, steers them by typing
@@ -38,7 +38,7 @@ should survive this redesign untouched.
 ## What is wrong with it
 
 **The supervisory loop is prose.** `chief::brief` renders a document and hands it
-to a model. Nothing in Ironsight knows what step a chief is on, notices when it
+to a model. Nothing in Sightline knows what step a chief is on, notices when it
 skips one, or can say it has been forty minutes with nothing checked. Two of the
 three prohibitions in that brief are unenforceable.
 
@@ -46,8 +46,8 @@ three prohibitions in that brief are unenforceable.
 best of three runs read the constitution and the checks, diagnosed the bug, and
 wrote an assignment more precise than the one it was given — including an edge
 case the tests did not cover. Then everything else it did was run shell commands
-a person could have run faster: `ironsight new`, poll, `ironsight check`,
-`ironsight trust`. Its entire contribution was rewording the task. At one worker
+a person could have run faster: `sightline new`, poll, `sightline check`,
+`sightline trust`. Its entire contribution was rewording the task. At one worker
 and one task, that is an indirection, not a supervisor.
 
 **The inversion.** Everything mechanical — start a worker, wait, run the checks,
@@ -57,14 +57,14 @@ genuinely needs a model happens once, in the first thirty seconds. It is exactly
 the wrong way round.
 
 **Borrowed processes.** Every limitation that hurt in practice came from the
-agent not being Ironsight's: a permissions field silently dropped by a daemon
+agent not being Sightline's: a permissions field silently dropped by a daemon
 built before it existed; a grant list discovered only by watching a chief fail
 and report itself blocked; no way to ask a person anything mid-run.
 
 ## The finding that changes the options
 
 Claude Code's shipped binary speaks an undocumented control protocol over the
-same stream-json pipes Ironsight already uses. Extracted from
+same stream-json pipes Sightline already uses. Extracted from
 `~/.local/share/claude/versions/2.1.241`:
 
     type: "control_request" | "control_response" | "control_cancel_request"
@@ -79,13 +79,13 @@ same stream-json pipes Ironsight already uses. Extracted from
 
 **This has been driven, and it works.** A permission request was routed out of a
 headless session, answered by the host, and the tool call went through — on a
-subscription, from plain JSON over the pipes Ironsight already uses, with no SDK,
+subscription, from plain JSON over the pipes Sightline already uses, with no SDK,
 no Node and no API key.
 
 ### What was actually exercised
 
     client → {"type":"control_request", request_id, request:{
-                 subtype:"initialize", hooks:{}, sdkMcpServers:["ironsight"]}}
+                 subtype:"initialize", hooks:{}, sdkMcpServers:["sightline"]}}
     CLI    → control_response success, carrying the session's command list
 
     CLI    → control_request mcp_message: JSON-RPC "initialize"
@@ -108,7 +108,7 @@ no Node and no API key.
 The session was started with:
 
     claude -p --verbose --input-format stream-json --output-format stream-json \
-           --permission-prompt-tool mcp__ironsight__approve
+           --permission-prompt-tool mcp__sightline__approve
 
 ### Two traps, each of which cost a run
 
@@ -123,13 +123,13 @@ the handshake — no error, no output, nothing in stderr.
 
 ### What it means
 
-- Permissions can be Ironsight's, routed to Sightline, on a subscription
+- Permissions can be Sightline's, routed to Sightline, on a subscription
 - Turns can be interrupted (`interrupt`, with `cancel_queued`)
 - Permission mode can be changed mid-session (`set_permission_mode`)
-- **Ironsight can host MCP tools inside every session it starts.** This is the
+- **Sightline can host MCP tools inside every session it starts.** This is the
   syscall interface from the changes list below, already available. An agent
-  asking Ironsight for something stops being "shell out to `ironsight` and hope
-  it was granted permission" and becomes a tool call over a channel Ironsight
+  asking Sightline for something stops being "shell out to `sightline` and hope
+  it was granted permission" and becomes a tool call over a channel Sightline
   owns — which removes the grant-list problem rather than working around it.
 
 This is most of what "own the loop" was going to buy, without writing a model
@@ -139,7 +139,7 @@ permissions were.
 
 Note the mechanism: `canUseTool` in the Node SDK and `--permission-prompt-tool`
 are alternatives — the binary refuses both at once — and the SDK almost certainly
-implements the former using the latter plus an in-process MCP server. Ironsight
+implements the former using the latter plus an in-process MCP server. Sightline
 does not need the SDK to reach it.
 
 ## The proposed shape
@@ -163,7 +163,7 @@ adopts an OS for its process viewer.
 
 ### The kernel
 
-What Ironsight becomes. It already has processes with identity and lifecycle,
+What Sightline becomes. It already has processes with identity and lifecycle,
 isolation, resource limits, accounting, persistence and a shell. Three things
 are missing and they are the OS parts:
 
@@ -175,14 +175,14 @@ human, so say so in Sightline. The model is consulted where judgement is
 irreducible and nowhere else. Everything previously described as "the workflow
 belongs in the heart" is this.
 
-**A syscall interface.** An agent that wants something from Ironsight currently
-shells out to `ironsight` and hopes it has been granted permission. That is not
-an interface. It should be MCP tools that Ironsight hosts inside each session it
+**A syscall interface.** An agent that wants something from Sightline currently
+shells out to `sightline` and hopes it has been granted permission. That is not
+an interface. It should be MCP tools that Sightline hosts inside each session it
 starts — verified as working above — so the request arrives over a channel
-Ironsight owns, with the session's identity attached, and no grant list to get
+Sightline owns, with the session's identity attached, and no grant list to get
 wrong.
 
-**A permission model of Ironsight's own.** Currently delegated to whichever
+**A permission model of Sightline's own.** Currently delegated to whichever
 vendor binary is running, which is why a worker can be refused something you
 would have approved. In an OS, the kernel decides what a process may do.
 
@@ -210,7 +210,7 @@ interface; delete the session.
 
 3. **Route permissions to Sightline.** A tool call needing approval appears where
    you are, and your answer goes back over the control protocol. This is the
-   single capability that makes Ironsight something the vendor CLIs are not.
+   single capability that makes Sightline something the vendor CLIs are not.
 
 4. **Build the scheduler.** Task state already exists and is the state machine;
    what is missing is the thing that advances it without asking a model.
@@ -221,7 +221,7 @@ interface; delete the session.
    worktrees.
 
 6. **Give the chief the accumulated record.** Today it reads the same repository
-   you can read, which is why it has nothing to add. Ironsight holds every task
+   you can read, which is why it has nothing to add. Sightline holds every task
    this project has run, what failed and how, which refutations have ever fired,
    what notes were left, what it all cost — and hands the chief a task list. A
    supervisor whose edge is memory across sessions is doing something you
@@ -234,7 +234,7 @@ interface; delete the session.
    problem.
 
 9. **Demote the compatibility layer.** Reading other people's transcripts,
-   scraping panes, the Aider adapter — park rather than maintain. If Ironsight
+   scraping panes, the Aider adapter — park rather than maintain. If Sightline
    owns its sessions it knows rather than infers, and much of this code deletes
    itself rather than needing to be ported.
 
@@ -256,7 +256,7 @@ ability. The invariants.
 These are genuinely undecided and are the most useful things to argue about.
 
 1. **Smallest version that counts as working.** "An agent completes a real task
-   under Ironsight's scheduler, with permissions routed to Sightline, on a
+   under Sightline's scheduler, with permissions routed to Sightline, on a
    subscription" is roughly three weeks. "An agent OS with crazy amounts of
    ability" is unbounded. The difference between those two is whether this ships.
 
@@ -283,7 +283,7 @@ These are genuinely undecided and are the most useful things to argue about.
 **The unbounded-scope failure.** The version of this that dies builds a
 scheduler, a syscall layer and a permission model before a single agent has done
 useful work under them. The order that de-risks it is: make one thing run
-end-to-end under Ironsight's control, then generalise the control into a kernel.
+end-to-end under Sightline's control, then generalise the control into a kernel.
 
 **The premise is still untested.** Nothing has shown that supervised
 orchestration beats one person driving the same agents by hand. That is Layer 7
@@ -304,7 +304,7 @@ frontier model, and the difference between running a whole fleet on the largest
 model and running only the judgement on it is the difference between a few hours
 and a day.
 
-**Nothing here requires API keys.** The subscription already powers Ironsight
+**Nothing here requires API keys.** The subscription already powers Sightline
 today — `--owned` sessions run `claude -p` as you. What was missing was never
 model access; it was control over the session, which the protocol above
 provides.

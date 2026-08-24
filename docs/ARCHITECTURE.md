@@ -1,14 +1,18 @@
 # Architecture
 
-How Ironsight uses Claude's models, and where its own guarantees live.
+How Sightline uses Claude's models, and where its own guarantees live.
 
 Written 2026-08-24, on evidence from `docs/probes/control_protocol.py`, which
 runs against a real Claude Code and prints PROVED or FAILED for each property
 this design rests on. Nothing below is asserted from the shape of an API.
 
+> On the name: an earlier draft of this document called the thing you type into
+> "Sightline", while the product was Ironsight. The product took the better name,
+> so what is left is simply the prompt — you type into Sightline.
+
 ## The one thing that changed
 
-Ironsight watched. It read transcripts, inferred what a session was doing, and
+Sightline watched. It read transcripts, inferred what a session was doing, and
 handed work over as a brief — text an agent may follow or ignore. Every
 guarantee it had was advice, and the honest summary of that was: an automatic
 copy-paster.
@@ -27,14 +31,14 @@ no API key, on a Claude Max subscription:
 | **levers** | `interrupt` ended a turn with 87s of `sleep` left; `set_permission_mode` changed posture mid-session |
 | **kernel-tools** | the model called `mcp__host__remember`, a tool served in-process by the host |
 
-The consequence is the whole design: **a rule Ironsight holds stops being prose
+The consequence is the whole design: **a rule Sightline holds stops being prose
 in a constitution and becomes a function called at a boundary the agent cannot
 route around.** That is the difference between a brief and a kernel.
 
 ## The shape
 
     ┌──────────────────────────────────────────────────────────────┐
-    │  SIGHTLINE — the one thing you type into                     │
+    │  THE PROMPT — the one thing you type into                    │
     │  intent in · and the only place a decision reaches a person   │
     └───────────────────────────┬──────────────────────────────────┘
                                 │
@@ -73,9 +77,9 @@ in the loop for what it spawned, and every guarantee below would have a hole in
 exactly the place it matters.
 
 **Project truth and machine state are different things, kept apart.**
-`constitution.md` and `checks.toml` live in the *project's* `.ironsight/`:
+`constitution.md` and `checks.toml` live in the *project's* `.sightline/`:
 versioned with the code, reviewable in a pull request, editable by the team.
-The journal, tasks, ceilings and trust records live in Ironsight's data
+The journal, tasks, ceilings and trust records live in Sightline's data
 directory, outside every worktree — because a ceiling a supervised agent can
 edit is a suggestion.
 
@@ -96,18 +100,18 @@ things:
     deny       with a reason the model sees and can act on
     abstain    no kernel is confident — escalate
 
-Only `abstain` reaches a person, in Sightline. That ratio is the product: a
+Only `abstain` reaches a person, at the prompt. That ratio is the product: a
 supervisor that asks about everything is a copy-paster with extra steps, and one
 that asks about nothing is a robot with your credentials.
 
 The kernels are ordinary Rust, deterministic, and testable without a model:
 
-- **Ceiling** — how many of Ironsight's sessions are running and what they have
+- **Ceiling** — how many of Sightline's sessions are running and what they have
   spent. Lives outside every worktree; a project may lower it, never raise it.
 - **Scope** — which paths, commands and hosts this session may reach. A write
   outside its worktree is denied; a path that should be inside it is a candidate
   for `rewrite` rather than refusal.
-- **Trust** — nothing runs from a repository's `checks.toml` until `ironsight
+- **Trust** — nothing runs from a repository's `checks.toml` until `sightline
   trust` has approved those exact commands. At the boundary this becomes: a
   command claiming to be the project's checks must match an approved one.
 - **Invariant** — what must never stop being true here. These run at claim time;
@@ -144,9 +148,9 @@ Two levers make that enforceable rather than advisory: `interrupt` ends a turn
 immediately, and `set_permission_mode` changes what a session may do without
 restarting it. Both are proved.
 
-## Sightline and the Hub
+## The prompt and the Hub
 
-Sightline is where intent goes in and where escalations come out. One place, so
+The prompt is where intent goes in and where escalations come out. One place, so
 the answer to "what is it waiting on" is never "look through the panes".
 
 The Hub reads the journal and shows what is happening. It is deliberately not a
@@ -171,7 +175,7 @@ Most of this is built. The delta is smaller than the ambition suggests.
 | **Capability registry** — models, efforts, agents, from `initialize` | **new** |
 | **Quota-aware scheduler** — roles, degradation, `rate_limit_event` | **new** |
 | **Kernel tools** — how a supervisor creates work | **new** |
-| **Sightline** | **new** |
+| **The prompt** — one place to say what is wanted, and be asked | **new** |
 
 The existing kernels do not get rewritten. They get called from a place where
 the agent cannot decline.
