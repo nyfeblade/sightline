@@ -29,7 +29,11 @@ use std::path::{Path, PathBuf};
 
 /// Bumped when the wire changes in a way an older client would misread. A
 /// client that sees a version it does not know refuses rather than guessing.
-pub const WIRE: u32 = 1;
+///
+/// 2 added owned sessions: ones the daemon holds by pipe rather than by
+/// pseudo-terminal. A version-1 daemon answers `Own` with "could not read that
+/// request", which is why the mismatch is caught at `Hello` instead.
+pub const WIRE: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "do", rename_all = "camelCase")]
@@ -70,6 +74,30 @@ pub enum Request {
         pid: i64,
     },
     Count,
+    // ── sessions held by pipe rather than by pseudo-terminal ──────────────
+    /// Start one, with the message it is to begin on.
+    Own {
+        cwd: String,
+        model: Option<String>,
+        /// The permission mode it will run under for its whole life; nothing
+        /// can be asked once it is running.
+        #[serde(default)]
+        mode: Option<String>,
+        opening: Option<String>,
+    },
+    /// Every owned session this daemon holds.
+    OwnedAll,
+    /// Say something to one, by Ironsight's name for it or by its transcript id.
+    Say {
+        who: String,
+        text: String,
+    },
+    /// End one, and forget it.
+    OwnedStop {
+        who: String,
+    },
+    /// Forget the ones that have exited.
+    OwnedReap,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,6 +111,8 @@ pub enum Reply {
     Text { text: Option<String> },
     Count { n: usize },
     Yes { it: bool },
+    Owned { it: crate::owned::Owned },
+    OwnedAll { all: Vec<crate::owned::Owned> },
     Done,
     Failed { why: String },
 }
@@ -148,6 +178,34 @@ fn answer(request: Request) -> Reply {
         },
         Request::Count => Reply::Count {
             n: host::hosted_count(),
+        },
+        Request::Own {
+            cwd,
+            model,
+            mode,
+            opening,
+        } => Reply::of(
+            crate::owned::start(
+                &crate::control::claude_program(),
+                Path::new(&cwd),
+                model.as_deref(),
+                mode.as_deref(),
+                opening.as_deref(),
+                // Long enough for the agent's first line, which is what binds
+                // the session to its transcript. A caller waiting on a socket
+                // would rather wait a moment than be handed a session no view
+                // can find.
+                std::time::Duration::from_secs(20),
+            ),
+            |it| Reply::Owned { it },
+        ),
+        Request::OwnedAll => Reply::OwnedAll {
+            all: crate::owned::list(),
+        },
+        Request::Say { who, text } => Reply::of(crate::owned::say(&who, &text), |_| Reply::Done),
+        Request::OwnedStop { who } => Reply::of(crate::owned::stop(&who), |_| Reply::Done),
+        Request::OwnedReap => Reply::Names {
+            names: crate::owned::reap(),
         },
     }
 }
@@ -257,6 +315,16 @@ pub fn ensure_running() -> Result<(), String> {
 
     if running() {
         return Ok(());
+    }
+    // One that is listening but speaking a version we do not know cannot be
+    // talked to, and starting another would only fail to bind the socket it
+    // holds. Say which it is, because "the daemon did not start listening" sends
+    // someone looking for a crash that never happened.
+    if let Ok(Reply::Hello { wire, pid }) = ask(&Request::Hello) {
+        return Err(format!(
+            "a daemon (pid {pid}) is already holding sessions and speaks wire {wire}, not {WIRE} \
+             — it is running an older Ironsight. Stop it, or leave this to it."
+        ));
     }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let mut command = Command::new(exe);

@@ -190,8 +190,26 @@ pub fn open_window(session: &str) -> Result<String, String> {
     on_backend!(open_window(session))
 }
 
+/// End every session Ironsight can end: the terminals, and the ones it holds by
+/// pipe. A person who says "close everything" does not mean "close the ones
+/// that happen to have a terminal".
 pub fn stop_all() -> Vec<String> {
-    on_backend!(stop_all())
+    let mut names: Vec<String> = on_backend!(stop_all());
+    names.extend(owned_stop_all());
+    names
+}
+
+/// End every owned session. Separate from [`stop_all`] so that the pieces can
+/// be tested apart from a terminal backend.
+pub fn owned_stop_all() -> Vec<String> {
+    match owned_home() {
+        Home::Here => crate::owned::stop_all(),
+        Home::Daemon => owned_all()
+            .into_iter()
+            .filter(|o| owned_stop(&o.name).is_ok())
+            .map(|o| o.name)
+            .collect(),
+    }
 }
 
 pub fn attach_hint(session: &str) -> String {
@@ -432,6 +450,143 @@ fn letter_prompt(text: &str) -> Option<Approval> {
     })
 }
 
+// ── owned sessions ─────────────────────────────────────────────────────────
+//
+// A session held by pipe rather than by pseudo-terminal. Where it *lives* is a
+// separate question from where pseudo-terminals live, because the two have
+// nothing to do with each other: tmux cannot hold a pipe, and an owned session
+// needs no terminal. So the rule here is its own, and it is a short one.
+
+/// Where owned sessions are held.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Home {
+    /// The daemon holds them, so they outlive every window. What a person
+    /// almost always wants: an agent that stops when you close a window is not
+    /// a fleet.
+    Daemon,
+    /// This process holds them, and they end with it. Where there is no daemon
+    /// to be had, or where the run has asked for nothing but itself.
+    Here,
+}
+
+/// The rule, kept away from the world so it can be checked.
+fn owned_home_from(asked: Option<&str>, unix: bool) -> Home {
+    // No Unix socket, no daemon — the sessions have to live here.
+    if !unix {
+        return Home::Here;
+    }
+    // Someone who asked for everything in this process meant this too.
+    if matches!(
+        asked.map(|a| a.trim().to_lowercase()).as_deref(),
+        Some("hosted") | Some("process")
+    ) {
+        return Home::Here;
+    }
+    Home::Daemon
+}
+
+/// Where this run holds owned sessions.
+pub fn owned_home() -> Home {
+    owned_home_from(
+        std::env::var("IRONSIGHT_BACKEND").ok().as_deref(),
+        cfg!(unix),
+    )
+}
+
+/// Start an owned session, and return what it is.
+///
+/// Under a daemon this starts one if there is not one already: an owned session
+/// is the first thing that needs a process outliving the window, so this is
+/// where the daemon earns its keep even for someone whose terminals are in
+/// tmux.
+pub fn own(
+    cwd: &std::path::Path,
+    model: Option<&str>,
+    mode: Option<&str>,
+    opening: Option<&str>,
+) -> Result<crate::owned::Owned, String> {
+    match owned_home() {
+        Home::Here => crate::owned::start(
+            &claude_program(),
+            cwd,
+            model,
+            mode,
+            opening,
+            std::time::Duration::from_secs(20),
+        ),
+        Home::Daemon => {
+            crate::daemon::ensure_running()?;
+            match crate::daemon::ask(&crate::daemon::Request::Own {
+                cwd: cwd.to_string_lossy().into_owned(),
+                model: model.map(str::to_string),
+                mode: mode.map(str::to_string),
+                opening: opening.map(str::to_string),
+            })? {
+                crate::daemon::Reply::Owned { it } => Ok(it),
+                crate::daemon::Reply::Failed { why } => Err(why),
+                other => Err(format!("the daemon answered {other:?}")),
+            }
+        }
+    }
+}
+
+/// Every owned session there is.
+///
+/// Deliberately does not start a daemon. This is asked on every refresh, and a
+/// question about what exists must not bring something into existence.
+pub fn owned_all() -> Vec<crate::owned::Owned> {
+    match owned_home() {
+        Home::Here => crate::owned::list(),
+        // Asked, not first checked whether there is anyone to ask: no daemon
+        // and a daemon holding nothing are the same answer, and two round
+        // trips leave a window where it dies between them.
+        Home::Daemon => match crate::daemon::ask(&crate::daemon::Request::OwnedAll) {
+            Ok(crate::daemon::Reply::OwnedAll { all }) => all,
+            _ => Vec::new(),
+        },
+    }
+}
+
+/// Say something to one, by Ironsight's name for it or by its transcript id.
+pub fn owned_say(who: &str, text: &str) -> Result<(), String> {
+    match owned_home() {
+        Home::Here => crate::owned::say(who, text),
+        Home::Daemon => match crate::daemon::ask(&crate::daemon::Request::Say {
+            who: who.to_string(),
+            text: text.to_string(),
+        })? {
+            crate::daemon::Reply::Done => Ok(()),
+            crate::daemon::Reply::Failed { why } => Err(why),
+            other => Err(format!("the daemon answered {other:?}")),
+        },
+    }
+}
+
+/// End one.
+pub fn owned_stop(who: &str) -> Result<(), String> {
+    match owned_home() {
+        Home::Here => crate::owned::stop(who),
+        Home::Daemon => match crate::daemon::ask(&crate::daemon::Request::OwnedStop {
+            who: who.to_string(),
+        })? {
+            crate::daemon::Reply::Done => Ok(()),
+            crate::daemon::Reply::Failed { why } => Err(why),
+            other => Err(format!("the daemon answered {other:?}")),
+        },
+    }
+}
+
+/// Forget the owned sessions that have exited, and say which.
+pub fn owned_reap() -> Vec<String> {
+    match owned_home() {
+        Home::Here => crate::owned::reap(),
+        Home::Daemon => match crate::daemon::ask(&crate::daemon::Request::OwnedReap) {
+            Ok(crate::daemon::Reply::Names { names }) => names,
+            _ => Vec::new(),
+        },
+    }
+}
+
 /// The command that runs Claude Code. On PATH by the name it installs as; an
 /// owned session runs this in stream-json mode.
 pub fn claude_program() -> String {
@@ -585,6 +740,36 @@ mod backend_choice {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn owned_sessions_live_in_the_daemon_unless_there_cannot_be_one() {
+        use super::{Home, owned_home_from};
+        assert_eq!(
+            owned_home_from(None, true),
+            Home::Daemon,
+            "the default is the thing that outlives the window"
+        );
+        assert_eq!(
+            owned_home_from(Some("tmux"), true),
+            Home::Daemon,
+            "where the terminals live says nothing about where a pipe lives"
+        );
+        assert_eq!(
+            owned_home_from(Some("hosted"), true),
+            Home::Here,
+            "someone who asked for nothing but this process meant this too"
+        );
+        assert_eq!(
+            owned_home_from(Some("HOSTED "), true),
+            Home::Here,
+            "asked for by name, however it was typed"
+        );
+        assert_eq!(
+            owned_home_from(None, false),
+            Home::Here,
+            "no Unix socket, no daemon: they have to live here"
+        );
+    }
+
     use super::*;
 
     #[test]

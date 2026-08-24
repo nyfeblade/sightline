@@ -6,6 +6,7 @@ use crate::event::{Ev, Filter};
 use crate::git;
 use crate::history::{self, Past};
 use crate::notify;
+use crate::owned;
 use crate::registry;
 use crate::session::{Session, Status};
 use crate::{bus, gateway, stream, work};
@@ -91,6 +92,9 @@ pub struct NewSpec {
     pub effort: Option<String>,
     pub mode: Option<String>,
     pub prompt: Option<String>,
+    /// Start it as a session Ironsight holds itself — driven over structured
+    /// JSON, with no terminal — rather than one running in a terminal.
+    pub owned: bool,
 }
 
 /// Where Ironsight keeps what it knows between runs: the order you chose, the
@@ -209,6 +213,11 @@ pub fn parse_new(text: &str) -> NewSpec {
         if word == "--" {
             rest.extend(words.by_ref());
             break;
+        }
+        // A flag with no value of its own, so it is taken before the pairs.
+        if word == "--owned" {
+            spec.owned = true;
+            continue;
         }
         let field = match word {
             "--agent" | "-a" => Some(&mut spec.agent),
@@ -415,6 +424,11 @@ pub struct App {
     /// tmux panes, and the pane each live session is running inside
     pub tmux_ok: bool,
     pub steer: HashMap<String, Pane>,
+    /// the sessions Ironsight holds itself, by the id they appear under in the
+    /// list — their transcript id once the agent has named one, and Ironsight's
+    /// own name for them until then
+    pub owned: HashMap<String, owned::Owned>,
+    last_owned_scan: Instant,
     pub input: Option<Input>,
     /// set when the user asks to hand the terminal over to tmux
     pub attach_to: Option<String>,
@@ -508,6 +522,10 @@ impl App {
             note_at: Instant::now(),
             tmux_ok: control::available(),
             steer: HashMap::new(),
+            owned: HashMap::new(),
+            // Far enough in the past that the first refresh asks rather than
+            // waiting out an interval that never started.
+            last_owned_scan: Instant::now() - Duration::from_secs(60),
             input: None,
             attach_to: None,
             approvals: HashMap::new(),
@@ -608,8 +626,14 @@ impl App {
             .iter()
             .filter_map(|p| p.file_stem().and_then(|s| s.to_str()).map(str::to_string))
             .collect();
-        self.sessions
-            .retain(|s| keep.contains(&s.id) || live.contains_key(&s.id));
+        self.sessions.retain(|s| {
+            keep.contains(&s.id)
+                || live.contains_key(&s.id)
+                // An agent that keeps its record beside the code has no
+                // transcript under the projects root and no registry entry, so
+                // neither test above can see it. Its file is the test.
+                || (s.record == agent::Record::AiderMarkdown && s.path.exists())
+        });
         for path in want {
             let id = path
                 .file_stem()
@@ -640,6 +664,7 @@ impl App {
             }
         }
         self.rescan_panes();
+        self.rescan_owned();
         self.last_discover = Instant::now();
     }
 
@@ -678,6 +703,26 @@ impl App {
             if !ours || claimed.contains(&p.id) {
                 continue;
             }
+            // An agent that keeps its record beside the code is read from
+            // there rather than shown as a bare screen. Aider is the one, and
+            // it is why the adapter layer has a `Record` at all: the record is
+            // markdown in the repository, not JSON in a central store.
+            if let Some(found) = self.aider_record(&p) {
+                let id = found.id.clone();
+                if !self.sessions.iter().any(|s| s.id == id) {
+                    let mut session = Session::aider(&found);
+                    session.backfill();
+                    if let Some(name) = self.names.get(&p.session) {
+                        session.title = name.clone();
+                        session.titled = true;
+                    }
+                    self.sessions.push(session);
+                }
+                // Steerable under the id it is listed by, so typing into it
+                // reaches the terminal it is running in.
+                self.steer.insert(id, p);
+                continue;
+            }
             let mut session = Session::from_pane(&p);
             // A session with no transcript is whatever Ironsight has been told to
             // call it, since nothing else will ever name it.
@@ -692,6 +737,85 @@ impl App {
 
     pub fn pane_of(&self, id: &str) -> Option<&Pane> {
         self.steer.get(id)
+    }
+
+    /// The record an Aider pane is writing, if it is Aider and has written one.
+    ///
+    /// Nothing is invented for a pane that has only just started: until aider
+    /// writes its first line there is no conversation, and the pane stands as a
+    /// screen the way any other agent's would.
+    fn aider_record(&self, pane: &Pane) -> Option<agent::Found> {
+        let adapter = agent::of_command(&pane.cmd)?;
+        if adapter.record() != agent::Record::AiderMarkdown || pane.cwd.is_empty() {
+            return None;
+        }
+        agent::aider::found_in(std::path::Path::new(&pane.cwd))
+    }
+
+    /// Fold in the sessions Ironsight holds itself, by pipe rather than by
+    /// terminal.
+    ///
+    /// An owned session writes an ordinary transcript, so the session already
+    /// in the list *is* it — almost all of this is saying which one, and that
+    /// it is alive. Only for the moment before the agent's first line names the
+    /// conversation is there nothing to match on, and it stands in the list
+    /// under Ironsight's own name for it until there is.
+    ///
+    /// Asked at most twice a second. It is a socket round trip, and the list is
+    /// refreshed four times that often.
+    pub fn rescan_owned(&mut self) {
+        if self.last_owned_scan.elapsed() < Duration::from_millis(500) {
+            return;
+        }
+        self.last_owned_scan = Instant::now();
+        self.fold_owned(control::owned_all());
+    }
+
+    /// The half of [`rescan_owned`] that decides anything, with the world
+    /// handed to it. Asking what exists and working out what that means are two
+    /// different jobs, and only one of them has anything worth getting wrong.
+    pub fn fold_owned(&mut self, all: Vec<owned::Owned>) {
+        self.owned.clear();
+        // A session that has since named itself would otherwise sit in the list
+        // twice: once as the placeholder, once as its transcript.
+        let named: Vec<String> = all
+            .iter()
+            .filter(|o| !o.session_id.is_empty())
+            .map(|o| o.name.clone())
+            .collect();
+        self.sessions.retain(|s| !named.contains(&s.id));
+        for o in all {
+            let id = if o.session_id.is_empty() {
+                o.name.clone()
+            } else {
+                o.session_id.clone()
+            };
+            if !self.sessions.iter().any(|s| s.id == id) {
+                self.sessions.push(Session::owned(&id, &o));
+            }
+            // A name someone chose for it. Kept under Ironsight's handle rather
+            // than written into the transcript, because unlike a stopped
+            // session this one has the file open and is appending to it.
+            if let Some(name) = self.names.get(&o.name).cloned() {
+                if let Some(s) = self.sessions.iter_mut().find(|s| s.id == id) {
+                    s.title = name;
+                    s.titled = true;
+                }
+            }
+            self.owned.insert(id, o);
+        }
+    }
+
+    /// The owned session behind an id, if it is one.
+    pub fn owned_of(&self, id: &str) -> Option<&owned::Owned> {
+        self.owned.get(id)
+    }
+
+    /// Whether a session can be spoken to at all — through its terminal, or
+    /// down the pipe Ironsight holds. Every front end asks this rather than
+    /// asking about panes, so the two kinds cannot drift apart.
+    pub fn steerable(&self, id: &str) -> bool {
+        self.steer.contains_key(id) || self.owned.get(id).map(|o| o.alive).unwrap_or(false)
     }
 
     /// Starting a session takes a second or two, and a held-down key must never
@@ -1003,6 +1127,38 @@ impl App {
         Ok(session)
     }
 
+    /// Start a session Ironsight holds itself, and return the id it is listed
+    /// under — its conversation id when the agent has already named one, and
+    /// Ironsight's own handle for the moment before that.
+    ///
+    /// `opening` is what it is to begin on. Not optional in any useful sense:
+    /// an owned agent says nothing at all until it is spoken to, so a session
+    /// started with nothing to do is a process holding a pipe and no
+    /// conversation for anything to show.
+    pub fn start_owned(&mut self, spec: &NewSpec, opening: Option<&str>) -> Result<String, String> {
+        if !self.may_spawn() {
+            return Err("one is already starting".into());
+        }
+        let path = PathBuf::from(expand(&spec.path));
+        // The permission mode is fixed for the life of an owned session —
+        // nothing can be asked once it is running — so it is settled here,
+        // from the same `--permission-mode` a terminal session takes.
+        let it = control::own(&path, spec.model.as_deref(), spec.mode.as_deref(), opening)?;
+        let id = if it.session_id.is_empty() {
+            it.name.clone()
+        } else {
+            it.session_id.clone()
+        };
+        if let Some(name) = &spec.name {
+            self.name_pane(&it.name, name);
+        }
+        // The rate limit exists to stop a held key starting a hundred sessions;
+        // it must not stop the one just started from appearing.
+        self.last_owned_scan = Instant::now() - Duration::from_secs(60);
+        self.discover();
+        Ok(id)
+    }
+
     /// Move the selected session up or down the list, and remember it.
     pub fn move_session(&mut self, delta: isize) {
         let Some(id) = self.current().map(|s| s.id.clone()) else {
@@ -1090,7 +1246,13 @@ impl App {
             return Err("a name has to be one line".into());
         }
         let name = crate::event::clip(name, 80);
-        if let Some(p) = self.pane_of(id).cloned() {
+        if let Some(o) = self.owned.get(id).cloned() {
+            // Not written into the transcript: this session has that file open
+            // and is appending to it, and two writers on one file is how a
+            // transcript stops parsing.
+            self.name_pane(&o.name, &name);
+            self.say(format!("renamed to {name}"));
+        } else if let Some(p) = self.pane_of(id).cloned() {
             // How a session gets a name is the agent's business.
             match agent::of_command(&p.cmd).map(|a| a.naming()) {
                 Some(agent::Naming::Command(command)) => {
@@ -1153,17 +1315,25 @@ impl App {
     /// Say the same thing to every session Ironsight can reach. Returns how many
     /// heard it.
     pub fn broadcast(&mut self, text: &str) -> usize {
-        let panes: Vec<Pane> = self.steer.values().cloned().collect();
-        panes
+        // Everything that can be spoken to, whichever way it is reached. A
+        // broadcast that silently skipped the sessions Ironsight holds itself
+        // would be the worst kind of wrong: it reports a number, and the number
+        // is right about the sessions it thought of.
+        let to: Vec<String> = self
+            .sessions
             .iter()
-            .filter(|p| control::send_text(&p.id, text).is_ok())
+            .map(|s| s.id.clone())
+            .filter(|id| self.steerable(id))
+            .collect();
+        to.iter()
+            .filter(|id| self.deliver(id, text).is_ok())
             .count()
     }
 
     /// Hold a message until a session next goes idle. Returns how many are
     /// waiting for it.
     pub fn queue_for(&mut self, id: &str, text: &str) -> Result<usize, String> {
-        if !self.steer.contains_key(id) {
+        if !self.steerable(id) {
             return Err(self.not_steerable());
         }
         let q = self.queues.entry(id.to_string()).or_default();
@@ -1185,36 +1355,84 @@ impl App {
             .find(|s| s.id == id)
             .map(|s| matches!(s.status(), Status::Running(_) | Status::Working))
             .unwrap_or(false);
-        let Some(p) = self.pane_of(id).cloned() else {
-            return Err(self.not_steerable());
-        };
-        control::send_text(&p.id, text)?;
+        let name = self.deliver(id, text)?;
         // Claude Code holds typed input until the current turn ends, which
         // looks identical to a delivered message unless it is said out loud.
         if busy {
             self.say(format!(
-                "queued for {} — it is mid-turn and will pick this up after",
-                p.session
+                "queued for {name} — it is mid-turn and will pick this up after"
             ));
         } else {
-            self.say(format!("sent to {}", p.session));
+            self.say(format!("sent to {name}"));
         }
         Ok(())
     }
 
-    /// Escape interrupts the current turn, exactly as pressing it would.
-    pub fn interrupt(&mut self) {
-        let Some(id) = self.current().map(|s| s.id.clone()) else {
-            return;
+    /// Put one message into one session, whichever way that session is
+    /// reached — keystrokes into its terminal, or a line of JSON down the pipe
+    /// Ironsight holds. Returns what to call it when saying so.
+    ///
+    /// Every path that delivers a message goes through here, so a queued
+    /// message and a typed one cannot end up meaning different things.
+    fn deliver(&mut self, id: &str, text: &str) -> Result<String, String> {
+        if let Some(o) = self.owned.get(id).cloned() {
+            if !o.alive {
+                return Err(format!("{} has ended", o.name));
+            }
+            control::owned_say(&o.name, text)?;
+            // Believe it at once rather than waiting for the next scan: it is
+            // busy from the moment it is asked, and something that has just
+            // been sent a message must not look idle enough to be sent another.
+            if let Some(mine) = self.owned.get_mut(id) {
+                mine.busy = true;
+            }
+            if let Some(s) = self.sessions.iter_mut().find(|s| s.id == id) {
+                s.live = Some(registry::Live::owned(&o).into_busy());
+            }
+            return Ok(o.name);
+        }
+        let Some(p) = self.pane_of(id).cloned() else {
+            return Err(self.not_steerable());
         };
+        control::send_text(&p.id, text)?;
+        Ok(p.session)
+    }
+
+    /// Escape interrupts the current turn, exactly as pressing it would.
+    /// Escape interrupts the current turn, exactly as pressing it would.
+    ///
+    /// Answers rather than assuming: a caller that reports "interrupted"
+    /// whatever came back has told someone their agent stopped when it did not.
+    pub fn interrupt(&mut self) -> Result<(), String> {
+        let Some(id) = self.current().map(|s| s.id.clone()) else {
+            return Err("no session selected".into());
+        };
+        // A session held by pipe has no Escape key to press. Claude Code's
+        // stream-json input has no interrupt either, so the honest answer is
+        // that this one cannot be interrupted — not a key sent nowhere.
+        if let Some(o) = self.owned.get(&id).cloned() {
+            let why = format!(
+                "{} is held by Ironsight and has no terminal to interrupt — close it to end the turn",
+                o.name
+            );
+            self.say(why.clone());
+            return Err(why);
+        }
         match self.pane_of(&id).cloned() {
             Some(p) => match control::send_key(&p.id, "Escape") {
-                Ok(()) => self.say("interrupt sent"),
-                Err(e) => self.say(e),
+                Ok(()) => {
+                    self.say("interrupt sent");
+                    Ok(())
+                }
+                Err(e) => {
+                    self.say(e.clone());
+                    Err(e)
+                }
             },
             None => {
                 let msg = self.not_steerable();
-                self.say(msg)
+                self.say(msg.clone());
+                Err(msg)
             }
         }
     }
@@ -1226,6 +1444,13 @@ impl App {
         let Some(id) = self.current().map(|s| s.id.clone()) else {
             return;
         };
+        if let Some(o) = self.owned.get(&id).cloned() {
+            self.say(format!(
+                "{} is held by Ironsight over a pipe — there is no screen to attach to",
+                o.name
+            ));
+            return;
+        }
         match self.pane_of(&id) {
             Some(_) if control::hosted_count() > 0 => {
                 if !self.passthrough {
@@ -1242,11 +1467,21 @@ impl App {
 
     /// Read new transcript lines, re-attach liveness, re-sort.
     pub fn refresh(&mut self) {
+        // Before the liveness pass below, because it can add a session to the
+        // list and every session in the list is about to be told what it is.
+        self.rescan_owned();
         let live = registry::scan(&self.sessions_dir);
         let seen = registry::available(&self.sessions_dir);
         for s in &mut self.sessions {
             s.pump();
             s.live = live.get(&s.id).cloned();
+            // A session Ironsight holds does not register itself with Claude
+            // Code — it has no terminal to register from — so Ironsight is the
+            // only thing that knows it is alive, and says so here in the same
+            // shape the registry would have.
+            if let Some(o) = self.owned.get(&s.id) {
+                s.live = o.alive.then(|| registry::Live::owned(o));
+            }
             s.registry_seen = seen;
             // A session running in a pane is running, whether or not it has
             // got round to registering itself.
@@ -1383,16 +1618,16 @@ impl App {
             })
             .collect();
         for id in ready {
-            let Some(pane) = self.steer.get(&id).cloned() else {
+            if !self.steerable(&id) {
                 continue;
-            };
+            }
             let Some(queue) = self.queues.get_mut(&id) else {
                 continue;
             };
             let msg = queue.remove(0);
             let left = queue.len();
-            match control::send_text(&pane.id, &msg) {
-                Ok(()) => self.say(format!("delivered a queued message ({left} left)")),
+            match self.deliver(&id, &msg) {
+                Ok(_) => self.say(format!("delivered a queued message ({left} left)")),
                 Err(e) => self.say(e),
             }
         }
@@ -1877,7 +2112,10 @@ impl App {
         // session that never wrote anything has nothing to go back to.
         let has_transcript = !s.placeholder;
         let name = s.label();
-        let steerable = self.steer.contains_key(&id);
+        let steerable = self.steerable(&id);
+        // A session held by pipe can be spoken to but has no terminal: nothing
+        // to attach to, nothing to type into directly, no Escape to press.
+        let has_terminal = self.steer.contains_key(&id);
         let blocked = self.approvals.contains_key(&id);
         let iso = self.isolation();
         let in_repo =
@@ -1914,14 +2152,22 @@ impl App {
             Action {
                 key: 'i',
                 label: "Interrupt what it is doing",
-                enabled: steerable,
-                why: why_steer.clone(),
+                enabled: has_terminal,
+                why: if steerable {
+                    "Ironsight holds this one by pipe — there is no terminal to interrupt".into()
+                } else {
+                    why_steer.clone()
+                },
             },
             Action {
                 key: 'm',
                 label: "Type into it directly",
-                enabled: steerable,
-                why: why_steer.clone(),
+                enabled: has_terminal,
+                why: if steerable {
+                    "Ironsight holds this one by pipe — send it a message instead".into()
+                } else {
+                    why_steer.clone()
+                },
             },
             Action {
                 key: 'a',
@@ -1930,8 +2176,12 @@ impl App {
                 } else {
                     "Attach full-screen"
                 },
-                enabled: steerable,
-                why: why_steer,
+                enabled: has_terminal,
+                why: if steerable {
+                    "Ironsight holds this one by pipe — there is no screen to attach to".into()
+                } else {
+                    why_steer
+                },
             },
             Action {
                 key: 'A',
@@ -1977,13 +2227,17 @@ impl App {
         v.push(Action {
             key: 'O',
             label: "Open it in its own window",
-            enabled: steerable,
-            why: why_steer_open,
+            enabled: has_terminal,
+            why: if steerable {
+                "Ironsight holds this one by pipe — there is no terminal to open".into()
+            } else {
+                why_steer_open
+            },
         });
         v.push(Action {
             key: 'Z',
             label: "Stop everything Ironsight started",
-            enabled: !self.steer.is_empty(),
+            enabled: !self.steer.is_empty() || !self.owned.is_empty(),
             why: "nothing of Ironsight's is running".into(),
         });
         v.push(Action {
@@ -2033,7 +2287,9 @@ impl App {
             'd' => self.answer(0),
             's' => self.open_input(Prompt::Send),
             'Q' => self.open_input(Prompt::Queue),
-            'i' => self.interrupt(),
+            'i' => {
+                let _ = self.interrupt();
+            }
             'm' => self.toggle_passthrough(),
             'a' => self.attach(),
             'A' => self.open_input(Prompt::Adopt),
@@ -2249,6 +2505,18 @@ impl App {
         let Some(id) = self.current().map(|s| s.id.clone()) else {
             return;
         };
+        if let Some(o) = self.owned.get(&id).cloned() {
+            match control::owned_stop(&o.name) {
+                Ok(()) => {
+                    self.say(format!("stopped {} — press A to reopen it", o.name));
+                    self.owned.remove(&id);
+                    self.last_owned_scan = Instant::now() - Duration::from_secs(60);
+                    self.discover();
+                }
+                Err(e) => self.say(e),
+            }
+            return;
+        }
         let Some(pane) = self.steer.get(&id).cloned() else {
             let msg = self.not_steerable();
             self.say(msg);
@@ -2387,9 +2655,19 @@ impl App {
                 effort: g("effort"),
                 mode: g("permission_mode"),
                 prompt: g("prompt"),
+                // `"owned": true` starts one Ironsight holds itself. A fleet
+                // file is exactly where this belongs: a fleet meant to outlive
+                // the window should not be a list of terminals.
+                owned: item.get("owned").and_then(|v| v.as_bool()).unwrap_or(false),
             };
-            match self.start_session(&spec) {
-                Ok(_) => started += 1,
+            let started_one = if spec.owned {
+                let opening = spec.prompt.clone();
+                self.start_owned(&spec, opening.as_deref()).map(|_| ())
+            } else {
+                self.start_session(&spec).map(|_| ())
+            };
+            match started_one {
+                Ok(()) => started += 1,
                 Err(e) => self.say(e),
             }
         }
@@ -2648,6 +2926,150 @@ pub fn default_sessions_dir() -> PathBuf {
 mod tests {
     use super::*;
 
+    /// An App with nothing real behind it: no transcripts, no registry, no
+    /// state directory touched. Enough to fold a fleet into and ask what it
+    /// concluded.
+    fn bare_app() -> App {
+        let mut app = App::new(
+            PathBuf::from("/nonexistent/projects"),
+            PathBuf::from("/nonexistent/sessions"),
+            Duration::from_secs(86_400),
+            false,
+        );
+        // Constructing an App looks at the machine it is on, and the machine it
+        // is on during a test run is someone's working desktop with their own
+        // sessions in it. Start from nothing, so what these assert about is
+        // what they put there.
+        app.sessions.clear();
+        app.steer.clear();
+        app.owned.clear();
+        app
+    }
+
+    fn an_owned(name: &str, session_id: &str, alive: bool) -> owned::Owned {
+        owned::Owned {
+            name: name.into(),
+            cwd: "/tmp/work".into(),
+            model: String::new(),
+            mode: String::new(),
+            session_id: session_id.into(),
+            pid: 4242,
+            alive,
+            busy: false,
+            tool: String::new(),
+            started: 1_700_000_000,
+            last: 1_700_000_000,
+        }
+    }
+
+    #[test]
+    fn an_owned_session_is_in_the_list_under_the_transcript_it_writes() {
+        // The whole reason an owned session is worth having as a session type:
+        // it writes an ordinary transcript, so it must appear under that
+        // transcript's id and not as some second thing beside it.
+        let mut app = bare_app();
+        app.fold_owned(vec![an_owned("owned-1", "abc-123", true)]);
+        let ids: Vec<&str> = app.sessions.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["abc-123"],
+            "it is listed under its conversation id, not under owned-1"
+        );
+        assert!(
+            app.owned.contains_key("abc-123"),
+            "and it is reachable by that id"
+        );
+    }
+
+    #[test]
+    fn an_owned_session_that_has_not_spoken_yet_still_appears() {
+        // Between starting the agent and its first line there is a process
+        // doing work and nothing at all to see. It stands under Ironsight's own
+        // name until the conversation has one.
+        let mut app = bare_app();
+        app.fold_owned(vec![an_owned("owned-1", "", true)]);
+        assert_eq!(
+            app.sessions
+                .iter()
+                .map(|s| s.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["owned-1"]
+        );
+        assert!(app.steerable("owned-1"), "and it can be spoken to already");
+    }
+
+    #[test]
+    fn a_placeholder_is_replaced_rather_than_joined_when_the_id_arrives() {
+        // The failure this guards: the session appears twice, once as owned-1
+        // and once as its transcript, and half the fleet's numbers are doubled.
+        let mut app = bare_app();
+        app.fold_owned(vec![an_owned("owned-1", "", true)]);
+        app.fold_owned(vec![an_owned("owned-1", "abc-123", true)]);
+        assert_eq!(
+            app.sessions
+                .iter()
+                .map(|s| s.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["abc-123"],
+            "one session, not two"
+        );
+    }
+
+    #[test]
+    fn an_owned_session_that_has_ended_cannot_be_spoken_to() {
+        let mut app = bare_app();
+        app.fold_owned(vec![an_owned("owned-1", "abc-123", false)]);
+        assert!(
+            !app.steerable("abc-123"),
+            "a dead session is not steerable, whatever holds it"
+        );
+        let refused = app.deliver("abc-123", "hello").unwrap_err();
+        assert!(
+            refused.contains("owned-1") && refused.contains("ended"),
+            "and it says which one and why: {refused}"
+        );
+    }
+
+    #[test]
+    fn an_owned_session_is_never_reached_through_a_pane() {
+        // The routing mistake that would matter: keystrokes typed into whatever
+        // terminal happens to be selected. There is no pane for an owned
+        // session, so a delivery that looked for one would fail — this asserts
+        // it does not look.
+        let mut app = bare_app();
+        app.fold_owned(vec![an_owned("owned-1", "abc-123", true)]);
+        assert!(
+            app.pane_of("abc-123").is_none(),
+            "it has no terminal, by construction"
+        );
+        assert!(
+            app.steerable("abc-123"),
+            "and is still steerable, which is the point"
+        );
+    }
+
+    #[test]
+    fn liveness_for_an_owned_session_comes_from_ironsight_itself() {
+        // Claude Code writes no registry entry for a session driven over pipes,
+        // so without this the fleet would show every owned session as ended
+        // while it was working.
+        let idle = registry::Live::owned(&an_owned("owned-1", "abc", true));
+        assert_eq!(idle.status, "idle");
+        assert_eq!(idle.pid, 4242, "so what it costs the machine can be read");
+        assert!(
+            idle.name.is_empty(),
+            "the handle does not displace the name the conversation gave itself"
+        );
+        let mut busy = an_owned("owned-1", "abc", true);
+        busy.busy = true;
+        assert_eq!(registry::Live::owned(&busy).status, "busy");
+        assert_eq!(
+            idle.into_busy().status,
+            "busy",
+            "and a session just spoken to is busy at once, not at the next scan"
+        );
+    }
+
     #[test]
     fn reads_an_agent_and_a_name_off_the_line() {
         let spec = parse_new("~/api --agent codex --name refactor fix the auth tests");
@@ -2697,6 +3119,26 @@ mod tests {
         );
         // A flag with nothing after it is ignored rather than eating the line.
         assert_eq!(parse_new("~/api --model").model, None);
+    }
+
+    #[test]
+    fn asks_for_a_session_ironsight_holds_itself() {
+        let spec = parse_new("~/api --owned --model opus fix the failing tests");
+        assert!(spec.owned, "--owned is what asks for one");
+        assert_eq!(
+            spec.model.as_deref(),
+            Some("opus"),
+            "and it takes no value of its own, so the flag after it is intact"
+        );
+        assert_eq!(
+            spec.prompt.as_deref(),
+            Some("fix the failing tests"),
+            "nor does it eat the message"
+        );
+        assert!(
+            !parse_new("~/api fix the --owned flag").owned,
+            "a message that merely mentions it is a message"
+        );
     }
 
     #[test]

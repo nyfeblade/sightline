@@ -360,7 +360,41 @@ body.focused .context { display: block; }
 .composer input:focus { outline: none; border-color: var(--accent-soft); }
 .composer input:disabled { color: var(--faint); }
 
+/* The one place in the window that edits a file in your repository. It is a
+   document, so it gets room to be one: monospace, and tall enough to see a
+   section at a time rather than a line at a time. */
+/* A `.wide` dialog is a flex column the height of the window, so the parts that
+   are not the document take what they need and the document takes the rest.
+   Sized any other way it either leaves a band of empty panel under the buttons
+   or scrolls when there was room. */
+#writing > h2, .writing-where, #writing > menu { flex: none; }
+.writing-where { color: var(--muted); font-size: .92em; margin: 0 0 8px; word-break: break-all; }
+#writing-body {
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  resize: none;
+  background: var(--ground);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font: inherit;
+  font-family: var(--mono);
+  line-height: 1.5;
+}
+#writing-body:focus { outline: none; border-color: var(--accent-soft); }
+
 /* ── detail ─────────────────────────────────────────────────────────────── */
+
+/* The rail is a column flex container that scrolls, and flex children shrink
+   before their container overflows. So once this panel has enough in it — an
+   assignment, a task, a long path, another button — every row is squeezed, and
+   the first to vanish is the shortest: the `h3` carrying the session's *name*.
+   The panel is then headed by a folder path, with nothing saying which agent
+   the buttons below it will act on. Nothing here shrinks; it scrolls. */
+.detail > * { flex-shrink: 0; }
+
 .detail h3 {
   font: inherit;
   color: var(--text);

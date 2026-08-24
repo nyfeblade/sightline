@@ -23,15 +23,19 @@ Ironsight — live view of what Claude Code is doing
 usage: Ironsight [options]
        ironsight new [path] [--agent A] [--name N] [--model M] [--effort E]
                  [--permission-mode P] [--prompt T] [--worktree BRANCH]
-                 [--task WHAT] [--parent WHO]
+                 [--task WHAT] [--parent WHO] [--owned]
                                start a session and exit; --agent picks which
                                agent to run (claude, codex, gemini, aider, or
-                               any command), default claude
-       ironsight send <who> <text> type a line into a running session and submit it
+                               any command), default claude. --owned starts one
+                               Ironsight holds itself, spoken to over structured
+                               JSON with no terminal in the way
+       ironsight owned              list the sessions Ironsight is holding itself
+       ironsight send <who> <text> send a line to a running session, whether it is
+                               in a terminal or held by Ironsight
        ironsight adopt <who>        (re)open a conversation in tmux so it can be steered
        ironsight prune              close Ironsight sessions whose process has exited
        ironsight doctor             check everything Ironsight needs is installed
-       ironsight run [--model M] <prompt>
+       ironsight run [--model M] [--permission-mode P] <prompt>
                                run a session Ironsight owns: structured JSON, no
                                terminal, no scraping. Streams what it does as it
                                happens and exits when the turn is done
@@ -459,6 +463,16 @@ fn main() -> Result<()> {
             }
             return Ok(());
         }
+        // A session Ironsight holds by pipe is stopped by name too — there is
+        // no terminal to kill, so the terminal backend would never find it.
+        if control::owned_all()
+            .iter()
+            .any(|o| o.name == who || o.session_id == who)
+        {
+            control::owned_stop(who).map_err(|e| anyhow::anyhow!(e))?;
+            println!("stopped {who}");
+            return Ok(());
+        }
         let panes = control::panes();
         let target = panes
             .iter()
@@ -500,12 +514,20 @@ fn main() -> Result<()> {
         // would steal a word out of a prompt that merely mentions it — "explain
         // the --model flag" would lose "--model flag" silently.
         let mut model: Option<String> = None;
+        let mut mode: Option<String> = None;
         let mut it = args[1..].iter().peekable();
         while let Some(a) = it.peek() {
             match a.as_str() {
                 "--model" => {
                     it.next();
                     model = it.next().cloned();
+                }
+                // Nothing can be asked of a session in this mode: a tool the
+                // settings do not allow is refused outright. So what it is
+                // allowed to do is settled here or not at all.
+                "--permission-mode" => {
+                    it.next();
+                    mode = it.next().cloned();
                 }
                 // An explicit end-of-flags marker, for a prompt that really does
                 // begin with a dash.
@@ -518,7 +540,7 @@ fn main() -> Result<()> {
         }
         let prompt = it.cloned().collect::<Vec<_>>().join(" ");
         if prompt.trim().is_empty() {
-            anyhow::bail!("usage: ironsight run [--model M] <prompt>");
+            anyhow::bail!("usage: ironsight run [--model M] [--permission-mode P] <prompt>");
         }
 
         let program = control::claude_program();
@@ -527,10 +549,11 @@ fn main() -> Result<()> {
         let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let done_reader = done.clone();
 
-        let mut owned = owned::OwnedSession::start_with(
+        let owned = owned::OwnedSession::start_with(
             &program,
             &cwd,
             model.as_deref(),
+            mode.as_deref(),
             &session_id,
             "claude",
             // A one-shot command: let claude's diagnostics reach the terminal,
@@ -589,8 +612,47 @@ fn main() -> Result<()> {
         return attach_to(&pane.id, &pane.session);
     }
 
+    // What Ironsight is holding by pipe rather than by terminal: the handle, the
+    // conversation it is in, and whether it is mid-turn.
+    if args.first().map(String::as_str) == Some("owned") {
+        let all = control::owned_all();
+        if all.is_empty() {
+            println!("Ironsight is holding no sessions of its own");
+            return Ok(());
+        }
+        for o in all {
+            let state = match (o.alive, o.busy) {
+                (false, _) => "ended".to_string(),
+                (true, true) if !o.tool.is_empty() => format!("working · {}", o.tool),
+                (true, true) => "working".to_string(),
+                (true, false) => "waiting".to_string(),
+            };
+            let conversation = if o.session_id.is_empty() {
+                "(not yet named)".to_string()
+            } else {
+                o.session_id.clone()
+            };
+            // The permission mode is worth a column: it is fixed for the life
+            // of the session and it decides every tool call, so a session
+            // getting nothing done is usually this column's fault.
+            let mode = if o.mode.is_empty() {
+                "default".to_string()
+            } else {
+                o.mode.clone()
+            };
+            println!(
+                "{:<10} {:<10} {:<14} {conversation}  {}",
+                o.name, state, mode, o.cwd
+            );
+        }
+        return Ok(());
+    }
+
     if args.first().map(String::as_str) == Some("prune") {
-        let closed = control::prune();
+        let mut closed = control::prune();
+        // The ones Ironsight holds are tidied by the same word. Only the dead:
+        // nothing running is touched, which is what a person means by prune.
+        closed.extend(control::owned_reap());
         if closed.is_empty() {
             println!("nothing to tidy up — everything Ironsight started is still running");
         } else {
@@ -1122,6 +1184,7 @@ fn main() -> Result<()> {
             true,
         );
         app.rescan_panes();
+        app.rescan_owned();
         let hit = app
             .sessions
             .iter()
@@ -1131,20 +1194,22 @@ fn main() -> Result<()> {
                     .get(&s.id)
                     .map(|p| p.session.clone())
                     .unwrap_or_default();
+                let held = app
+                    .owned_of(&s.id)
+                    .map(|o| o.name.clone())
+                    .unwrap_or_default();
                 s.id.starts_with(who.as_str())
                     || s.label().eq_ignore_ascii_case(who)
                     || name == *who
+                    || held == *who
             })
             .map(|s| s.id.clone())
             .ok_or_else(|| anyhow::anyhow!("no live session matching {who}"))?;
-        let pane = app
-            .pane_of(&hit)
-            .ok_or_else(|| {
-                anyhow::anyhow!("{who} cannot be typed into — Ironsight has no terminal for it")
-            })?
-            .clone();
-        control::send_text(&pane.id, &text).map_err(|e| anyhow::anyhow!(e))?;
-        println!("sent to {} ({})", pane.session, pane.id);
+        // One place decides what sending means, so a message typed into a
+        // terminal and one written down a pipe cannot come to mean different
+        // things.
+        app.send_to(&hit, &text).map_err(|e| anyhow::anyhow!(e))?;
+        println!("{}", app.note);
         return Ok(());
     }
 
@@ -1179,6 +1244,7 @@ fn main() -> Result<()> {
             effort: opt("--effort"),
             mode: opt("--permission-mode"),
             prompt: opt("--prompt"),
+            owned: args.iter().any(|a| a == "--owned"),
         };
         // Starting a session is the same act however it is asked for, so the
         // command line goes through the engine rather than round it.
@@ -1190,6 +1256,59 @@ fn main() -> Result<()> {
         );
         let assignment = opt("--task");
         let parent = opt("--parent");
+
+        // A session Ironsight holds itself, spoken to down a pipe rather than
+        // typed into a terminal. Started here rather than under a command of
+        // its own because it is a session: the same folder, model, task,
+        // lineage and brief apply, and only the way in is different.
+        if spec.owned {
+            if spec.agent.as_deref().is_some_and(|a| a != "claude") {
+                anyhow::bail!("--owned needs Claude Code: it is the agent that speaks stream-json");
+            }
+            app.with_state();
+            // The opening message, worked out before the session exists,
+            // because an owned agent says nothing until it is spoken to and its
+            // first message is the one that names the conversation.
+            let cwd = std::path::PathBuf::from(app::expand(&spec.path));
+            let opening = match (&assignment, &spec.prompt) {
+                (Some(what), _) => {
+                    let constitution = brief::Constitution::find(&cwd).map(|(_, c)| c);
+                    let task = ironsight_core::work::Task::new(
+                        "pending".into(),
+                        String::new(),
+                        what.clone(),
+                    );
+                    Some(brief::render(constitution.as_ref(), &task))
+                }
+                (None, Some(p)) => Some(p.clone()),
+                (None, None) => None,
+            };
+            let id = app
+                .start_owned(&spec, opening.as_deref())
+                .map_err(|e| anyhow::anyhow!(e))?;
+            if let Some(parent) = parent {
+                if let Some(pid) = resolve(&app, &parent) {
+                    app.record_lineage(&id, &pid);
+                    println!("started by {}", &pid[..pid.len().min(8)]);
+                }
+            }
+            if let Some(what) = assignment {
+                let task_id = app.assign(&id, &what);
+                println!("{task_id} assigned");
+                if opening.is_some() {
+                    println!("briefed from {}", brief::FILE);
+                }
+            }
+            let held = app
+                .owned_of(&id)
+                .map(|o| o.name.clone())
+                .unwrap_or_else(|| id.clone());
+            println!(
+                "started {held} — held by Ironsight, talk to it with `ironsight send {held} <text>`"
+            );
+            return Ok(());
+        }
+
         let name = app.start_session(&spec).map_err(|e| anyhow::anyhow!(e))?;
         // Lineage and assignment are recorded against the session Ironsight has
         // just started, which it knows by the pane it is running in until the

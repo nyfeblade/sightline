@@ -118,6 +118,17 @@ pub struct Session {
     pub placeholder: bool,
     /// the title was chosen by a person, not derived from the conversation
     pub titled: bool,
+    /// How this session's record is written, which decides how a line of it is
+    /// read. Claude Code's JSON is the default because everything else here
+    /// was built around it; an agent that writes something else says so.
+    pub record: crate::agent::Record,
+    /// Consecutive lines of an answer, held until the answer ends.
+    ///
+    /// A markdown record has no framing: the reply is however many plain lines
+    /// follow the question. One feed entry per line would turn a paragraph into
+    /// a dozen events, so they are joined and emitted when something that is
+    /// not the answer arrives.
+    said: String,
     /// whether this Claude Code install keeps a live-session registry
     pub registry_seen: bool,
     /// running in a tmux pane, even if the registry has not caught up
@@ -180,6 +191,8 @@ impl Session {
             partial: false,
             placeholder: false,
             titled: false,
+            record: crate::agent::Record::ClaudeJsonl,
+            said: String::new(),
             registry_seen: true,
             in_pane: false,
             skip_first: false,
@@ -216,6 +229,29 @@ impl Session {
             // Started mid-file, so the first line is a fragment.
             lines.remove(0);
             self.skip_first = false;
+        }
+        if self.record == crate::agent::Record::AiderMarkdown {
+            let mut n = 0;
+            for line in lines {
+                self.lines_seen += 1;
+                if self.apply_aider(&line) {
+                    self.lines_used += 1;
+                }
+                n += 1;
+            }
+            if n > 0 {
+                // Only the "chat started" line carries a time, so without this
+                // a session that has been working for an hour would report its
+                // age from when it opened. The file was just written to; that
+                // is when it was last active.
+                if let Some(at) = self.file_written() {
+                    self.last = Some(at.max(self.last.unwrap_or(at)));
+                    if self.started.is_none() {
+                        self.started = Some(at);
+                    }
+                }
+            }
+            return n;
         }
         let mut n = 0;
         for line in lines {
@@ -662,6 +698,98 @@ impl Session {
         }
     }
 
+    /// When the record was last written to.
+    fn file_written(&self) -> Option<DateTime<Utc>> {
+        let modified = std::fs::metadata(&self.path).ok()?.modified().ok()?;
+        Some(DateTime::<Utc>::from(modified))
+    }
+
+    /// One line of an Aider record, applied.
+    ///
+    /// Returns whether the line said anything worth keeping, which is what the
+    /// "how much of this file did Ironsight understand" figure counts.
+    ///
+    /// The shapes come from `agent::aider`, which was written and tested against
+    /// a real run; this is the part that turns them into the same feed, totals
+    /// and status every other session has.
+    fn apply_aider(&mut self, line: &str) -> bool {
+        use crate::agent::aider::{Line, read_line};
+        let read = read_line(line);
+        // An answer runs over as many lines as it takes, so anything that is
+        // not more answer ends the one in hand.
+        if !matches!(read, Line::Said(_)) {
+            self.flush_said();
+        }
+        match read {
+            Line::Started(when) => {
+                // `2026-08-21 10:45:04`, local time, no zone — which is all
+                // aider writes. Read as UTC rather than guessed at: a wrong
+                // offset would put the session hours into the future and make
+                // every age in the interface a lie.
+                let at = chrono::NaiveDateTime::parse_from_str(&when, "%Y-%m-%d %H:%M:%S")
+                    .ok()
+                    .map(|t| t.and_utc());
+                self.push(Ev::new(
+                    at,
+                    Kind::System,
+                    format!("aider started · {when}"),
+                    String::new(),
+                ));
+                true
+            }
+            Line::Asked(what) => {
+                if self.first_prompt.is_empty() {
+                    self.first_prompt = what.clone();
+                }
+                self.turns += 1;
+                self.push(Ev::new(None, Kind::Prompt, event::clip(&what, 200), what));
+                true
+            }
+            Line::Said(text) => {
+                if !self.said.is_empty() {
+                    self.said.push('\n');
+                }
+                self.said.push_str(&text);
+                true
+            }
+            Line::Told(what) => {
+                self.push(Ev::new(None, Kind::System, event::clip(&what, 200), what));
+                true
+            }
+            Line::Model(model) => {
+                self.model = model;
+                true
+            }
+            Line::Tokens { sent, received } => {
+                // Aider reports per exchange, so these accumulate. It says
+                // nothing about caching that Ironsight could price, which is why
+                // an Aider session shows tokens and no dollars of its own.
+                self.totals.input += sent;
+                self.totals.output += received;
+                self.totals.requests += 1;
+                true
+            }
+            Line::Cost { message, .. } => {
+                // The per-message figure, not the running total it prints
+                // beside it: a second run of aider in the same folder starts
+                // its session total again from zero, and adding those would
+                // count the first run twice.
+                self.totals.cost += message;
+                true
+            }
+            Line::Nothing => false,
+        }
+    }
+
+    /// Emit the answer collected so far, if there is one.
+    fn flush_said(&mut self) {
+        if self.said.is_empty() {
+            return;
+        }
+        let text = std::mem::take(&mut self.said);
+        self.push(Ev::new(None, Kind::Text, event::clip(&text, 200), text));
+    }
+
     pub fn status(&self) -> Status {
         match &self.live {
             Some(live) if live.status == "busy" => {
@@ -701,6 +829,40 @@ impl Session {
         s.title = pane.session.clone();
         s.placeholder = true;
         s.in_pane = true;
+        s
+    }
+
+    /// An Aider conversation: the record it keeps beside the code.
+    ///
+    /// Identified by the folder rather than by a conversation id, because that
+    /// is how Aider itself resumes one — there is one history per repository
+    /// and `aider --restore-chat-history` continues whichever it finds there.
+    pub fn aider(found: &crate::agent::Found) -> Self {
+        let mut s = Session::open(found.path.clone());
+        s.id = found.id.clone();
+        s.cwd = found.cwd.clone();
+        s.record = crate::agent::Record::AiderMarkdown;
+        // Deliberately not named "Aider": that is what it is running, not what
+        // it is doing, and `label()` would then show it in place of the thing
+        // the conversation is actually about.
+        s
+    }
+
+    /// A session Ironsight holds by pipe, before its transcript exists.
+    ///
+    /// The gap it fills is small but real: between the agent being started and
+    /// its first line being written there is a process running, doing work, and
+    /// nothing at all to see. Once the transcript appears the ordinary path
+    /// finds it under the same id and this is replaced by the real thing.
+    pub fn owned(id: &str, o: &crate::owned::Owned) -> Self {
+        let mut s = Session::open(PathBuf::from(format!("/nonexistent/{id}.jsonl")));
+        s.id = id.to_string();
+        s.cwd = o.cwd.clone();
+        s.model = o.model.clone();
+        s.title = o.name.clone();
+        s.live = o.alive.then(|| Live::owned(o));
+        s.placeholder = true;
+        s.started = chrono::DateTime::from_timestamp(o.started, 0);
         s
     }
 
@@ -780,5 +942,131 @@ impl Session {
     pub fn age_secs(&self) -> i64 {
         self.last
             .map_or(i64::MAX, |t| (Utc::now() - t).num_seconds().max(0))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A record in the shape aider actually writes, taken from a real run:
+    /// a heading, what it said about itself, a question, an answer over
+    /// several lines, and what the exchange cost.
+    fn a_record(dir: &std::path::Path) -> crate::agent::Found {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(
+            dir.join(crate::agent::aider::HISTORY),
+            "# aider chat started at 2026-08-21 10:45:04\n\
+             > Aider v0.86.2\n\
+             > Model: ollama_chat/qwen2.5-coder:7b with whole edit format\n\
+             \n\
+             #### add a docstring to add()\n\
+             Here is the change.\n\
+             It documents the function.\n\
+             \n\
+             > Tokens: 788 sent, 80 received.\n\
+             > Cost: $0.0100 message, $0.0100 session.\n\
+             \n\
+             #### now do subtract()\n\
+             Done.\n\
+             \n\
+             > Tokens: 1.2k sent, 40 received.\n\
+             > Cost: $0.0200 message, $0.0300 session.\n",
+        )
+        .unwrap();
+        crate::agent::aider::found_in(dir).expect("the record is a conversation")
+    }
+
+    #[test]
+    fn an_aider_record_becomes_a_session_like_any_other() {
+        // The adapter has always been able to read this file. Until now nothing
+        // called it, so an Aider session showed as a bare screen with no
+        // conversation, no model and no numbers.
+        let dir = std::env::temp_dir().join(format!("ironsight-aider-read-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let found = a_record(&dir);
+
+        let mut session = Session::aider(&found);
+        session.backfill();
+
+        assert_eq!(
+            session.id,
+            dir.to_string_lossy(),
+            "identified by the folder, which is how aider resumes one"
+        );
+        assert_eq!(
+            session.model, "ollama_chat/qwen2.5-coder:7b",
+            "the model is read off the record"
+        );
+        assert_eq!(session.first_prompt, "add a docstring to add()");
+        assert_eq!(session.turns, 2, "two questions were asked");
+        assert_eq!(
+            session.totals.input, 1_988,
+            "788 plus 1.2k, with the short form understood"
+        );
+        assert_eq!(session.totals.output, 120);
+        assert_eq!(session.totals.requests, 2);
+        // Per message, not the running session total printed beside it — which
+        // would count the first exchange twice.
+        assert!(
+            (session.totals.cost - 0.03).abs() < 1e-9,
+            "cost is the exchanges added up: {}",
+            session.totals.cost
+        );
+
+        // The answer is one thing that was said, not one event per line.
+        let answers: Vec<&Ev> = session
+            .events
+            .iter()
+            .filter(|e| e.kind == Kind::Text)
+            .collect();
+        assert_eq!(
+            answers.len(),
+            2,
+            "one answer per question: {}",
+            answers.len()
+        );
+        assert!(
+            answers[0].body.contains("Here is the change.")
+                && answers[0].body.contains("It documents the function."),
+            "an answer that ran over two lines is one answer: {:?}",
+            answers[0].body
+        );
+        assert_eq!(
+            session
+                .events
+                .iter()
+                .filter(|e| e.kind == Kind::Prompt)
+                .count(),
+            2,
+            "and both questions are in the feed"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_aider_session_is_as_recent_as_its_record() {
+        // Only the "chat started" line carries a time, so age taken from the
+        // events alone would report a session working now as hours old.
+        let dir = std::env::temp_dir().join(format!("ironsight-aider-age-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let found = a_record(&dir);
+        let mut session = Session::aider(&found);
+        session.backfill();
+        assert!(
+            session.age_secs() < 60,
+            "the file was written moments ago, so the session was active moments \
+             ago — not at the timestamp in its heading: {}",
+            session.age_secs()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_claude_session_is_still_read_as_json() {
+        // The branch must not have made every session markdown.
+        let s = Session::open(PathBuf::from("/nonexistent/x.jsonl"));
+        assert_eq!(s.record, crate::agent::Record::ClaudeJsonl);
     }
 }

@@ -453,6 +453,34 @@ window.addEventListener("error", (e) => say(`${e.message} · ${e.filename}:${e.l
 window.addEventListener("unhandledrejection", (e) => say(String(e.reason)));
 const current = () => sessions.find((s) => s.id === selected);
 
+// What an empty constitution offers to be. The headings are the ones the parser
+// looks for, so a person filling this in is filling in something that will
+// actually reach a brief rather than a document nothing reads.
+const CONSTITUTION_TEMPLATE = `# Constitution
+
+## Mission
+What this project is for, in a sentence.
+
+## Architecture
+The shape of it, and what must not change.
+
+## Constraints
+- A standing rule every session here is held to.
+- [tag] A rule that applies only to tasks mentioning "tag".
+
+## Preferences
+- How things are done here when it is a matter of taste.
+
+## Rejected
+- An approach that was tried or considered, and why it was not taken.
+
+## Done means
+- What has to be true before work here counts as finished.
+
+## Open questions
+- Something undecided, so nobody decides it by accident.
+`;
+
 // ── the session list ───────────────────────────────────────────────────────
 function drawAgents() {
   const shown = liveOnly ? sessions.filter((s) => s.live) : sessions;
@@ -1510,15 +1538,54 @@ function drawDetail(s) {
         say(String(e));
       }
     });
-  }
-  if (s.steerable) {
-    action(actions, "Window", "ghost", async () => {
+    // What this session was told, as it would be told today: the project's
+    // standing constraints that bear on this task, what done means, and when to
+    // escalate. It has been renderable from the terminal since intent landed
+    // and invisible from here, which is where the work is actually watched.
+    action(actions, "Brief", "ghost", async () => {
       try {
-        say(`opened in ${await invoke("window", { id: s.id })}`);
+        const text = await invoke("brief", { id: s.id });
+        reading(`Brief · ${s.name}`, text || "this task has no brief yet");
       } catch (e) {
         say(String(e));
       }
     });
+  }
+  // The standing decisions the brief is drawn from. Read and edited here
+  // because a constraint you cannot see is a constraint nobody keeps.
+  action(actions, "Constitution…", "ghost", async () => {
+    let it;
+    try {
+      it = await invoke("constitution", { id: s.id });
+    } catch (e) {
+      return say(String(e));
+    }
+    if (!it) return say("this session has no folder to look in");
+    const edited = await writing(
+      it.exists ? "Constitution" : "Write this project a constitution",
+      it.path,
+      it.text || CONSTITUTION_TEMPLATE,
+    );
+    if (edited === null) return;
+    try {
+      say(await invoke("save_constitution", { path: it.path, text: edited }));
+    } catch (e) {
+      say(String(e));
+    }
+  });
+  if (s.steerable) {
+    // Opening a session in its own window means handing over a terminal, and a
+    // session Ironsight holds by pipe has none. It can still be talked to,
+    // renamed and closed — everything below — so only this one is withheld.
+    if (s.terminal) {
+      action(actions, "Window", "ghost", async () => {
+        try {
+          say(`opened in ${await invoke("window", { id: s.id })}`);
+        } catch (e) {
+          say(String(e));
+        }
+      });
+    }
     action(actions, "Rename", "ghost", async () => {
       const name = await ask("Call this session:", s.name);
       if (!name) return;
@@ -1567,6 +1634,13 @@ function drawDetail(s) {
     });
   }
   box.append(actions);
+  // The panel is rebuilt every tick, and WebKit restores the scroll it had
+  // before the rebuild. Once this session's facts overflow the rail — an
+  // assignment, a task, a long path — that restored scroll hides the first
+  // line, which is the session's *name*: the one thing on this panel that says
+  // which agent the buttons below it will act on. Put it back at the top, after
+  // the content exists rather than before.
+  box.scrollTop = 0;
 }
 
 // ── what is waiting on you ─────────────────────────────────────────────────
@@ -2056,6 +2130,37 @@ on("more", "click", () => {
 on("custom-accent", "input", (e) => useAccent(e.target.value));
 on("menu-close", "click", () => el("menu").close());
 on("detail-close", "click", () => el("detail-text").close());
+
+/// Show a piece of text that is only to be read.
+function reading(title, text) {
+  el("detail-title").textContent = title;
+  el("detail-body").textContent = text;
+  el("detail-text").showModal();
+}
+
+/// Edit a document, and answer with what was typed — or null if it was left
+/// alone. Deliberately not a live-saving editor: writing into a repository is
+/// a thing you should have to mean.
+function writing(title, where, text) {
+  return new Promise((resolve) => {
+    const box = el("writing-body");
+    el("writing-title").textContent = title;
+    el("writing-where").textContent = where;
+    box.value = text;
+    const done = (value) => {
+      el("writing").close();
+      el("writing-save").removeEventListener("click", save);
+      el("writing-cancel").removeEventListener("click", cancel);
+      resolve(value);
+    };
+    const save = () => done(box.value);
+    const cancel = () => done(null);
+    el("writing-save").addEventListener("click", save);
+    el("writing-cancel").addEventListener("click", cancel);
+    el("writing").showModal();
+    box.focus();
+  });
+}
 on("code-close", "click", () => el("code").close());
 useAccent(chosenAccent());
 

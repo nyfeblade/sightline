@@ -5,7 +5,7 @@
 
 use ironsight_core::app::App;
 use ironsight_core::session::Status;
-use ironsight_core::{app as core_app, bootstrap, bus, control, history, usage, work};
+use ironsight_core::{app as core_app, bootstrap, brief, bus, control, history, usage, work};
 use serde::Serialize;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -144,7 +144,12 @@ struct SessionDto {
     memory: u64,
     /// the tools it has reached for, most used first
     tools: Vec<String>,
+    /// It can be spoken to at all — through a terminal, or down a pipe
+    /// Ironsight holds.
     steerable: bool,
+    /// It has a terminal behind it. Everything that needs a screen — opening it
+    /// in a window, attaching, typing keys — needs this rather than the above.
+    terminal: bool,
     live: bool,
     /// how deep this session sits under whoever started it
     depth: usize,
@@ -263,6 +268,7 @@ fn sessions(shared: State<Shared>) -> Vec<SessionDto> {
                     .as_ref()
                     .map(|l| l.pid)
                     .or_else(|| app.pane_of(&s.id).map(|p| p.pid))
+                    .or_else(|| app.owned_of(&s.id).map(|o| o.pid as i64))
             })
             .collect()
     });
@@ -276,6 +282,11 @@ fn sessions(shared: State<Shared>) -> Vec<SessionDto> {
             .map(|s| {
                 let (state, tool) = state_of(s);
                 let pane = app.pane_of(&s.id).map(|p| p.session.clone());
+                // A session Ironsight holds has no terminal, but it is held
+                // somewhere and saying where is the same fact.
+                let held = pane
+                    .clone()
+                    .or_else(|| app.owned_of(&s.id).map(|o| o.name.clone()));
                 // What it is costing the machine, measured from its process
                 // tree; nothing writes that down.
                 let pid = s
@@ -283,6 +294,7 @@ fn sessions(shared: State<Shared>) -> Vec<SessionDto> {
                     .as_ref()
                     .map(|l| l.pid)
                     .or_else(|| app.pane_of(&s.id).map(|p| p.pid))
+                    .or_else(|| app.owned_of(&s.id).map(|o| o.pid as i64))
                     .unwrap_or(0);
                 let used = used_by.get(&pid).copied().unwrap_or_default();
                 let mut tools: Vec<(&String, &usize)> = s.tools.iter().collect();
@@ -319,7 +331,8 @@ fn sessions(shared: State<Shared>) -> Vec<SessionDto> {
                     cores: usage::cores(),
                     memory: used.memory,
                     tools: tools.into_iter().take(6).map(|(n, _)| n.clone()).collect(),
-                    steerable: pane.is_some(),
+                    steerable: app.steerable(&s.id),
+                    terminal: pane.is_some(),
                     live: s.live.is_some() || s.in_pane,
                     depth: app.work.depth_of(&s.id),
                     parent: app.work.parent_of(&s.id).map(str::to_string),
@@ -336,7 +349,7 @@ fn sessions(shared: State<Shared>) -> Vec<SessionDto> {
                         question: a.question.clone(),
                         options: a.options.clone(),
                     }),
-                    pane,
+                    pane: held,
                 }
             })
             .collect()
@@ -690,10 +703,7 @@ fn answer(shared: State<Shared>, id: String, option: usize) -> Result<(), String
 #[tauri::command]
 fn interrupt(shared: State<Shared>, id: String) -> Result<(), String> {
     shared
-        .on(&id, |app| {
-            app.interrupt();
-            Ok(())
-        })
+        .on(&id, |app| app.interrupt())
         .unwrap_or_else(|| Err("no such session".into()))
 }
 
@@ -706,6 +716,19 @@ fn start(shared: State<Shared>, line: String, name: Option<String>) -> Result<St
     let mut spec = core_app::parse_new(&line);
     if let Some(n) = name.filter(|n| !n.trim().is_empty()) {
         spec.name = Some(n);
+    }
+    if spec.owned {
+        // A session Ironsight holds itself. Its first message is what names the
+        // conversation, so the line's prompt is sent as the opening rather than
+        // typed in afterwards.
+        let opening = spec.prompt.clone();
+        return shared.raw(|app| {
+            let id = app.start_owned(&spec, opening.as_deref())?;
+            Ok(app
+                .owned_of(&id)
+                .map(|o| o.name.clone())
+                .unwrap_or_else(|| id.clone()))
+        });
     }
     shared.raw(|app| app.start_session(&spec))
 }
@@ -922,6 +945,88 @@ fn note(shared: State<Shared>, task: String, text: String) -> Result<(), String>
     })
 }
 
+/// What a session was told when it was given its work.
+///
+/// The brief is rendered rather than stored: it is the constitution as it
+/// stands now plus the task as it stands now, so reading it here answers "what
+/// would this session be told today", which is the question worth asking when
+/// its work has drifted.
+#[tauri::command]
+fn brief(shared: State<Shared>, id: String) -> Option<String> {
+    shared.raw(|app| {
+        let cwd = app.sessions.iter().find(|s| s.id == id)?.cwd.clone();
+        let task = app.work.task_for(&id)?.clone();
+        let constitution = brief::Constitution::find(std::path::Path::new(&cwd)).map(|(_, c)| c);
+        Some(brief::render(constitution.as_ref(), &task))
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ConstitutionDto {
+    /// Where it is, or where it would go if it were written.
+    path: String,
+    /// The markdown itself; empty when there is none yet.
+    text: String,
+    /// Whether that file exists today.
+    exists: bool,
+}
+
+/// The project constitution behind a session, as text.
+///
+/// Deliberately the raw markdown rather than the parsed sections: it is a
+/// document a person wrote, and handing back a reassembled version of it would
+/// quietly lose whatever the parser does not model.
+#[tauri::command]
+fn constitution(shared: State<Shared>, id: String) -> Option<ConstitutionDto> {
+    let cwd = shared.raw(|app| {
+        app.sessions
+            .iter()
+            .find(|s| s.id == id)
+            .map(|s| s.cwd.clone())
+    })?;
+    if cwd.is_empty() {
+        return None;
+    }
+    let here = std::path::Path::new(&cwd);
+    if let Some((root, _)) = brief::Constitution::find(here) {
+        let path = root.join(brief::FILE);
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        return Some(ConstitutionDto {
+            path: path.to_string_lossy().into_owned(),
+            text,
+            exists: true,
+        });
+    }
+    // None yet. Say where one would go, so writing the first is one step
+    // rather than a question about where it belongs: the repository, because a
+    // constitution is about the project and not about one folder in it.
+    let root = ironsight_core::git::repo_root(here).unwrap_or_else(|| here.to_path_buf());
+    Some(ConstitutionDto {
+        path: root.join(brief::FILE).to_string_lossy().into_owned(),
+        text: String::new(),
+        exists: false,
+    })
+}
+
+/// Write the constitution back.
+///
+/// The one thing in the window that edits a file in your repository, so it is
+/// explicit: it writes exactly the path `constitution` reported, and it says so
+/// afterwards.
+#[tauri::command]
+fn save_constitution(path: String, text: String) -> Result<String, String> {
+    let path = std::path::PathBuf::from(&path);
+    if !path.ends_with(brief::FILE) {
+        return Err(format!("that is not a {}", brief::FILE));
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(format!("saved {}", path.display()))
+}
+
 #[tauri::command]
 fn task_state(shared: State<Shared>, task: String, state: String) -> Result<(), String> {
     let wanted = match state.as_str() {
@@ -1048,6 +1153,9 @@ fn main() {
             tasks,
             assign,
             note,
+            brief,
+            constitution,
+            save_constitution,
             task_state,
             lineage,
             consumers,

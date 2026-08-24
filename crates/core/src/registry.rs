@@ -20,6 +20,37 @@ pub struct Live {
     pub version: String,
 }
 
+impl Live {
+    /// The same answer for a session Ironsight holds itself.
+    ///
+    /// A session driven over pipes never writes a registry entry — there is no
+    /// terminal for it to register from — so Ironsight is the only thing that
+    /// knows it is running. Saying so in the registry's own shape means every
+    /// judgement downstream (is it working, is it waiting, has it ended) is
+    /// made by the same code for both kinds.
+    pub fn owned(o: &crate::owned::Owned) -> Live {
+        Live {
+            pid: o.pid as i64,
+            cwd: o.cwd.clone(),
+            // Deliberately empty. The registry's name wins over the title a
+            // conversation gave itself, and `owned-3` is a handle rather than a
+            // name worth showing in its place.
+            name: String::new(),
+            status: if o.busy { "busy" } else { "idle" }.to_string(),
+            kind: "owned".to_string(),
+            version: String::new(),
+        }
+    }
+
+    /// The same record, but working. Used the instant a message is sent, so a
+    /// session that has just been asked something never looks idle enough to be
+    /// asked a second thing before the first has been noticed.
+    pub fn into_busy(mut self) -> Live {
+        self.status = "busy".to_string();
+        self
+    }
+}
+
 /// Decides whether a pid from the registry is still the process that wrote it.
 ///
 /// On Linux that is a cheap procfs read per pid. Elsewhere there is no procfs,
