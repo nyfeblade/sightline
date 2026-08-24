@@ -291,6 +291,7 @@ pub fn brief(
              \x20 This project defines what done means in {file}. Run it with\n\
              \x20 `ironsight check` from the worktree, and run upstream's own suite too:\n\
              \n\
+             \x20   ironsight invariants\n\
              \x20   cargo fmt --check\n\
              \x20   cargo test\n\
              \x20   node crates/gui/ui/tokenize.test.mjs\n\
@@ -302,6 +303,7 @@ pub fn brief(
              \x20 mechanical to hold the merge to and the result can only ever be\n\
              \x20 unverified. Run upstream's suite anyway:\n\
              \n\
+             \x20   ironsight invariants\n\
              \x20   cargo fmt --check\n\
              \x20   cargo test\n\
              \x20   node crates/gui/ui/tokenize.test.mjs\n\

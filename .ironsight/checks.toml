@@ -30,3 +30,61 @@ name     = "windows"
 run      = "cargo check --target x86_64-pc-windows-msvc -p ironsight-core -p ironsight"
 timeout  = "10m"
 optional = true
+
+# ── invariants ────────────────────────────────────────────────────────────────
+#
+# The other direction. A check must pass; these must FAIL. Each is written to
+# succeed only when the guarantee it names has stopped being true, so a quiet
+# run here is the good one and anything that fires is a guarantee that has gone.
+#
+# They exist because "the tests pass" survives a change that quietly broke
+# something load-bearing — which is exactly what happens during a merge, and why
+# `ironsight glue` hands these to whoever is reconciling a fork. Prose in a
+# document cannot fire; a command can.
+#
+# Each was checked by breaking the thing on purpose and watching it catch it.
+
+[[invariant]]
+name   = "core stays synchronous"
+must   = "crates/core has no async runtime. Both front ends reach it directly, and making it async makes both async."
+refute = "grep -qE '^(tokio|async-std|smol)' crates/core/Cargo.toml"
+
+[[invariant]]
+name   = "the event vocabulary is version 1"
+must   = "Fields are added, never removed or repurposed; kinds are added, never renamed. Anything else bumps the version, with both emitted for one release."
+refute = "! grep -q 'pub const VERSION: u32 = 1;' crates/core/src/bus.rs"
+
+[[invariant]]
+name   = "one writer journals"
+must   = "A pid-file lock decides who journals. Two processes numbering events from separate counters makes --since meaningless."
+refute = "! grep -q 'PublisherLock::acquire' crates/core/src/app.rs"
+
+[[invariant]]
+name   = "what leaves is redacted"
+must   = "Command lines are masked on the way to the journal and the socket. Not on the way in: the interface still shows the real command."
+refute = "! grep -q 'redact::text' crates/core/src/stream.rs"
+
+[[invariant]]
+name   = "checks only ever refuse"
+must   = "A passing suite reaches Checked, never Verified. Only refutations that have all stood — and have been seen to fire at some point — carry a task past it."
+refute = "! grep -q 'stood == refutations.len()' crates/tui/src/main.rs"
+
+[[invariant]]
+name   = "nothing runs from a repository until it is read"
+must   = "checks.toml is shell that arrived with someone else's code. It runs only after `ironsight trust` approves those exact commands."
+refute = "! grep -q 'checks::trusted' crates/tui/src/main.rs"
+
+[[invariant]]
+name   = "a ceiling lives outside the worktree"
+must   = "The real limits file is in Ironsight's data directory. A ceiling a supervised agent can edit is a suggestion."
+refute = "! grep -A1 'fn machine_path' crates/core/src/limits.rs | grep -q 'data_dir'"
+
+[[invariant]]
+name   = "an owned session's permissions cannot be half-understood"
+must   = "owned::Spec is deny_unknown_fields. A daemon that ignored a field it did not know would start a session with the wrong permissions and say nothing."
+refute = "! grep -q 'deny_unknown_fields' crates/core/src/owned.rs"
+
+[[invariant]]
+name   = "the front ends share one engine"
+must   = "Neither front end grows logic the other needs. Sending, answering, starting, reopening: one implementation in core, two callers."
+refute = "grep -rlq 'fn pending_approval' crates/tui/src crates/gui/src"

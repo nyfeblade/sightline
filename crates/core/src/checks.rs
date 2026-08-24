@@ -108,10 +108,36 @@ pub struct Outcome {
     pub ms: u64,
 }
 
+/// Something about this project that must never stop being true.
+///
+/// Different from a check in the direction it points. A check must pass, and a
+/// passing check says only that the failures it can express did not happen. An
+/// invariant is stated as the thing that must *not* be found — so its command
+/// must fail, and a command that succeeds has demonstrated the very defect it
+/// was written to look for.
+///
+/// That direction is what makes these worth having during a merge. "The tests
+/// pass" survives an adapter that quietly broke a guarantee; "nothing journals
+/// without taking the lock" does not, because it looks for the breakage rather
+/// than for its symptoms.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Invariant {
+    pub name: String,
+    /// What must be true, in words, for whoever reads the report.
+    pub must: String,
+    /// A command that must fail. If it succeeds, the invariant is broken and
+    /// what it printed is the evidence.
+    pub refute: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Suite {
     #[serde(default, rename = "check")]
     pub checks: Vec<Check>,
+    /// What must never stop being true here, each with the command that would
+    /// show that it had.
+    #[serde(default, rename = "invariant")]
+    pub invariants: Vec<Invariant>,
     /// Exactly what was on disk, so trust can be about *these* commands rather
     /// than about a file name.
     #[serde(skip)]
@@ -150,6 +176,25 @@ impl Suite {
         self.checks.iter().map(|c| run(c, cwd, env)).collect()
     }
 
+    /// Try to break every invariant, and report what happened to each.
+    ///
+    /// A boring answer — a list of things that did not fire — is the one you
+    /// want. Anything that fired is a guarantee that has stopped being true.
+    pub fn hold(&self, cwd: &Path, env: &HashMap<String, String>) -> Vec<Held> {
+        self.invariants
+            .iter()
+            .map(|i| {
+                let (verdict, ms) = refute(&i.refute, cwd, env);
+                Held {
+                    name: i.name.clone(),
+                    must: i.must.clone(),
+                    verdict,
+                    ms,
+                }
+            })
+            .collect()
+    }
+
     /// Whether these outcomes amount to done.
     ///
     /// Unknown is not done. A check that could not be run has not passed, and
@@ -168,6 +213,32 @@ impl Suite {
             State::Passed => None,
         })
     }
+}
+
+/// What happened when one invariant was tested.
+#[derive(Debug, Clone)]
+pub struct Held {
+    pub name: String,
+    pub must: String,
+    pub verdict: Verdict,
+    pub ms: u64,
+}
+
+impl Held {
+    /// Whether this one is broken. `Unrunnable` is neither — a command that
+    /// would not start has shown nothing either way, and calling that "holds"
+    /// is how an invariant nobody can test starts vouching for everything.
+    pub fn broken(&self) -> bool {
+        matches!(self.verdict, Verdict::Refuted { .. })
+    }
+}
+
+/// Whether every invariant that could be tested survived.
+///
+/// Says nothing about the ones that could not be run; the caller has to look at
+/// those itself, because they are the case where a silent answer is wrong.
+pub fn all_held(held: &[Held]) -> bool {
+    !held.iter().any(Held::broken)
 }
 
 /// What happened when something written to show the work is wrong was tried.
@@ -260,12 +331,21 @@ pub fn trust(root: &Path, suite: &Suite) -> Result<(), String> {
 
 /// What to say to someone whose checks have not been approved.
 pub fn untrusted_hint(root: &Path, suite: &Suite) -> String {
-    let names: Vec<&str> = suite.checks.iter().map(|c| c.name.as_str()).collect();
+    // Invariants are shell from the same file and arrived with the same
+    // someone else's code. Counting only the checks would have the gate approve
+    // nine commands it never mentioned, which is the gate failing at the one
+    // thing it is for.
+    let names: Vec<&str> = suite
+        .checks
+        .iter()
+        .map(|c| c.name.as_str())
+        .chain(suite.invariants.iter().map(|i| i.name.as_str()))
+        .collect();
     format!(
         "{} has not been approved. It would run {} shell command(s) from {}: {}. \
          Read them, then: ironsight trust {}",
         root.display(),
-        suite.checks.len(),
+        names.len(),
         FILE,
         names.join(", "),
         root.display()
@@ -506,6 +586,110 @@ pub fn first_failure(stdout: &str, stderr: &str) -> Option<String> {
 }
 
 #[cfg(test)]
+mod invariant_tests {
+    use super::*;
+
+    fn suite_of(toml: &str) -> Suite {
+        toml::from_str(toml).expect("it parses")
+    }
+
+    #[test]
+    fn an_invariant_that_fires_is_a_guarantee_that_has_gone() {
+        // The direction is the whole point and the easiest thing to get
+        // backwards: the command must FAIL. One that succeeds has found the
+        // defect it was written to look for.
+        let suite = suite_of(
+            r#"
+            [[invariant]]
+            name   = "broken"
+            must   = "this must never be found"
+            refute = "true"
+
+            [[invariant]]
+            name   = "intact"
+            must   = "nor this"
+            refute = "false"
+            "#,
+        );
+        let held = suite.hold(Path::new("."), &HashMap::new());
+        assert_eq!(held.len(), 2);
+        assert!(held[0].broken(), "a command that succeeded found something");
+        assert!(
+            !held[1].broken(),
+            "one that failed found nothing, which is the good news"
+        );
+        assert!(!all_held(&held));
+        assert!(all_held(&held[1..]));
+    }
+
+    #[test]
+    fn an_invariant_nobody_can_test_vouches_for_nothing() {
+        // Unrunnable is neither held nor broken. Counting it as held is how an
+        // instrument that cannot fire starts guaranteeing everything — the same
+        // mistake the fire-once rule exists to prevent one level down.
+        let suite = suite_of(
+            r#"
+            [[invariant]]
+            name   = "needs a tool nobody has"
+            must   = "something"
+            refute = "this-command-does-not-exist-anywhere"
+            "#,
+        );
+        let held = suite.hold(Path::new("."), &HashMap::new());
+        assert!(matches!(held[0].verdict, Verdict::Unrunnable { .. }));
+        assert!(!held[0].broken(), "it has not shown a breakage");
+        assert!(
+            all_held(&held),
+            "nor has it shown one, so it does not fail the run on its own — \
+             the caller has to say it could not be tested"
+        );
+    }
+
+    #[test]
+    fn a_file_with_no_invariants_is_ordinary_rather_than_broken() {
+        // Every project that already had a checks file has none of these, and
+        // must keep working exactly as before.
+        let suite = suite_of(
+            r#"
+            [[check]]
+            name = "tests"
+            run  = "cargo test"
+            "#,
+        );
+        assert!(suite.invariants.is_empty());
+        assert!(all_held(&suite.hold(Path::new("."), &HashMap::new())));
+    }
+
+    #[test]
+    fn approving_a_project_counts_the_invariants_too() {
+        // They are shell from the same file, arriving with the same someone
+        // else's code. A gate that approved nine commands without naming them
+        // has failed at the one thing it is for.
+        let suite = suite_of(
+            r#"
+            [[check]]
+            name = "tests"
+            run  = "cargo test"
+
+            [[invariant]]
+            name   = "no async runtime"
+            must   = "core stays synchronous"
+            refute = "grep -q tokio Cargo.toml"
+            "#,
+        );
+        let hint = untrusted_hint(Path::new("/w"), &suite);
+        assert!(
+            hint.contains("2 shell command(s)"),
+            "both are counted: {hint}"
+        );
+        assert!(
+            hint.contains("no async runtime"),
+            "and the invariant is named"
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -589,6 +773,7 @@ timeout = "2m"
         let dir = scratch("run");
         let suite = Suite {
             raw: String::new(),
+            invariants: Vec::new(),
             checks: vec![
                 Check {
                     name: "good".into(),

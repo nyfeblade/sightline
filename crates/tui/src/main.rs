@@ -74,6 +74,8 @@ usage: Ironsight [options]
                                checked but never verified
        ironsight claim <who>        say a session's work is finished; the checks decide
        ironsight check <who>        run this project's checks now and report
+       ironsight invariants         try to break what must never stop being true
+                               here. A quiet run is the good one
        ironsight trust [path]       approve a project's checks, having read them.
                                Nothing runs from a .ironsight/checks.toml until
                                you have, and it asks again if the file changes
@@ -158,6 +160,21 @@ fn verify(app: &mut App, id: &str, record: bool) -> Result<Vec<checks::Outcome>,
     if !checks::trusted(&root, &suite) {
         return Err(checks::untrusted_hint(&root, &suite));
     }
+    // The invariants first, and separately, because they answer a different
+    // question. The checks ask whether this work is finished; these ask whether
+    // it broke something that was never its business. Work that broke a
+    // guarantee is refused however green its own suite is — that is the case a
+    // passing suite is worst at catching, and the reason these exist.
+    let held = suite.hold(&root, &env);
+    for h in held.iter().filter(|h| h.broken()) {
+        println!("BROKE  {} — {}", h.name, h.must);
+    }
+    let broke: Vec<String> = held
+        .iter()
+        .filter(|h| h.broken())
+        .map(|h| h.name.clone())
+        .collect();
+
     let outcomes = suite.run(&root, &env);
     if !record {
         return Ok(outcomes);
@@ -167,6 +184,31 @@ fn verify(app: &mut App, id: &str, record: bool) -> Result<Vec<checks::Outcome>,
         return Ok(outcomes);
     };
     let short = &id[..id.len().min(8)];
+    if !broke.is_empty() {
+        // Straight back to working. There is nothing to wait for, only
+        // something to put back.
+        let why = format!(
+            "refused: {} invariant(s) broken — {}",
+            broke.len(),
+            broke.join(", ")
+        );
+        let _ = app.work.set_state(&task, work::State::Working);
+        let _ = app.work.note(&task, &why);
+        println!("{task} refused · {short} · {why}");
+        for name in &broke {
+            let ev = bus::Event::new(
+                id,
+                "foreman",
+                bus::Kind::ChecksFailed {
+                    suite: format!("invariant · {name}"),
+                    first: "a guarantee that must never stop being true has".into(),
+                },
+            );
+            app.publish(ev);
+        }
+        app.work.flush();
+        return Ok(outcomes);
+    }
     if checks::Suite::verified(&outcomes) {
         let names: Vec<&str> = outcomes.iter().map(|o| o.name.as_str()).collect();
         for o in &outcomes {
@@ -731,6 +773,68 @@ fn main() -> Result<()> {
         let task = app.assign(&id, &format!("supervise: {intent}"));
         println!("{} · {task} · {}", it.name, limits.describe());
         println!("talk to it with `ironsight send {} <text>`", it.name);
+        return Ok(());
+    }
+
+    // What must never stop being true here, tried rather than recited.
+    if args.first().map(String::as_str) == Some("invariants") {
+        let here = std::env::current_dir()?;
+        let Some((root, suite)) = checks::Suite::find(&here).map_err(|e| anyhow::anyhow!(e))?
+        else {
+            anyhow::bail!("no {} anywhere above {}", checks::FILE, here.display());
+        };
+        if suite.invariants.is_empty() {
+            println!("{} names no invariants.", checks::FILE);
+            println!();
+            println!("An invariant is the other direction from a check: a command that must");
+            println!("FAIL, written to succeed only when a guarantee has stopped being true.");
+            println!("A passing suite survives a change that quietly broke something");
+            println!("load-bearing; a command looking for the breakage does not.");
+            return Ok(());
+        }
+        // Same gate as the checks, and for the same reason: these are shell
+        // that arrived with someone else's code.
+        if !checks::trusted(&root, &suite) {
+            anyhow::bail!(checks::untrusted_hint(&root, &suite));
+        }
+        let env = std::collections::HashMap::new();
+        let held = suite.hold(&root, &env);
+        let mut fired = 0;
+        let mut unrunnable = 0;
+        for h in &held {
+            match &h.verdict {
+                checks::Verdict::Stands => {
+                    println!("ok    {:>6}ms  {}", h.ms, h.name);
+                }
+                checks::Verdict::Refuted { how } => {
+                    fired += 1;
+                    println!("BROKE {:>6}ms  {}", h.ms, h.name);
+                    println!("               {}", h.must);
+                    println!("               it fired: {how}");
+                }
+                checks::Verdict::Unrunnable { why } => {
+                    unrunnable += 1;
+                    println!("??    {:>6}ms  {} — could not be run · {why}", h.ms, h.name);
+                }
+            }
+        }
+        println!();
+        if fired > 0 {
+            anyhow::bail!(
+                "{fired} of {} invariant(s) fired. Each one is a guarantee that has                  stopped being true.",
+                held.len()
+            );
+        }
+        // Said rather than folded into the good news: an invariant nobody can
+        // test is an instrument that vouches for everything.
+        if unrunnable > 0 {
+            println!(
+                "{} of {} could not be run, and have shown nothing either way.",
+                unrunnable,
+                held.len()
+            );
+        }
+        println!("{} invariant(s) tried, none fired.", held.len());
         return Ok(());
     }
 
@@ -1500,9 +1604,15 @@ fn main() -> Result<()> {
         let (root, suite) = checks::Suite::find(&dir)
             .map_err(|e| anyhow::anyhow!(e))?
             .ok_or_else(|| anyhow::anyhow!("{} has no {}", dir.display(), checks::FILE))?;
-        println!("{} would run, in {}:", suite.checks.len(), root.display());
+        let total = suite.checks.len() + suite.invariants.len();
+        println!("{total} would run, in {}:", root.display());
         for c in &suite.checks {
-            println!("  {:<10} {}", c.name, c.run);
+            println!("  check      {:<38} {}", c.name, c.run);
+        }
+        // Shown separately, because they run the other way round and someone
+        // approving them should know that: these are commands expected to fail.
+        for i in &suite.invariants {
+            println!("  invariant  {:<38} {}", i.name, i.refute);
         }
         checks::trust(&root, &suite).map_err(|e| anyhow::anyhow!(e))?;
         println!("approved. If the file changes, it will ask again.");

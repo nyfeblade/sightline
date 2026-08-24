@@ -180,11 +180,30 @@ Report it to the user with the invariant named and what upstream did to it.
 and left the old names recognised so running sessions were not orphaned; expect
 that pattern and preserve both sides of it if the fork depends on either.
 
+## The invariants, as commands
+
+The list above is prose, and prose cannot fire. Upstream also ships the same
+guarantees as commands, in the `[[invariant]]` entries of
+`.ironsight/checks.toml`:
+
+    ironsight invariants
+
+Each is written to *fail*. One that succeeds has found the very thing it was
+looking for, so a quiet run is the good one. This is the part of the gate that
+survives an adapter which made everything compile and every test pass while
+quietly breaking a guarantee — which is the failure mode of a merge, and the one
+the tests are worst at catching.
+
+Run it before you start, so you know which guarantees were already broken and
+are not yours. Run it again before you report. If one fires because of something
+you wrote, that is not a test to adjust: it is the merge being wrong.
+
 ## The testing procedure
 
 This is the gate. Run all of it from the worktree, not from the fork's main
 checkout.
 
+    ironsight invariants
     cargo fmt --check
     cargo test
     node crates/gui/ui/tokenize.test.mjs
