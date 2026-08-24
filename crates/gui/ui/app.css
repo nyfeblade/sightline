@@ -39,10 +39,22 @@
        body   secondary content, still content
        muted  labels and metadata — deliberately quiet
        faint  timestamps and furniture, nearly gone */
+  /* Measured, not eyeballed. Contrast against the ground, WCAG:
+
+       ink    #e8ebf0   16.8 : 1   passes AA for body text
+       body   #c3cad6   12.0 : 1   passes AA for body text
+       muted  #8b95a6    6.4 : 1   passes AA for body text
+       faint  #5f6878    3.4 : 1   passes AA for large text and UI furniture
+
+     The bottom two were #6d7686 (4.38) and #434a57 (2.25). The first missed the
+     4.5 body threshold and was carrying labels; the second failed everything and
+     was carrying timestamps, the keyboard hints and the status bar. Quiet is a
+     rank in a hierarchy, not a licence to be unreadable — and anything a person
+     is expected to read now clears the bar for reading. */
   --ink: #e8ebf0;
-  --body: #b7bfcc;
-  --muted: #6d7686;
-  --faint: #434a57;
+  --body: #c3cad6;
+  --muted: #8b95a6;
+  --faint: #5f6878;
 
   /* The interface, talking about itself — and it talks in white.
      
@@ -150,8 +162,8 @@ body {
   /* Figures line up in columns even in a proportional face. */
   font-variant-numeric: tabular-nums;
   /* Grows with the window, and stops before it becomes a poster. */
-  font-size: clamp(12px, 0.6vw + 7.2px, 16.5px);
-  line-height: 1.62;
+  font-size: clamp(13.5px, 0.6vw + 8.4px, 17px);
+  line-height: 1.65;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto auto;
 }
@@ -1355,4 +1367,70 @@ details[open] > .actions-head::after { content: "−"; }
   border-top: 1px solid var(--edge);
   background: var(--void);
 }
-@media (max-width: 1400px) { .hint { display: none; } }
+/* Removed: at 1400 this hid the keyboard hints on an ordinary window. The
+   captures are twice the CSS width, so a breakpoint that looked generous was
+   firing all the time. */
+
+/* ── legibility pass ────────────────────────────────────────────────────────
+   From a review of the redraw. The parts that were right were right: the two
+   quietest inks were below the readable threshold, the one primary action had
+   become indistinguishable from the buttons beside it, and the controls were
+   smaller than a target ought to be.
+
+   The parts that were not: body text was never dim (16.8:1 and 12:1 against the
+   ground), state is not signalled by colour alone — every dot carries its word
+   beside it — and the suggested replacement for the muted ink measured 4.15:1,
+   which is dimmer than the 4.38:1 it was meant to fix. */
+
+/* The one action that starts something is white on the plane, edged brightly
+   enough to find without hunting. It had drifted to within a hair of `.ghost`,
+   which made "Send" and "Queue" read as the same kind of thing. */
+.primary {
+  background: var(--raised);
+  border: 1px solid var(--ink);
+  color: var(--ink);
+  font-weight: 600;
+}
+.primary:hover { background: var(--ink); color: var(--void); border-color: var(--ink); }
+
+/* Targets you can hit. 5px of vertical padding made a control about 28px tall;
+   these are 38 and the composer's are 40. */
+.ghost, .primary { padding: 9px 15px; line-height: 1.25; }
+.composer .ghost, .composer .primary, .composer button { padding: 11px 17px; }
+.composer input { padding: 11px 14px; }
+
+/* An active tab should be findable at a glance rather than on inspection: the
+   rule under it is thicker, the label is brighter than its neighbours, and the
+   whole strip is given room so the words are not a single mass. */
+.tab { padding: 12px 15px 10px; font-size: .82rem; }
+.tab.is-on { border-bottom-width: 3px; font-weight: 600; }
+.tabs { padding: 3px 10px 0; }
+
+/* Anything a person actually reads is at body weight, whatever its rank. The
+   empty state is the clearest case: it is the only thing on the screen, and it
+   was set in the dimmest ink on the palette. */
+.empty { color: var(--body); font-size: 1.02rem; }
+.hint, .metrics { font-size: .78rem; color: var(--muted); }
+.detail .key { color: var(--muted); }
+
+/* Keyboard focus, visibly. */
+:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* The legibility pass above made the tabs bigger, and twelve bigger tabs do not
+   fit: the last two scrolled out of sight, which is worse than small. The
+   active state is what carries the affordance — a thicker rule and a heavier
+   label — so the size goes back and the emphasis stays. */
+.tab { padding: 11px 11px 9px; font-size: .79rem; }
+.tab-split { margin: 8px 7px 8px 11px; }
+
+/* The status line has to hold its figures and its hints at the same time. It
+   wraps nothing and hides nothing until there is genuinely no room. */
+.status { gap: 14px; font-size: .76rem; }
+/* `overflow: hidden` on a flex item with no basis lets it shrink to nothing,
+   which is what happened: the hints did not truncate, they disappeared. */
+.hint { font-size: .74rem; flex: none; }
+@media (max-width: 1250px) { .hint { display: none; } }
