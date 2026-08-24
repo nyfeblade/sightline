@@ -39,13 +39,20 @@ use std::path::{Path, PathBuf};
 /// because this one decides what an agent may run. An old daemon reading a spec
 /// it half understands would start a session with the wrong permissions and say
 /// nothing, so any change to `owned::Spec` bumps this.
-pub const WIRE: u32 = 3;
+pub const WIRE: u32 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "do", rename_all = "camelCase")]
 pub enum Request {
     /// Is anyone there, and speaking which version.
     Hello,
+    /// Everything the held sessions have said since the last ask.
+    ///
+    /// Destructive, and only one client may do it: these events are on their way
+    /// to the journal, and handing the same one to two front ends would number
+    /// it twice. The daemon holds the sessions, so this is the only way what
+    /// they did reaches the stream at all.
+    Drain,
     Panes,
     Start {
         cwd: String,
@@ -106,18 +113,48 @@ pub enum Request {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "is", rename_all = "camelCase")]
 pub enum Reply {
-    Hello { wire: u32, pid: u32 },
-    Panes { panes: Vec<Pane> },
-    Name { name: String },
-    Names { names: Vec<String> },
-    Screen { frame: Option<Frame> },
-    Text { text: Option<String> },
-    Count { n: usize },
-    Yes { it: bool },
-    Owned { it: crate::owned::Owned },
-    OwnedAll { all: Vec<crate::owned::Owned> },
+    Hello {
+        wire: u32,
+        pid: u32,
+    },
+    Panes {
+        panes: Vec<Pane>,
+    },
+    Name {
+        name: String,
+    },
+    Names {
+        names: Vec<String>,
+    },
+    Screen {
+        frame: Option<Frame>,
+    },
+    Text {
+        text: Option<String>,
+    },
+    Count {
+        n: usize,
+    },
+    Yes {
+        it: bool,
+    },
+    Owned {
+        it: crate::owned::Owned,
+    },
+    OwnedAll {
+        all: Vec<crate::owned::Owned>,
+    },
+    Drained {
+        events: Vec<crate::bus::Event>,
+        /// How many were dropped because nobody drained for too long. Reported
+        /// rather than hidden: a gap in the stream that nothing mentions is a
+        /// stream nobody can trust.
+        lost: u64,
+    },
     Done,
-    Failed { why: String },
+    Failed {
+        why: String,
+    },
 }
 
 impl Reply {
@@ -198,6 +235,10 @@ fn answer(request: Request) -> Reply {
         Request::OwnedAll => Reply::OwnedAll {
             all: crate::owned::list(),
         },
+        Request::Drain => {
+            let (events, lost) = crate::owned::drain();
+            Reply::Drained { events, lost }
+        }
         Request::Say { who, text } => Reply::of(crate::owned::say(&who, &text), |_| Reply::Done),
         Request::OwnedStop { who } => Reply::of(crate::owned::stop(&who), |_| Reply::Done),
         Request::OwnedReap => Reply::Names {

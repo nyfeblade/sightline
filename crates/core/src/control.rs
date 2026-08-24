@@ -568,6 +568,24 @@ pub fn owned_all() -> Vec<crate::owned::Owned> {
     }
 }
 
+/// Everything the sessions Ironsight holds have said since the last drain.
+///
+/// Wherever they are held. In-process the events are buffered beside each
+/// session; under a daemon they are buffered there, and this is the only way
+/// they reach the journal at all — which is why a policed session was invisible
+/// to the feed, the stats and the notifications until this existed.
+///
+/// Destructive by design, and for one caller: whoever holds the publisher lock.
+pub fn owned_drain() -> (Vec<crate::bus::Event>, u64) {
+    match owned_home() {
+        Home::Here => crate::owned::drain(),
+        Home::Daemon => match crate::daemon::ask(&crate::daemon::Request::Drain) {
+            Ok(crate::daemon::Reply::Drained { events, lost }) => (events, lost),
+            _ => (Vec::new(), 0),
+        },
+    }
+}
+
 /// Say something to one, by Ironsight's name for it or by its transcript id.
 pub fn owned_say(who: &str, text: &str) -> Result<(), String> {
     match owned_home() {

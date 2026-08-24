@@ -937,6 +937,35 @@ impl App {
         }
         self.last_owned_scan = Instant::now();
         self.fold_owned(control::owned_all());
+        self.publish_owned();
+    }
+
+    /// Put what the held sessions did onto the stream.
+    ///
+    /// A session Ironsight holds is spoken to over a pipe, so what it does is
+    /// *witnessed* — the tool call before its result, the decision the kernel
+    /// made, the failure with its reason — rather than reconstructed later from
+    /// a transcript. None of that reached the feed, the stats or the
+    /// notifications until it was published here: the events were buffered
+    /// beside the session and nothing ever collected them, so the sessions the
+    /// kernel ran were the only ones invisible.
+    ///
+    /// Only the publisher does this. Draining is destructive, and two front ends
+    /// draining would each get half the story.
+    fn publish_owned(&mut self) {
+        if self.publisher_lock.is_none() {
+            return;
+        }
+        let (events, lost) = control::owned_drain();
+        if lost > 0 {
+            self.say(format!(
+                "{lost} event(s) from Ironsight's own sessions were dropped before \
+                 anything collected them"
+            ));
+        }
+        for ev in events {
+            self.publish(ev);
+        }
     }
 
     /// The half of [`rescan_owned`] that decides anything, with the world
@@ -3764,6 +3793,32 @@ pub fn default_sessions_dir() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn nothing_drains_the_held_sessions_without_the_journal_lock() {
+        // Draining is destructive: the events are on their way to the journal
+        // and there is only one. A second front end doing it would take half
+        // the stream away from the one that publishes, and the gap would look
+        // like sessions that did nothing.
+        let mut app = App::new(
+            std::env::temp_dir(),
+            std::env::temp_dir(),
+            Duration::from_secs(60),
+            false,
+        );
+        assert!(
+            app.publisher_lock.is_none(),
+            "a fresh App is a reader until it takes the lock"
+        );
+        let before = app.bus.seq();
+        app.publish_owned();
+        assert_eq!(
+            app.bus.seq(),
+            before,
+            "a reader numbered an event, which means it took one off a buffer it \
+             does not own"
+        );
+    }
     use super::*;
 
     /// An App with nothing real behind it: no transcripts, no registry, no
