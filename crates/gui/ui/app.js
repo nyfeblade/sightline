@@ -1407,6 +1407,7 @@ async function drawTalk(id) {
 
   if (!grew) {
     clear(out);
+    out.classList.add("talk");
     const whose = make("div", "whose");
     whose.append(make("span", "whose-name", s ? s.name : "—"));
     if (s) whose.append(make("span", "whose-where", `${s.state} · ${shortPath(s.cwd)}`));
