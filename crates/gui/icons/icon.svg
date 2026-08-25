@@ -2,35 +2,25 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <defs>
     <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#1a1a20"/>
-      <stop offset="1" stop-color="#060608"/>
+      <stop offset="0" stop-color="#1e1e25"/><stop offset="1" stop-color="#08080a"/>
     </linearGradient>
-    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#4e4e5a"/>
-      <stop offset="1" stop-color="#18181e"/>
-    </linearGradient>
-    <linearGradient id="along" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#fff" stop-opacity="0"/>
-      <stop offset="0.46" stop-color="#fff" stop-opacity="1"/>
-      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
-    </linearGradient>
-    <filter id="back" x="-200%" y="-60%" width="500%" height="220%">
-      <feGaussianBlur stdDeviation="76.8"/>
-    </filter>
-    <filter id="lip" x="-200%" y="-40%" width="500%" height="180%">
-      <feGaussianBlur stdDeviation="23.0"/>
-    </filter>
-    <mask id="cut">
-      <rect x="69.1" y="69.1" width="373.8" height="373.8" rx="25.6" fill="#fff"/>
-      <rect x="240.6" y="110.1" width="30.7" height="291.8" rx="15.4" fill="#000"/>
-    </mask>
+    <linearGradient id="g0" gradientUnits="userSpaceOnUse" x1="0" y1="186.9" x2="0" y2="432.6"><stop offset="0" stop-color="#60606e"/><stop offset="1" stop-color="#282831"/></linearGradient><linearGradient id="g1" gradientUnits="userSpaceOnUse" x1="0" y1="432.6" x2="0" y2="459.3"><stop offset="0" stop-color="#3a3a44"/><stop offset="1" stop-color="#18181e"/></linearGradient><linearGradient id="g2" gradientUnits="userSpaceOnUse" x1="0" y1="186.9" x2="0" y2="446.0"><stop offset="0" stop-color="#16161c"/><stop offset="1" stop-color="#0c0c10"/></linearGradient><linearGradient id="g3" gradientUnits="userSpaceOnUse" x1="0" y1="186.9" x2="0" y2="446.0"><stop offset="0" stop-color="#16161c"/><stop offset="1" stop-color="#0c0c10"/></linearGradient>
+    <radialGradient id="point">
+      <stop offset="0" stop-color="#d2e2ff" stop-opacity=".88"/>
+      <stop offset="1" stop-color="#d2e2ff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="throw" x="-150%" y="-80%" width="400%" height="260%">
+      <feGaussianBlur stdDeviation="24.6"/></filter>
+    <filter id="tight" x="-80%" y="-40%" width="260%" height="180%">
+      <feGaussianBlur stdDeviation="4.6"/></filter>
     <clipPath id="edge"><rect width="512" height="512" rx="114"/></clipPath>
   </defs>
   <rect width="512" height="512" rx="114" fill="url(#tile)"/>
   <g clip-path="url(#edge)">
-    <rect x="240.6" y="110.1" width="30.7" height="291.8" rx="15.4" fill="#c4d8ff" opacity="0.9" filter="url(#back)"/>
-    <rect x="69.1" y="69.1" width="373.8" height="373.8" rx="25.6" fill="url(#plate)" mask="url(#cut)"/>
-    <rect x="240.6" y="110.1" width="30.7" height="291.8" rx="15.4" fill="#c4d8ff" opacity="0.85" filter="url(#lip)"/>
-    <rect x="240.6" y="110.1" width="30.7" height="291.8" rx="15.4" fill="url(#along)"/>
+    <polygon points="145.9,432.6 366.1,432.6 271.1,186.9 240.9,186.9" fill="url(#g0)"/><polygon points="145.9,432.6 366.1,432.6 366.1,459.3 145.9,459.3" fill="url(#g1)"/><polygon points="145.9,432.6 240.9,186.9 234.8,186.9 130.6,446.0" fill="url(#g2)"/><polygon points="366.1,432.6 271.1,186.9 277.2,186.9 381.4,446.0" fill="url(#g3)"/>
+    <polygon points="242.7,432.6 269.3,432.6 257.1,186.9 254.9,186.9" fill="#ffffff" filter="url(#throw)"/>
+    <polygon points="242.7,432.6 269.3,432.6 257.1,186.9 254.9,186.9" fill="#ffffff" filter="url(#tight)"/>
+    <polygon points="242.7,432.6 269.3,432.6 257.1,186.9 254.9,186.9" fill="#ffffff"/>
+    <ellipse cx="256.0" cy="186.9" rx="51.2" ry="43.5" fill="url(#point)"/>
   </g>
 </svg>

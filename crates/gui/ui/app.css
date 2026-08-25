@@ -2003,3 +2003,104 @@ html[data-platform="linux"] body, html[data-platform="linux"] body::before { bor
       transparent 60%,
       rgba(180, 130, 230, .085) 100%);
 }
+
+/* ── optic glass ────────────────────────────────────────────────────────────
+   A surface system rather than a set of tweaks. Every glass plane in the window
+   is lit the same way, because a material that is lit differently in different
+   places stops reading as one material.
+
+   Four edges, and each says something different about where the light is:
+
+     outer frame     rgba(255,255,255,.05)   the plane has an edge at all
+     top rim         inset 0  1px 0 0 /.12   light catching the lip
+     left edge       inset 1px 0  0 0 /.05   the same light, at a glance
+     bottom recess   inset 0 -1px 0 0 /.4    the underside, away from it
+     occlusion       0 20px 40px -15px /.7   what it casts on what is behind
+
+   The bottom shadow is the one that is easy to leave out and the one that does
+   the most: without it a panel is lit on top and flat underneath, which is a
+   sticker. With it the plane has a thickness. */
+.glass {
+  position: relative;
+  background-color: rgba(16, 18, 24, .65) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  backdrop-filter: blur(24px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, .05);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, .12),
+    inset 1px 0 0 0 rgba(255, 255, 255, .05),
+    inset 0 -1px 0 0 rgba(0, 0, 0, .4),
+    0 20px 40px -15px rgba(0, 0, 0, .7);
+}
+
+/* Grain on the surface itself, not only behind it. A blur is mathematically
+   smooth and a real one is not; this is what stops the plane banding and is the
+   difference between frosted and merely dim. */
+.grain::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: .035;
+  pointer-events: none;
+  z-index: 1;
+  border-radius: inherit;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* The planes. Edges that meet the window are trimmed, so the system does not
+   draw a frame around something that has no edge there. */
+.bar, .status, #rail, .rail.detail, dialog { }
+.bar, .status, #rail, .rail.detail, dialog,
+.composer input, .search, .ghost, .primary, .metrics, kbd, .answer, .chip {
+  background-color: rgba(16, 18, 24, .65);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  backdrop-filter: blur(24px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, .05);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, .12),
+    inset 1px 0 0 0 rgba(255, 255, 255, .05),
+    inset 0 -1px 0 0 rgba(0, 0, 0, .4),
+    0 20px 40px -15px rgba(0, 0, 0, .7);
+}
+/* Full-width chrome has no left or right edge to catch anything. */
+.bar { border-left: 0; border-right: 0; border-top: 0; }
+.status { border-left: 0; border-right: 0; border-bottom: 0; }
+#rail { border-top: 0; border-bottom: 0; border-left: 0; }
+.rail.detail { border-top: 0; border-bottom: 0; border-right: 0; }
+
+/* Small controls take the same light at a smaller scale: the drop shadow would
+   be a halo at this size, so they keep the rim and lose the cast. */
+.ghost, .primary, .metrics, kbd, .answer, .chip, .composer input, .search {
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, .12),
+    inset 1px 0 0 0 rgba(255, 255, 255, .05),
+    inset 0 -1px 0 0 rgba(0, 0, 0, .35);
+}
+.primary {
+  background-color: rgba(255, 255, 255, .15) !important;
+  border-color: rgba(255, 255, 255, .22);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, .26),
+    inset 0 -1px 0 0 rgba(0, 0, 0, .35),
+    0 6px 16px -8px rgba(0, 0, 0, .8);
+}
+.search, .bar .search { background-color: transparent !important; border: 0; box-shadow: none; backdrop-filter: none; }
+
+/* Anything that is output rather than interface is recessed instead of raised:
+   sunk into the plane, with the shadow at the top where a hole would have it. */
+.card .code, .inline-code, .code-scroll, pre, .queued {
+  background-color: rgba(9, 10, 13, .60);
+  border: 1px solid rgba(255, 255, 255, .04);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, .5);
+  border-radius: 6px;
+}
+
+/* Rows: nothing at rest, a breath on hover, and the selected one lit like a
+   small plane of its own. */
+.agent { transition: background .15s ease, border-color .15s ease; border: 1px solid transparent; }
+.agent:hover:not(.is-on) { background-color: rgba(255, 255, 255, .04); }
+.agent.is-on {
+  background-color: rgba(255, 255, 255, .07);
+  border: 1px solid rgba(255, 255, 255, .10);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, .15);
+}
