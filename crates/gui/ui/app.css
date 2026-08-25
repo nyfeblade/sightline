@@ -3000,3 +3000,72 @@ html[data-platform="linux"] { background: #07080b; }
 
 /* The window's own rim, and nothing else drawn on the glass. */
 body::before { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .10); }
+
+/* ══ thinner edges, and a second sheet ══════════════════════════════════════
+   Hairlines at half a pixel. On a 2x display that is one device pixel, which is
+   the thinnest line that can be drawn — a 1px CSS border is two, and at these
+   opacities the difference between one and two is the difference between a
+   seam and a drawn outline. */
+#rail { border-right: .5px solid rgba(255, 255, 255, .07) !important; }
+.rail.detail { border-left: .5px solid rgba(255, 255, 255, .07) !important; }
+.bar { border-bottom: .5px solid rgba(255, 255, 255, .07); }
+.status { border-top: .5px solid rgba(255, 255, 255, .07); }
+.tabs { border-bottom: .5px solid rgba(255, 255, 255, .06); }
+.detail .fact { border-bottom: .5px solid rgba(255, 255, 255, .05); }
+.decision, .srow { border-bottom: .5px solid rgba(255, 255, 255, .04); }
+body::before { box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .14); }
+
+/* Everything that sits on a panel is a second sheet of the same material, and
+   is made the same way: its own blur, a fill light enough to see the panel
+   through, a specular line along the top and a dark one along the bottom.
+   Because the panel underneath is itself glass over the shards, what a button
+   blurs is a surface that is already carrying light — which is what gives the
+   second sheet somewhere to be. */
+.ghost, .primary, .metrics, kbd, .answer, .chip, .menu-grid button,
+.composer, .agent.is-on, dialog, .attachment {
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border-width: .5px !important;
+}
+.ghost, .metrics, kbd, .answer, .chip, .menu-grid button, .attachment {
+  background-color: rgba(255, 255, 255, .045) !important;
+  border: .5px solid rgba(255, 255, 255, .10) !important;
+  box-shadow:
+    inset 0 .5px 0 0 rgba(255, 255, 255, .18),
+    inset 0 -.5px 0 0 rgba(0, 0, 0, .35);
+}
+.ghost:hover, .answer:hover, .chip:hover, .menu-grid button:hover {
+  background-color: rgba(255, 255, 255, .085) !important;
+  border-color: rgba(255, 255, 255, .17) !important;
+}
+.primary {
+  background-color: rgba(255, 255, 255, .10) !important;
+  border: .5px solid rgba(255, 255, 255, .22) !important;
+  box-shadow:
+    inset 0 .5px 0 0 rgba(255, 255, 255, .28),
+    inset 0 -.5px 0 0 rgba(0, 0, 0, .35);
+}
+.primary:hover { background-color: rgba(255, 255, 255, .16) !important; border-color: rgba(255, 255, 255, .32) !important; }
+
+.composer {
+  background-color: rgba(255, 255, 255, .035) !important;
+  border: .5px solid rgba(255, 255, 255, .10) !important;
+  box-shadow:
+    inset 0 .5px 0 0 rgba(255, 255, 255, .16),
+    inset 0 -.5px 0 0 rgba(0, 0, 0, .3);
+}
+.composer:focus-within { border-color: rgba(255, 255, 255, .22) !important; }
+
+.agent.is-on {
+  background-color: rgba(255, 255, 255, .06) !important;
+  box-shadow: inset 0 .5px 0 0 rgba(255, 255, 255, .14);
+}
+dialog {
+  background-color: rgba(16, 17, 22, .68) !important;
+  border: .5px solid rgba(255, 255, 255, .12) !important;
+  backdrop-filter: blur(34px) saturate(190%);
+  -webkit-backdrop-filter: blur(34px) saturate(190%);
+  box-shadow:
+    inset 0 .5px 0 0 rgba(255, 255, 255, .18),
+    0 24px 60px rgba(0, 0, 0, .55);
+}
