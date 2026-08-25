@@ -1887,3 +1887,66 @@ kbd {
     radial-gradient(55% 40% at 58% 48%, rgba(40, 148, 190, .13), transparent 72%),
     #0b0b0e;
 }
+
+/* The field, with no edges in it.
+
+   The blooms were radial gradients that reached `transparent` at 62% of their
+   own radius. That stop is a boundary, and a boundary in a gradient is a ring —
+   faint on its own, and then the glass blurs everything *except* it, because
+   the ring is a change in value rather than detail. So the light came through
+   as circles drawn on the panels instead of as a field behind them.
+
+   These run all the way out to transparent with stops along the way, so the
+   falloff is gradual everywhere and there is no radius at which anything
+   changes. Larger and weaker to match: a wash you notice only if you look for
+   it, which is what it was always meant to be. */
+.ambient {
+  background:
+    radial-gradient(140% 110% at 6% -18%,
+      rgba(72, 118, 214, .20) 0%,
+      rgba(72, 118, 214, .11) 26%,
+      rgba(72, 118, 214, .04) 55%,
+      rgba(72, 118, 214, 0) 100%),
+    radial-gradient(130% 105% at 98% 116%,
+      rgba(158, 84, 200, .16) 0%,
+      rgba(158, 84, 200, .08) 30%,
+      rgba(158, 84, 200, .03) 58%,
+      rgba(158, 84, 200, 0) 100%),
+    #0b0b0e;
+}
+
+/* ── content under the glass ────────────────────────────────────────────────
+   The chrome was stacked above the content, so the only thing behind it was the
+   ambient field — and a blur over a smooth gradient looks exactly like a flat
+   tint, because there is no detail to lose. That is why the glass read as
+   colour rather than as material.
+
+   Raycast's bar floats over the page and you watch the headline blur as it
+   scrolls underneath. So the bars float here too: the panes run the full height
+   of the window, and the header and the action bar sit on top with content
+   passing beneath them. */
+body { display: block; height: 100%; }
+main {
+  height: 100%;
+  padding-top: 52px;
+  padding-bottom: 42px;
+}
+.bar, .status, .ask {
+  position: fixed;
+  left: 0;
+  right: 0;
+  z-index: 40;
+}
+.bar { top: 0; }
+.status { bottom: 0; }
+.ask { bottom: 42px; }
+
+/* The panes keep their own breathing room under the bars, so the first and last
+   lines are readable rather than permanently half-hidden behind glass. */
+.pane { padding-top: 20px; padding-bottom: 24px; }
+.rail { padding-top: 6px; }
+.composer { margin-bottom: 6px; }
+
+/* Rounded corners on the window are the compositor's on macOS and Windows;
+   on Linux the frame is square, so nothing here should pretend otherwise. */
+html[data-platform="linux"] body, html[data-platform="linux"] body::before { border-radius: 0; }

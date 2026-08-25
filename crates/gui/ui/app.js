@@ -908,6 +908,9 @@ function drawBoundary() {
   out.classList.add("boundary");
 
   const calls = streamEvents.filter((e) => e.kind.type === "permissionAnswered");
+  // Same reason as the others: this runs on a timer, and a rebuild is a full
+  // re-composite of every glass surface in the pane.
+  if (alreadyDrawn("boundary", `${calls.length}\u0000${calls.at(-1)?.seq ?? ""}`)) return;
   const verdicts = { allow: 0, rewrite: 0, deny: 0, asked: 0 };
   for (const e of calls) {
     const word = (e.kind.option || "").split(" ")[0];
@@ -1038,16 +1041,26 @@ function holdScroll(out) {
 
 async function drawWork() {
   const tasks = await invoke("tasks");
-  const out = el("pane");
-  const restore = holdScroll(out);
-  clear(out);
-  out.classList.remove("stream");
-
   // The other half of the Hub. Watching a fleet and directing one are different
   // questions, and everything that answers the second — a chief, ceilings, what
   // this project says done means — used to be a terminal command, in a program
   // whose whole point is that you should not need one.
   const w = await invoke("workflow").catch(() => null);
+
+  // Both of those are fetched before anything is torn down, because this
+  // painter runs on a timer and rebuilding a pane that has not changed is a
+  // full re-composite of every glass surface in it — which is what the blinking
+  // was. Nothing is cleared unless there is something different to draw.
+  const shape = JSON.stringify([
+    tasks.map((t) => [t.id, t.state, t.session, t.assignment, (t.notes || []).length]),
+    w,
+  ]);
+  if (alreadyDrawn("work", shape)) return;
+
+  const out = el("pane");
+  const restore = holdScroll(out);
+  clear(out);
+  out.classList.remove("stream");
   if (w) {
     const box = make("div", "workflow");
 
@@ -1601,6 +1614,7 @@ async function drawErrors(id) {
 // than guessed: a column count off by one wraps every line in the wrong place.
 async function drawFleet() {
   const [path, text] = await invoke("fleet");
+  if (alreadyDrawn("fleet", `${path}\u0000${text}`)) return;
   const out = el("pane");
   clear(out);
   const head = make("div", "line");
