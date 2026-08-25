@@ -698,6 +698,45 @@ fn send(shared: State<Shared>, id: String, text: String) -> Result<(), String> {
         .unwrap_or_else(|| Err("no such session".into()))
 }
 
+/// Put a pasted image somewhere a session can read it, and say where.
+///
+/// Sending the bytes themselves would only work for the sessions Sightline holds
+/// over a pipe; a session in a terminal has no way to receive them. Every agent
+/// can read a file, so the image is written to one and the path is what gets
+/// sent — which works the same for both kinds of session, and leaves the image
+/// on disk afterwards rather than only inside a conversation.
+#[tauri::command]
+fn attach_image(name: String, data: String) -> Result<String, String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data.as_bytes())
+        .map_err(|e| format!("that did not decode as an image: {e}"))?;
+    if bytes.is_empty() {
+        return Err("that image was empty".into());
+    }
+    // A quarter of a gigabyte of clipboard is a mistake, not a screenshot.
+    if bytes.len() > 32 * 1024 * 1024 {
+        return Err(format!("that image is {} MB, which is more than 32", bytes.len() / 1_048_576));
+    }
+    let dir = core_app::data_dir().join("pasted");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+
+    // Named by when it arrived, so two pastes in a row do not collide and the
+    // directory sorts the way somebody would expect.
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let ext = std::path::Path::new(&name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .filter(|e| e.len() <= 5 && e.chars().all(|c| c.is_ascii_alphanumeric()))
+        .unwrap_or("png");
+    let path = dir.join(format!("{stamp}.{ext}"));
+    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
 #[tauri::command]
 fn answer(shared: State<Shared>, id: String, option: usize) -> Result<(), String> {
     shared
@@ -1259,6 +1298,7 @@ fn main() {
             feed,
             screen,
             send,
+            attach_image,
             answer,
             interrupt,
             start,

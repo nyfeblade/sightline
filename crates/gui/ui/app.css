@@ -2386,3 +2386,103 @@ html[data-mood="needs"] .ambient::before {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: none; }
 }
+
+/* ── things you can act on ──────────────────────────────────────────────────
+   A path in a transcript is the most common thing there and the least useful as
+   plain text. These are quiet at rest — an underline on hover and nothing else,
+   because a page of highlighted links is harder to read than a page of prose. */
+.file-link {
+  cursor: pointer;
+  border-bottom: 1px solid transparent;
+  transition: border-color .12s ease, color .12s ease;
+}
+.file-link:hover {
+  color: var(--text);
+  border-bottom-color: rgba(255, 255, 255, .35);
+}
+
+/* What is going with the next message. */
+.attached {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 12px 8px;
+}
+.attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px 5px 5px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid rgba(255, 255, 255, .10);
+  box-shadow: var(--inner-glow);
+  font-size: 11px;
+  color: var(--secondary);
+}
+.attachment-thumb {
+  width: 34px;
+  height: 26px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, .4);
+  display: block;
+}
+.attachment-name { font-family: var(--code); }
+.attachment-drop {
+  background: none;
+  border: 0;
+  color: var(--quaternary);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+}
+.attachment-drop:hover { color: var(--failed); }
+
+/* ── the turn in progress ───────────────────────────────────────────────────
+   Reported, not announced. The act on the left, what the turn has reached for
+   in the middle, how long it has been going on the right — the same shape as
+   every other row in this window, about the one moment the others cannot show.
+
+   The marker is the icon's own seam: a line of light that travels, rather than
+   a dot that pulses. A pulsing dot is what every interface uses to mean "wait";
+   this is the mark this program is called after, moving. */
+.live-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0 6px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, .045);
+  border: 1px solid rgba(255, 255, 255, .09);
+  box-shadow: var(--inner-glow);
+  font-family: var(--code);
+  font-size: 11.5px;
+  color: var(--secondary);
+  overflow: hidden;
+  position: relative;
+}
+/* The seam: a narrow bright line that sweeps the width of the row and fades at
+   both ends, so it reads as something passing rather than something blinking. */
+.live-scan {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 34%;
+  pointer-events: none;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgba(255, 255, 255, .055) 45%,
+    rgba(255, 255, 255, .10) 50%,
+    rgba(255, 255, 255, .055) 55%,
+    transparent 100%);
+  animation: sweep 2.4s cubic-bezier(.45, 0, .55, 1) infinite;
+}
+@keyframes sweep {
+  from { transform: translateX(-120%); }
+  to { transform: translateX(420%); }
+}
+.live-act { color: var(--text); position: relative; }
+.live-tally { color: var(--tertiary); position: relative; letter-spacing: .02em; }
+.live-since { margin-left: auto; color: var(--quaternary); position: relative; }

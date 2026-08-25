@@ -29,3 +29,4 @@ chrono.workspace = true
 tauri = { version = "2", features = [] }
 serde.workspace = true
 serde_json.workspace = true
+base64 = "0.22"

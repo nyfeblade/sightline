@@ -416,6 +416,53 @@ function pathIn(head) {
 
 /// Open a file in the viewer. Relative paths are resolved against wherever the
 /// session is working, which is the only place they mean anything.
+/// Anything in the text that looks like a file, made clickable.
+///
+/// Paths are the most common thing in a transcript and the most useless as
+/// plain text: the agent names a file, and reading it means finding it yourself
+/// somewhere else. This walks the text that has just been rendered and turns
+/// every path into something you can open where you are looking at it.
+///
+/// Deliberately conservative about what counts. A word with a slash and an
+/// extension is a file; a bare word is not, however much it looks like one, and
+/// a flag or a URL is left alone. Over-matching here would turn ordinary prose
+/// into a field of false links, which is worse than no links at all.
+const PATHISH =
+  /(?:^|[\s"'`(\[])((?:~|\.{1,2})?\/[\w.@+\-]+(?:\/[\w.@+\-]+)*\.[A-Za-z]\w{0,7})\b/g;
+
+function linkifyPaths(root) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const texts = [];
+  while (walker.nextNode()) texts.push(walker.currentNode);
+  for (const node of texts) {
+    const text = node.nodeValue;
+    if (!text || text.indexOf("/") === -1) continue;
+    // Not inside something already clickable.
+    if (node.parentElement?.closest(".file-link, a, button")) continue;
+    PATHISH.lastIndex = 0;
+    let match;
+    let at = 0;
+    const out = document.createDocumentFragment();
+    while ((match = PATHISH.exec(text)) !== null) {
+      const path = match[1];
+      const start = match.index + match[0].length - path.length;
+      if (start > at) out.append(document.createTextNode(text.slice(at, start)));
+      const link = make("span", "file-link", path);
+      link.title = "Open this file";
+      link.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openFile(path);
+      });
+      out.append(link);
+      at = start + path.length;
+    }
+    if (!at) continue;
+    if (at < text.length) out.append(document.createTextNode(text.slice(at)));
+    node.parentNode.replaceChild(out, node);
+  }
+  return root;
+}
+
 async function openFile(path, title) {
   const base = selected ? await invoke("session_cwd", { id: selected }) : null;
   try {
@@ -462,6 +509,70 @@ const say = (text) => {
 window.addEventListener("error", (e) => say(`${e.message} · ${e.filename}:${e.lineno}`));
 window.addEventListener("unhandledrejection", (e) => say(String(e.reason)));
 const current = () => sessions.find((s) => s.id === selected);
+
+// Images waiting to go with the next message, as paths on disk.
+let attached = [];
+
+/// Take an image off the clipboard and put it somewhere a session can read it.
+///
+/// Every agent can read a file; only the ones Sightline holds over a pipe could
+/// take the bytes directly. So a paste becomes a file and the message carries
+/// its path, which works the same for a session in a terminal and leaves the
+/// image on disk afterwards rather than only inside a conversation.
+async function takeImage(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  // In chunks: one apply() over a few million bytes overflows the call stack,
+  // and a screenshot is easily that big.
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  const encoded = btoa(binary);
+  const path = await invoke("attach_image", {
+    name: file.name || "pasted.png",
+    data: encoded,
+  });
+  // The thumbnail comes from the bytes that were just pasted rather than from
+  // the file. Reading it back would mean serving local files to the window,
+  // which is a hole opened for a preview; the data is already here.
+  attached.push({
+    path,
+    preview: `data:${file.type || "image/png"};base64,${encoded}`,
+  });
+  drawAttached();
+  say(`image saved to ${shortPath(path)} — it goes with your next message`);
+}
+
+/// What is waiting to be sent, with a way to change your mind.
+function drawAttached() {
+  const row = el("attached");
+  clear(row);
+  row.hidden = attached.length === 0;
+  for (const item of attached) {
+    const chip = make("span", "attachment");
+    const thumb = make("img", "attachment-thumb");
+    thumb.src = item.preview;
+    thumb.alt = "";
+    chip.append(thumb);
+    chip.append(make("span", "attachment-name", item.path.split("/").pop()));
+    const drop = make("button", "attachment-drop", "×");
+    drop.title = "Do not send this one";
+    drop.addEventListener("click", () => {
+      attached = attached.filter((a) => a !== item);
+      drawAttached();
+    });
+    chip.append(drop);
+    row.append(chip);
+  }
+}
+
+/// The paths, as a line the agent can act on, ahead of whatever was typed.
+function withAttachments(text) {
+  if (!attached.length) return text;
+  const lines = attached.map((a) => `[image] ${a.path}`).join("\n");
+  const said = text.trim();
+  return said ? `${lines}\n${said}` : `${lines}\nHave a look at this.`;
+}
 
 /// Let the room know what the fleet is doing.
 ///
@@ -1419,6 +1530,11 @@ let talkOn = { id: null, lastKey: null, mark: "", asking: "", lastCall: null };
 
 /// One rendered event, appended to the conversation.
 function talkNode(e, events, i) {
+  const node = talkNodeInner(e, events, i);
+  return node ? linkifyPaths(node) : node;
+}
+
+function talkNodeInner(e, events, i) {
   switch (e.kind) {
     case "prompt":
       return bubble("you", e);
@@ -1522,7 +1638,7 @@ async function drawTalk(id) {
   // The turn in flight, at the bottom where the next thing will appear. It is
   // removed the moment the session goes idle, so it is never left claiming work
   // that has finished.
-  if (busy) out.append(liveCard(doing, s.age_secs ?? 0));
+  if (busy) out.append(liveCard(s, events));
   talkOn = {
     id,
     lastKey: events.length ? keyOf(events.at(-1)) : null,
@@ -1533,21 +1649,56 @@ async function drawTalk(id) {
   if (follow) out.scrollTop = out.scrollHeight;
 }
 
-/// What the session is doing at this instant.
+/// The turn in progress, reported rather than announced.
 ///
-/// The transcript only gains a line when something has been *said*, so between
-/// a question and the first tool call the pane was still and there was no way
-/// to tell thinking from stopped. This is the only thing in the window that is
-/// not a record of something that already happened.
-function liveCard(doing, since) {
+/// "Thinking" is a word, not a measurement, and this program exists to measure
+/// what agents do. So the row says what act is under way, what the turn has
+/// reached for so far, and how long it has been going — the same three things
+/// every other view here answers, about the one moment they cannot.
+///
+/// The act is inferred rather than guessed at: a tool that is running is the
+/// answer whenever there is one, and between calls the last thing that happened
+/// says what is going on now — a result just came back and is being read, a
+/// question was just asked and nothing has happened yet, or a reply is being
+/// written.
+function liveCard(s, events) {
   const card = make("div", "live-card");
-  card.append(make("span", "live-dot"));
-  const what = make("span", "live-what");
-  // "running Bash" reads better than "working" when the tool is known, and the
-  // tool is the thing you actually want to see.
-  what.textContent = doing === "working" ? "thinking" : doing;
-  card.append(what);
-  card.append(make("span", "live-since", since >= 1 ? `${age(since)}` : ""));
+  card.append(make("span", "live-scan"));
+
+  const last = events.at(-1);
+  let act;
+  if (s.tool) {
+    act = `running ${s.tool}`;
+  } else if (!last || last.kind === "prompt") {
+    act = "picking up the thread";
+  } else if (last.kind === "result") {
+    act = "reading what came back";
+  } else {
+    act = "writing a reply";
+  }
+  card.append(make("span", "live-act", act));
+
+  // What this turn has reached for, counted back to the last thing you said.
+  // A turn that has run four tools is a different thing from one that has run
+  // forty, and the number is the only way to tell them apart while it is still
+  // going.
+  const counts = new Map();
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const e = events[i];
+    if (e.kind === "prompt") break;
+    if (e.kind === "tool" && e.tool) counts.set(e.tool, (counts.get(e.tool) ?? 0) + 1);
+  }
+  if (counts.size) {
+    const tally = [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([tool, n]) => `${tool}\u00d7${n}`)
+      .join("  ");
+    card.append(make("span", "live-tally", tally));
+  }
+
+  const since = s.age_secs ?? 0;
+  card.append(make("span", "live-since", since >= 1 ? age(since) : ""));
   return card;
 }
 
@@ -2107,14 +2258,53 @@ on("cost", "click", () => {
   draw();
 });
 
+// Paste an image anywhere in the window and it goes with the next message.
+// Bound on the document rather than the input, because reaching for the field
+// first is a step nobody should have to think about.
+document.addEventListener("paste", async (e) => {
+  const items = [...(e.clipboardData?.items ?? [])];
+  const images = items.filter((i) => i.type.startsWith("image/"));
+  if (!images.length) return;
+  e.preventDefault();
+  for (const item of images) {
+    const file = item.getAsFile();
+    if (!file) continue;
+    try {
+      await takeImage(file);
+    } catch (err) {
+      say(String(err));
+    }
+  }
+  el("message").focus();
+});
+
+// And dropping one onto the window, which is the other way people do this.
+document.addEventListener("dragover", (e) => e.preventDefault());
+document.addEventListener("drop", async (e) => {
+  const files = [...(e.dataTransfer?.files ?? [])].filter((f) => f.type.startsWith("image/"));
+  if (!files.length) return;
+  e.preventDefault();
+  for (const file of files) {
+    try {
+      await takeImage(file);
+    } catch (err) {
+      say(String(err));
+    }
+  }
+});
+
 on("composer", "submit", async (e) => {
   e.preventDefault();
   const box = el("message");
   const text = box.value.trim();
-  if (!text || !selected) return;
+  // An image on its own is a message. Requiring words as well would mean
+  // pasting a screenshot and then having to say something about it.
+  if ((!text && !attached.length) || !selected) return;
   try {
-    await invoke("send", { id: selected, text });
+    await invoke("send", { id: selected, text: withAttachments(text) });
     box.value = "";
+    attached = [];
+    drawAttached();
     say("sent");
     // Stay where you are, the way a prompt does: sending one message is
     // usually the start of a conversation rather than the end of one.
