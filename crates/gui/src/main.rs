@@ -916,6 +916,57 @@ fn diff(shared: State<Shared>, id: String, path: String) -> Result<String, Strin
     })
 }
 
+/// Say a file has been read, as it stands now.
+///
+/// This is what "accept" honestly means. The change is already on disk, so
+/// nothing is applied; what is recorded is that a person looked. The value is
+/// entirely in the next edit — a fleet writing across a hundred files produces a
+/// feed nobody can read, and a feed that can say "this one you have read, and
+/// this one has moved since" is a different instrument.
+#[tauri::command]
+fn mark_reviewed(shared: State<Shared>, id: String, path: String) -> Result<String, String> {
+    let file = shared.raw(|app| resolve(app, &id, &path))?;
+    let now = chrono::Utc::now().timestamp();
+    let mut store = sightline_core::reviewed::Store::load(&core_app::data_dir());
+    store.mark(&file, now)?;
+    Ok(format!(
+        "{} marked read — a later edit to it will say so",
+        file.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or(path)
+    ))
+}
+
+/// Every file that has been read, and whether it has moved since.
+///
+/// One call for the whole feed rather than one per line: a feed is hundreds of
+/// rows and most of them are about the same handful of files.
+#[tauri::command]
+fn reviewed() -> serde_json::Value {
+    let store = sightline_core::reviewed::Store::load(&core_app::data_dir());
+    serde_json::to_value(store.all()).unwrap_or(serde_json::Value::Null)
+}
+
+/// A path an agent reported, as somewhere on this machine.
+///
+/// The transcript records paths relative to the session's directory sometimes
+/// and absolute at others, and every one of these commands needs the same
+/// answer. One place to be wrong about it rather than four.
+fn resolve(app: &mut App, id: &str, path: &str) -> Result<std::path::PathBuf, String> {
+    let session = app
+        .sessions
+        .iter()
+        .find(|s| s.id == id)
+        .ok_or_else(|| format!("no session {id}"))?;
+    let cwd = std::path::PathBuf::from(&session.cwd);
+    let given = std::path::Path::new(path);
+    Ok(if given.is_absolute() {
+        given.to_path_buf()
+    } else {
+        cwd.join(given)
+    })
+}
+
 /// Put a file back the way it was before an agent touched it.
 ///
 /// The one destructive thing in this window, and it is here because the
@@ -951,6 +1002,10 @@ fn revert(shared: State<Shared>, id: String, path: String) -> Result<String, Str
                 String::from_utf8_lossy(&out.stderr).trim()
             ));
         }
+        // It is no longer at the state somebody was content with, so saying it
+        // is unchanged would be a lie in the direction that matters.
+        let mut seen = sightline_core::reviewed::Store::load(&core_app::data_dir());
+        seen.forget(&cwd.join(&rel));
         Ok(format!("{rel} put back"))
     })
 }
@@ -1595,6 +1650,8 @@ fn main() {
             mission,
             diff,
             revert,
+            mark_reviewed,
+            reviewed,
             clipboard_image,
             answer,
             interrupt,

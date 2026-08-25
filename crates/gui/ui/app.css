@@ -3166,3 +3166,22 @@ html[data-mood="needs"] .rail-group {
 }
 .dl.is-hunk { color: var(--quaternary); background: rgba(255, 255, 255, .02); }
 .dl.is-meta { color: var(--quaternary); }
+
+/* A file you have read, and a file that has moved since you read it.
+   
+   The second is the entire reason the first exists, so it is the one that is
+   marked. A read file simply recedes — it has already had your attention and
+   does not need it again. */
+.row.is-read .said { color: var(--quaternary); }
+.row.is-moved .said { color: var(--text); }
+.moved-mark {
+  flex: none;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: var(--r-chip);
+  background: rgba(255, 212, 38, .14);
+  border: 1px solid rgba(255, 212, 38, .3);
+  color: var(--paused);
+  font-size: 10.5px;
+  white-space: nowrap;
+}

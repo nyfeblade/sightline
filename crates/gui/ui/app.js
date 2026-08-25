@@ -1244,11 +1244,43 @@ function drawStream() {
     // A file an agent changed opens where it sits. The patch is fetched when
     // asked for rather than carried on the event: a `fileChanged` is a path and
     // two counts, and a patch is kilobytes that would be read once in twenty.
-    if (ev.kind.type === "fileChanged") out.append(diffBlock(ev));
+    if (ev.kind.type === "fileChanged") {
+      // The whole point of marking a file read: the next edit to it says so.
+      const seen = seenOf(ev.session, ev.kind.path);
+      if (seen.kind === "changed") {
+        row.classList.add("is-moved");
+        const flag = make("span", "moved-mark", "changed since you read it");
+        flag.title = "You marked this file read. Something has written to it since.";
+        row.insertBefore(flag, row.querySelector(".tag"));
+      } else if (seen.kind === "unchanged") {
+        row.classList.add("is-read");
+      }
+      out.append(diffBlock(ev));
+    }
   }
   if (follow) out.scrollTop = out.scrollHeight;
 }
 
+
+/// Which files have been read, and which have moved since.
+///
+/// Fetched once per draw rather than once per row: a feed is hundreds of lines
+/// and most of them are about the same handful of files.
+let seenFiles = {};
+async function refreshSeen() {
+  try {
+    seenFiles = (await invoke("reviewed")) || {};
+  } catch {
+    seenFiles = {};
+  }
+}
+
+/// What is known about one path, given the session it came from.
+function seenOf(session, path) {
+  const s = sessions.find((x) => x.id === session);
+  const absolute = path.startsWith("/") ? path : `${s ? s.cwd : ""}/${path}`;
+  return seenFiles[absolute] || seenFiles[path] || { kind: "never" };
+}
 
 // ── what an agent changed ───────────────────────────────────────────────────
 //
@@ -1317,6 +1349,18 @@ function diffBlock(ev) {
         say(String(e));
       }
     });
+    const read = make("button", "ghost", "Mark read");
+    read.title = "Record that you have looked at this. A later edit to it will say so.";
+    read.addEventListener("click", async () => {
+      try {
+        say(await invoke("mark_reviewed", { id: ev.session, path: ev.kind.path }));
+        await refreshSeen();
+        soon(0);
+      } catch (e) {
+        say(String(e));
+      }
+    });
+    acts.append(read);
     acts.append(back);
     head.append(acts);
     // There is deliberately no "accept". The change is already on disk, and a
@@ -4112,6 +4156,8 @@ paneTick();
 // publishes, and puts right anything the patching above got slightly wrong.
 setInterval(draw, 4000);
 setInterval(glideAll, 2000);
+refreshSeen();
+setInterval(refreshSeen, 5000);
 
 
 

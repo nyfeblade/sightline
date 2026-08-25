@@ -32,6 +32,7 @@ pub mod owned;
 pub mod pricing;
 pub mod redact;
 pub mod registry;
+pub mod reviewed;
 pub mod screen;
 pub mod session;
 pub mod stream;
