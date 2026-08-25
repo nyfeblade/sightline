@@ -1020,6 +1020,22 @@ impl App {
             } else {
                 o.session_id.clone()
             };
+            // The moment the two identities meet.
+            //
+            // An owned session is Sightline's handle — `owned-2` — until Claude
+            // Code reports a session id, and the uuid afterwards. The kernel
+            // writes a worker's task when it starts it, which is before the uuid
+            // exists, so the task is written under the handle. Nothing was ever
+            // moving it: the reconciler for this walks `steer`, which holds tmux
+            // panes, and an owned session is not in it.
+            //
+            // So a task assigned by a chief was stranded under a name the rest
+            // of the application had stopped using. `task_for` missed it,
+            // `sightline check` could not find it, and a project's workers were
+            // invisible to anything that looked them up by session.
+            if !o.session_id.is_empty() {
+                self.work.rekey(&o.name, &o.session_id);
+            }
             if !self.sessions.iter().any(|s| s.id == id) {
                 self.sessions.push(Session::owned(&id, &o));
             }
@@ -3907,6 +3923,38 @@ mod tests {
             started: 1_700_000_000,
             last: 1_700_000_000,
         }
+    }
+
+    #[test]
+    fn a_worker_the_kernel_assigned_is_found_once_its_session_names_itself() {
+        // The defect: `kernel::assign` writes a worker's task under Sightline's
+        // own handle, because that is the only identity that exists when a
+        // session is started. Nothing moved it when the uuid arrived, so a chief
+        // could assign work and then nothing — `task_for`, `sightline check`,
+        // the mission chart — could find it by the id the rest of the
+        // application uses.
+        let mut app = App::new(
+            std::env::temp_dir(),
+            std::env::temp_dir(),
+            Duration::from_secs(3600),
+            false,
+        );
+        app.work.assign("owned-1", "supervise: build the thing");
+        app.work.assign("owned-2", "the backend");
+        app.work.record_lineage("owned-2", "owned-1");
+
+        app.fold_owned(vec![
+            an_owned("owned-1", "11111111-chief", true),
+            an_owned("owned-2", "22222222-worker", true),
+        ]);
+
+        assert!(
+            app.work.task_for("22222222-worker").is_some(),
+            "a task written under the handle has to follow the session to its id"
+        );
+        let chart = app.work.chart("11111111-chief");
+        assert_eq!(chart.nodes.len(), 2, "and the project keeps its shape");
+        assert_eq!(chart.nodes[1].from.as_deref(), Some("11111111-chief"));
     }
 
     #[test]

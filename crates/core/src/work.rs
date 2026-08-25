@@ -1163,3 +1163,41 @@ mod chart_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+
+    #[test]
+    fn a_task_assigned_before_a_session_names_itself_must_not_be_orphaned() {
+        // An owned session has two identities. Until Claude Code reports a
+        // session id it is known by Sightline's own handle — `owned-2` — and
+        // afterwards the rest of the application keys it by the uuid. The
+        // kernel writes a worker's task at the moment it starts it, which is
+        // before the uuid exists, so the task is written under the handle.
+        //
+        // Nothing rekeys an owned session: `App::rekey_panes` walks `steer`,
+        // which holds tmux panes, and an owned session is not in it. So this
+        // test says what happens when the two identities meet.
+        let mut s = Store::new();
+        s.assign("owned-1", "supervise: build the thing");
+        s.assign("owned-2", "the backend");
+        s.record_lineage("owned-2", "owned-1");
+
+        // The session ids arrive.
+        s.rekey("owned-1", "11111111-chief");
+        s.rekey("owned-2", "22222222-worker");
+
+        assert!(
+            s.task_for("22222222-worker").is_some(),
+            "a task written under the handle has to survive the session naming itself"
+        );
+        let chart = s.chart("11111111-chief");
+        assert_eq!(
+            chart.nodes.len(),
+            2,
+            "and the lineage has to be carried across with it, or the project loses its shape"
+        );
+        assert_eq!(chart.nodes[1].from.as_deref(), Some("11111111-chief"));
+    }
+}
