@@ -1852,6 +1852,29 @@ kbd { background: rgba(255, 255, 255, .10); border-color: rgba(255, 255, 255, .1
   --lift-control: inset 0 1px 0 rgba(255, 255, 255, .18), 0 2px 6px rgba(0, 0, 0, .4);
   --groove: inset 0 2px 4px rgba(0, 0, 0, .6);
 
+  /* The light behind the glass, and it is the whole effect.
+     
+     Measured off the reference: its panel interior swings from luminance 2 at
+     the corners to 39 at the centre, while the surround outside the window sits
+     flat at 13. So the bloom is not ambient — it is behind the window only, and
+     the glass transmits nearly all of it. Every earlier attempt in this file
+     put a faint even wash on the canvas, which a panel then averaged into
+     nothing: a uniform field behind glass is indistinguishable from a tint.
+     
+     Carried on `background-attachment: fixed` so all three panels sample one
+     light field positioned against the viewport, rather than each repeating its
+     own copy. One window, one source. */
+  --light-field:
+    radial-gradient(58% 44% at 47% 30%, rgba(255, 255, 255, .155) 0%,
+                                        rgba(180, 214, 255, .075) 42%,
+                                        transparent 74%),
+    radial-gradient(40% 34% at 12% 92%, rgba(255, 255, 255, .085), transparent 70%),
+    radial-gradient(34% 30% at 92% 8%, rgba(190, 205, 255, .06), transparent 72%),
+    linear-gradient(114deg, transparent 27%, rgba(255, 255, 255, .028) 27%,
+      rgba(255, 255, 255, .028) 31%, transparent 31%),
+    linear-gradient(114deg, transparent 63%, rgba(255, 255, 255, .022) 63%,
+      rgba(255, 255, 255, .022) 68%, transparent 68%);
+
   /* The cyan bleed, for the few things that outrank everything around them. */
   --bleed: radial-gradient(circle at 80% 50%, rgba(0, 163, 255, .15) 0%,
                                               rgba(0, 80, 200, .05) 50%,
@@ -1939,8 +1962,12 @@ main { gap: 8px; padding: 8px; background: transparent; }
      through the panel from behind. A solid fill cannot do that at any opacity,
      which is why every earlier attempt in this file needed edge treatments to
      compensate. */
-  background-color: rgba(11, 12, 14, .55) !important;
-  background-image: var(--glass-panel) !important;
+  /* Dark sheet, then the light behind it. The thickness gradient is painted
+     over the light field rather than instead of it, so the top edge still
+     carries more of the sheet and the centre still carries more of the bloom. */
+  background-color: rgba(5, 6, 8, .94) !important;
+  background-image: var(--glass-panel), var(--light-field) !important;
+  background-attachment: scroll, fixed !important;
   border: 1px solid var(--panel-rim) !important;
   border-radius: var(--r-card) !important;
   box-shadow: var(--lift-panel) !important;
