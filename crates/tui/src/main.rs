@@ -1003,6 +1003,47 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Which agents are on this machine, and what each one still needs.
+    //
+    // The question somebody has on their first day and nowhere to ask it: they
+    // have cloned this, and the README tells them what is possible rather than
+    // what is missing on their own machine.
+    if args.first().map(String::as_str) == Some("connections") {
+        let deep = !args.iter().any(|a| a == "--quick");
+        let all = sightline_core::agent::connections(deep);
+        if args.iter().any(|a| a == "--json") {
+            println!("{}", serde_json::to_string_pretty(&all)?);
+            return Ok(());
+        }
+        for c in &all {
+            let state = if !c.installed {
+                "not installed".to_string()
+            } else {
+                match c.signed_in {
+                    Some(true) => format!("ready · {}", c.version),
+                    Some(false) => "installed, not signed in".into(),
+                    None => format!("installed · {}", c.version),
+                }
+            };
+            println!(
+                "{:<8} {:<26} {}",
+                c.id,
+                state,
+                if c.governed {
+                    "governed — the kernels apply"
+                } else {
+                    "not governed — watched and driven only"
+                }
+            );
+            if !c.installed && !c.install_hint.is_empty() {
+                println!("         install: {}", c.install_hint);
+            } else if c.signed_in == Some(false) && !c.signin_hint.is_empty() {
+                println!("         sign in: {}", c.signin_hint);
+            }
+        }
+        return Ok(());
+    }
+
     if args.first().map(String::as_str) == Some("backdrop") {
         use sightline_core::backdrop::{self, Choice};
         match args.get(1).map(String::as_str) {

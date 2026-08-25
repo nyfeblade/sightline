@@ -66,4 +66,22 @@ impl Adapter for ClaudeCode {
             })
             .collect()
     }
+
+    fn install_hint(&self) -> Option<&'static str> {
+        Some("npm install -g @anthropic-ai/claude-code")
+    }
+
+    fn signin_hint(&self) -> Option<&'static str> {
+        Some("claude  (then /login)")
+    }
+
+    /// The only one, and the reason everything else in this program exists.
+    ///
+    /// Claude Code can hand a permission decision to a tool the host serves, so
+    /// `gate::decide` runs before a call happens. No other agent here exposes
+    /// that seam, which is a difference in what is being promised rather than a
+    /// difference in polish.
+    fn governed(&self) -> bool {
+        true
+    }
 }

@@ -21,6 +21,7 @@ use std::time::SystemTime;
 
 pub mod aider;
 pub mod claude;
+pub mod cursor;
 
 /// How a session gets a name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,12 +97,134 @@ pub trait Adapter: Send + Sync {
     fn keeps_transcripts(&self) -> bool {
         !matches!(self.record(), Record::None)
     }
+
+    /// How somebody gets this on their machine, in one line they can run.
+    ///
+    /// Here rather than in a README because a README is not where a person is
+    /// standing when they find out they need it. `None` means it comes with the
+    /// system or has no single answer.
+    fn install_hint(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// How they sign in, when signing in is a thing it needs.
+    ///
+    /// Always a command for the person to run rather than something Sightline
+    /// runs for them: every one of these opens a browser and authenticates an
+    /// account, which is not a decision a background process should be making.
+    fn signin_hint(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// What to run to find out whether it is signed in, and what a signed-in
+    /// answer contains. `None` means there is no cheap way to ask, and the
+    /// honest report is then "cannot tell" rather than a guess in either
+    /// direction.
+    fn signin_probe(&self) -> Option<(&'static [&'static str], &'static str)> {
+        None
+    }
+
+    /// Whether Sightline's kernels apply to work this agent does.
+    ///
+    /// True only where the agent can hand a permission decision to a host —
+    /// which today is Claude Code and nothing else. Everything else can be
+    /// watched, driven and measured, and is not policed. This is a difference in
+    /// what is being promised, so it is a property of the adapter rather than a
+    /// footnote: an ungoverned worker that looks governed is the worst thing
+    /// this program could show.
+    fn governed(&self) -> bool {
+        false
+    }
+}
+
+/// One agent, and whether it is ready to be used.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Connection {
+    pub id: String,
+    pub label: String,
+    pub program: String,
+    pub installed: bool,
+    /// The version it reports, when it is installed and says so.
+    pub version: String,
+    /// `None` where there is no cheap way to ask.
+    pub signed_in: Option<bool>,
+    pub governed: bool,
+    pub install_hint: String,
+    pub signin_hint: String,
+}
+
+/// Every agent Sightline knows, and where each one stands.
+///
+/// Probing runs a subprocess per agent, so this is a question to ask when
+/// somebody opens the panel rather than on a timer.
+pub fn connections(check_signin: bool) -> Vec<Connection> {
+    all()
+        .iter()
+        .map(|a| {
+            let found = which(a.program());
+            let version = if found {
+                run(&[a.program(), "--version"])
+                    .unwrap_or_default()
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .chars()
+                    .take(40)
+                    .collect()
+            } else {
+                String::new()
+            };
+            let signed_in = match (found && check_signin, a.signin_probe()) {
+                (true, Some((argv, needle))) => {
+                    Some(run(argv).map(|out| out.contains(needle)).unwrap_or(false))
+                }
+                _ => None,
+            };
+            Connection {
+                id: a.id().into(),
+                label: a.label().into(),
+                program: a.program().into(),
+                installed: found,
+                version,
+                signed_in,
+                governed: a.governed(),
+                install_hint: a.install_hint().unwrap_or_default().into(),
+                signin_hint: a.signin_hint().unwrap_or_default().into(),
+            }
+        })
+        .collect()
+}
+
+/// Whether a program is on the path. `which` itself is not depended on: a
+/// machine that lacks it would report every agent missing.
+fn which(program: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path).any(|dir| {
+        let full = dir.join(program);
+        full.is_file() || full.is_symlink()
+    })
+}
+
+/// Run something short and read what it said. Errors are absence, not panic:
+/// a probe is a question, and "it would not answer" is an answer.
+fn run(argv: &[&str]) -> Option<String> {
+    let out = std::process::Command::new(argv.first()?)
+        .args(&argv[1..])
+        .output()
+        .ok()?;
+    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&out.stderr));
+    Some(text)
 }
 
 /// Everything Sightline knows how to run.
 pub fn all() -> Vec<Box<dyn Adapter>> {
     vec![
         Box::new(claude::ClaudeCode),
+        Box::new(cursor::Cursor),
         Box::new(aider::Aider),
         Box::new(Plain::new("codex", "Codex", "codex")),
         Box::new(Plain::new("gemini", "Gemini", "gemini")),

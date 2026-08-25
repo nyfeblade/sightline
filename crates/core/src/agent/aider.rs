@@ -77,6 +77,14 @@ impl Adapter for Aider {
             .filter_map(|root| found_in(root))
             .collect::<Vec<_>>()
     }
+    fn install_hint(&self) -> Option<&'static str> {
+        Some("python3 -m pip install aider-install && aider-install")
+    }
+
+    fn signin_hint(&self) -> Option<&'static str> {
+        // A key in the environment rather than a session: nothing to sign into.
+        Some("export ANTHROPIC_API_KEY=… (or OPENAI_API_KEY)")
+    }
 }
 
 /// The conversation recorded in a folder, if there is one.

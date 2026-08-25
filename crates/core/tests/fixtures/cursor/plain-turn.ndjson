@@ -1,0 +1,7 @@
+{"type":"system","subtype":"init","apiKeySource":"login","cwd":"/tmp/claude-1000/-home-nyfe/337d79b9-5ab1-4044-b033-b9f46d546c97/scratchpad/cursorspike","session_id":"10a19f21-006a-4cad-b515-1b3b8c905e43","model":"Composer 2.5","permissionMode":"default"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Reply with exactly the word READY and nothing else. Do not use any tools."}]},"session_id":"10a19f21-006a-4cad-b515-1b3b8c905e43"}
+{"type":"thinking","subtype":"delta","text":"Preparing to reply with","session_id":"10a19f21-006a-4cad-b515-1b3b8c905e43","timestamp_ms":1787677995210}
+{"type":"thinking","subtype":"delta","text":" exactly the word READY.","session_id":"10a19f21-006a-4cad-b515-1b3b8c905e43","timestamp_ms":1787677995212}
+{"type":"thinking","subtype":"completed","session_id":"10a19f21-006a-4cad-b515-1b3b8c905e43","timestamp_ms":1787677995212}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"READY"}]},"session_id":"10a19f21-006a-4cad-b515-1b3b8c905e43"}
+{"type":"result","subtype":"success","duration_ms":2458,"duration_api_ms":2458,"is_error":false,"result":"READY","session_id":"10a19f21-006a-4cad-b515-1b3b8c905e43","request_id":"2e0b9afe-5ef2-4108-b0dd-0a2674594d28","usage":{"inputTokens":9102,"outputTokens":46,"cacheReadTokens":5460,"cacheWriteTokens":0}}

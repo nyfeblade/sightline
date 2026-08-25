@@ -933,6 +933,22 @@ impl OwnedSession {
                         // thread's job because this thread is the one that saw
                         // it. Anything it produces is an event like any other.
                         let mut events = control.consider(&line, &session_owned);
+                        // Not every agent speaks the same wire. Cursor's stream
+                        // carries the same events under different names — usage
+                        // in camelCase, thinking as a message type, a tool named
+                        // by its object key — so it is rewritten into the shape
+                        // this parser was written and tested against rather than
+                        // parsed a second time. One translation beats two
+                        // parsers: the event logic stays in one place, and the
+                        // captured streams in tests/fixtures/cursor fail loudly
+                        // if the shape moves.
+                        let line = match agent_owned.as_str() {
+                            "cursor" => match crate::agent::cursor::normalise(&line) {
+                                Some(rewritten) => rewritten,
+                                None => continue,
+                            },
+                            _ => line,
+                        };
                         events.extend(parser.feed(&line, &session_owned, &agent_owned));
                         if let Ok(mut st) = watched.lock() {
                             st.last = now_secs();
