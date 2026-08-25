@@ -1021,9 +1021,25 @@ function drawStream() {
 }
 
 // ── what each session was asked to do ──────────────────────────────────────
+/// Keep the reader where they were across a repaint.
+///
+/// These panes are rebuilt on a timer, and rebuilding means clearing the
+/// element — which drops the scroll position to zero. On a view somebody is
+/// reading rather than watching, that is the pane yanking itself back to the
+/// top every second or so while they are halfway down it.
+function holdScroll(out) {
+  const was = out.scrollTop;
+  // Only worth restoring if they had actually scrolled; otherwise a pane that
+  // is meant to follow new content would be pinned at the top.
+  return () => {
+    if (was > 0) out.scrollTop = was;
+  };
+}
+
 async function drawWork() {
   const tasks = await invoke("tasks");
   const out = el("pane");
+  const restore = holdScroll(out);
   clear(out);
   out.classList.remove("stream");
 
@@ -1157,6 +1173,7 @@ async function drawWork() {
     for (const n of t.notes) card.append(make("div", "task-note", `· ${n}`));
     out.append(card);
   }
+  restore();
 }
 
 
@@ -2249,12 +2266,16 @@ function ask(title, value = "") {
 // macOS system colours. Green, yellow and red are deliberately absent: they mean
 // running, needs-you and failed, and a colour that means something cannot also
 // be a preference.
-const ACCENTS = ["#007aff", "#bf5af2", "#ff375f", "#5e5ce6", "#40c8e0", "#98989d"];
+// Neutral first, because the interface no longer has a colour of its own. The
+// rest remain on offer for anyone who wants one; green, amber and red stay off
+// the list, because a colour that means running, needs-you or refused cannot
+// also be a preference.
+const ACCENTS = ["#e8e8ed", "#bf5af2", "#ff375f", "#5e5ce6", "#40c8e0", "#98989d"];
 
 // The palette above changed, so the key does too. A stored pick from the old
 // palette would otherwise sit on top of the new colours and make the change look
 // like it never happened — which is exactly what it did once already.
-const ACCENT_KEY = "accent.macos";
+const ACCENT_KEY = "accent.neutral";
 
 /// Lift a colour until it is readable on `ground`, and no further.
 ///

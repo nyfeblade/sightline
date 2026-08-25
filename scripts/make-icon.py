@@ -3,88 +3,61 @@
 
     python3 scripts/make-icon.py
 
-The mark is the boundary.
+A slit of light in a dark plate.
 
-Everything this program does happens at one place: an agent asks whether it may
-do something, and Sightline answers before the thing happens. So the icon is
-that — a vertical line with work crossing it. Two traces come in from the left
-and continue out the right; the middle one reaches the line and stops there.
-Nothing else in a dock looks like it, and it is the only picture of this product
-that is also true about it.
+The name is the brief: a sightline is the clear line you see along, and this
+program is the one place everything an agent does has to pass through. So the
+mark is that line — luminous, narrow, with the glow of something lit from
+behind, standing in a deep graphite tile.
 
-What it replaced was a crosshair built out of dots. That mark had two problems.
-It was a weapon sight, which is what the product used to be called and is no
-longer; and a grid of evenly spaced dots is a shape that belongs to any
-launcher, any grid, any anything. This one cannot be about another program.
+Two earlier marks are worth recording because both failed the same way. A
+crosshair of dots was a weapon sight, which is what this used to be called and
+is not; and a grid of dots belongs to any launcher. Then a line with traces
+crossing it, which was *true* — it is exactly what the boundary does — and still
+wrong, because three horizontal bars and a perpendicular stroke is the universal
+sliders-and-filters glyph. Being an accurate diagram did not save it.
 
-It is deliberately flat. An earlier version was modelled — a lit aperture with a
-machined ring and a cast shadow — and at any size above a dock it stopped being
-a sight and started being an eye. A mark that has to work at sixteen pixels
-wants a silhouette, not a rendering.
+That is the lesson this one is drawn from. An icon is not a diagram of the
+architecture. It is an object with a silhouette, and it wants light and depth
+rather than an explanation. What is left here is one form, lit.
 
-The boundary is drawn heavier than the traces because it is the subject: the
-line is the thing doing the deciding, and the traces are what happens to be
-crossing it. Drawn at three times the final size and reduced, which is how the
+Drawn at three times the final size and reduced, which is how the glow and the
 edges come out clean without a vector renderer on the machine.
 """
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 FINAL = 1024
 S = FINAL * 3
 
-# A neutral dark tile, lit very slightly from the top the way macOS icons are.
-# Neutral rather than navy: the accent is the only colour in the mark, and a
-# blue ground takes the edge off the one blue that is supposed to carry meaning.
-TILE_TOP = (36, 36, 42)
-TILE_BOTTOM = (13, 13, 16)
+# Deep graphite, lit from the top, the way a physical plate would be.
+TILE_TOP = (26, 26, 32)
+TILE_BOTTOM = (6, 6, 8)
 
-BOUNDARY = (245, 245, 247)  # Sightline itself
-TRACE = (10, 132, 255)      # the work crossing it — the system accent
+# The plate the slot is cut in. Lighter than the tile, so it reads as an object
+# standing in it rather than as a panel painted on it.
+PLATE_TOP = (78, 78, 90)
+PLATE_BOTTOM = (24, 24, 30)
 
-# Everything below is a fraction of the tile, so the mark scales exactly and the
-# vector and the raster are generated from one set of numbers.
-LANES = (0.315, 0.500, 0.685)   # three, far enough apart to survive 32px
-STOPPED = 1                     # the middle one is the subject
-TRACE_W = 0.055
-BOUNDARY_W = 0.086
-# The line runs taller than the traces span and heavier than they are drawn.
-# Both on purpose: three horizontal bars with a short perpendicular handle is
-# the universal sliders-and-filters glyph, and the first version of this was one
-# adjustment away from being it. A line that dominates the tile is a boundary;
-# a stub crossing some rules is a control panel.
-BOUNDARY_TOP, BOUNDARY_BOTTOM = 0.150, 0.850
-IN_FROM, OUT_TO = 0.175, 0.775
-# Where the refused trace gives up. Short of the line rather than against it:
-# a bar that stops exactly at an edge reads as meeting it, and the gap is what
-# says it did not get through.
-HALT = 0.415
+CORE = (255, 255, 255)       # the slot itself
+BLOOM = (196, 216, 255)      # what it throws — the faintest cool cast
+
+PLATE_INSET = 0.135
+PLATE_R = 0.050
+SLOT_W = 0.060
+SLOT_TOP, SLOT_BOTTOM = 0.215, 0.785
+# Three passes of light: a wide one that fills the tile behind the plate, a
+# tight one that lights the lip of the cut, and the core.
+BACK_BLUR, BACK_ALPHA = 0.150, 0.90
+LIP_BLUR, LIP_ALPHA = 0.045, 0.85
 
 
-def bars():
-    """The mark, as rounded bars: (x0, y0, x1, y1, radius, colour).
-
-    One list, used to draw both the PNG and the SVG. Hand-writing the vector
-    separately is how the two drift apart, and then only one of them is the
-    icon anybody actually sees.
-    """
-    out = []
-    half = TRACE_W / 2
-    for i, y in enumerate(LANES):
-        if i == STOPPED:
-            # Arrives, and gets no further.
-            out.append((IN_FROM, y - half, HALT, y + half, half, TRACE))
-            continue
-        # Through, and out the other side. Drawn as one bar rather than two so
-        # the join cannot show at large sizes; the boundary is painted over it,
-        # which is what makes it read as passing behind.
-        out.append((IN_FROM, y - half, OUT_TO, y + half, half, TRACE))
-    # Last, so it sits over the traces rather than under them: what they meet.
-    bh = BOUNDARY_W / 2
-    out.append(
-        (0.5 - bh, BOUNDARY_TOP, 0.5 + bh, BOUNDARY_BOTTOM, bh, BOUNDARY)
-    )
-    return out
+def geometry():
+    """The plate and the slot cut in it, in fractions of the tile."""
+    plate = (PLATE_INSET, PLATE_INSET, 1 - PLATE_INSET, 1 - PLATE_INSET)
+    half = SLOT_W / 2
+    slot = (0.5 - half, SLOT_TOP, 0.5 + half, SLOT_BOTTOM)
+    return plate, slot
 
 
 def tile():
@@ -104,23 +77,79 @@ def tile():
 
 
 def mark(img):
-    draw = ImageDraw.Draw(img)
-    for x0, y0, x1, y1, r, colour in bars():
-        draw.rounded_rectangle(
-            [x0 * S, y0 * S, x1 * S, y1 * S], radius=r * S, fill=colour + (255,)
+    """A plate with a slot cut in it, lit from behind.
+
+    The order is the whole trick, and it is why this is not a line drawn on a
+    surface. The light goes down first, on the bare tile. Then the plate is laid
+    over it with the slot punched *out* of its mask, so the only place the light
+    survives is the cut. Then a tighter pass on top catches the lip of the cut
+    the way an edge picks up light it is standing in front of.
+    """
+    plate, slot = geometry()
+    img.alpha_composite(soft(slot, BACK_BLUR, BACK_ALPHA, BLOOM))
+
+    # The plate, with the slot missing from it.
+    strip = Image.new("RGB", (1, 256))
+    for y in range(256):
+        t = y / 255
+        strip.putpixel(
+            (0, y), tuple(round(a + (b - a) * t) for a, b in zip(PLATE_TOP, PLATE_BOTTOM))
         )
+    mask = Image.new("L", (S, S), 0)
+    cut = ImageDraw.Draw(mask)
+    cut.rounded_rectangle([v * S for v in plate], radius=PLATE_R * S, fill=255)
+    cut.rounded_rectangle([v * S for v in slot], radius=SLOT_W / 2 * S, fill=0)
+    layer = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    layer.paste(strip.resize((S, S), Image.BICUBIC).convert("RGBA"), (0, 0), mask)
+    img.alpha_composite(layer)
+
+    img.alpha_composite(soft(slot, LIP_BLUR, LIP_ALPHA, BLOOM))
+
+    # The core, with falloff along its length. A bar of even brightness reads as
+    # a painted line; light through a cut is strongest in the middle and fades
+    # towards the ends, and that gradient is most of the difference.
+    core = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    ImageDraw.Draw(core).rounded_rectangle(
+        [v * S for v in slot], radius=SLOT_W / 2 * S, fill=CORE + (255,)
+    )
+    img.alpha_composite(fade(core, slot[1], slot[3]))
     return img
 
 
+def soft(box, blur, alpha, colour):
+    """The shape, blurred, as its own layer of light."""
+    g = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    ImageDraw.Draw(g).rounded_rectangle(
+        [v * S for v in box], radius=SLOT_W / 2 * S, fill=colour + (round(255 * alpha),)
+    )
+    return g.filter(ImageFilter.GaussianBlur(blur * S))
+
+
+def fade(layer, y0, y1):
+    """Brightest a little above centre, almost gone at the two ends."""
+    ramp = Image.new("L", (1, 256))
+    for i in range(256):
+        d = abs(i / 255 - 0.46) / 0.54
+        ramp.putpixel((0, i), round(255 * max(0.0, 1 - d ** 1.7)))
+    top, bottom = round(y0 * S), round(y1 * S)
+    f = Image.new("L", (S, S), 0)
+    f.paste(ramp.resize((S, bottom - top), Image.BICUBIC), (0, top))
+    layer.putalpha(ImageChops.multiply(layer.getchannel("A"), f))
+    return layer
+
+
 def svg(path):
-    """The same mark as vector, from the same numbers, so the two cannot drift."""
+    """The same mark as vector, from the same numbers, so the two cannot drift.
+
+    The slot is a hole in the plate here too — a mask, not a lighter rectangle
+    laid on top — so the light behind it is the same light in both renderings.
+    """
     n = 512
     hexed = lambda c: "#%02x%02x%02x" % c
-    shapes = "\n".join(
-        f'  <rect x="{x0 * n:.1f}" y="{y0 * n:.1f}" '
-        f'width="{(x1 - x0) * n:.1f}" height="{(y1 - y0) * n:.1f}" '
-        f'rx="{r * n:.1f}" fill="{hexed(c)}"/>'
-        for x0, y0, x1, y1, r, c in bars()
+    plate, slot = geometry()
+    box = lambda b, r: (
+        f'x="{b[0]*n:.1f}" y="{b[1]*n:.1f}" width="{(b[2]-b[0])*n:.1f}" '
+        f'height="{(b[3]-b[1])*n:.1f}" rx="{r*n:.1f}"'
     )
     open(path, "w").write(f"""<!-- Sightline. Generated by scripts/make-icon.py; edit that, not this. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {n} {n}" width="{n}" height="{n}">
@@ -129,9 +158,34 @@ def svg(path):
       <stop offset="0" stop-color="{hexed(TILE_TOP)}"/>
       <stop offset="1" stop-color="{hexed(TILE_BOTTOM)}"/>
     </linearGradient>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="{hexed(PLATE_TOP)}"/>
+      <stop offset="1" stop-color="{hexed(PLATE_BOTTOM)}"/>
+    </linearGradient>
+    <linearGradient id="along" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity="0"/>
+      <stop offset="0.46" stop-color="#fff" stop-opacity="1"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="back" x="-200%" y="-60%" width="500%" height="220%">
+      <feGaussianBlur stdDeviation="{BACK_BLUR*n:.1f}"/>
+    </filter>
+    <filter id="lip" x="-200%" y="-40%" width="500%" height="180%">
+      <feGaussianBlur stdDeviation="{LIP_BLUR*n:.1f}"/>
+    </filter>
+    <mask id="cut">
+      <rect {box(plate, PLATE_R)} fill="#fff"/>
+      <rect {box(slot, SLOT_W/2)} fill="#000"/>
+    </mask>
+    <clipPath id="edge"><rect width="{n}" height="{n}" rx="{n*0.223:.0f}"/></clipPath>
   </defs>
-  <rect width="{n}" height="{n}" rx="{n * 0.223:.0f}" fill="url(#tile)"/>
-{shapes}
+  <rect width="{n}" height="{n}" rx="{n*0.223:.0f}" fill="url(#tile)"/>
+  <g clip-path="url(#edge)">
+    <rect {box(slot, SLOT_W/2)} fill="{hexed(BLOOM)}" opacity="{BACK_ALPHA}" filter="url(#back)"/>
+    <rect {box(plate, PLATE_R)} fill="url(#plate)" mask="url(#cut)"/>
+    <rect {box(slot, SLOT_W/2)} fill="{hexed(BLOOM)}" opacity="{LIP_ALPHA}" filter="url(#lip)"/>
+    <rect {box(slot, SLOT_W/2)} fill="url(#along)"/>
+  </g>
 </svg>
 """)
 

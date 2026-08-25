@@ -2,13 +2,35 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <defs>
     <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#24242a"/>
-      <stop offset="1" stop-color="#0d0d10"/>
+      <stop offset="0" stop-color="#1a1a20"/>
+      <stop offset="1" stop-color="#060608"/>
     </linearGradient>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4e4e5a"/>
+      <stop offset="1" stop-color="#18181e"/>
+    </linearGradient>
+    <linearGradient id="along" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity="0"/>
+      <stop offset="0.46" stop-color="#fff" stop-opacity="1"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="back" x="-200%" y="-60%" width="500%" height="220%">
+      <feGaussianBlur stdDeviation="76.8"/>
+    </filter>
+    <filter id="lip" x="-200%" y="-40%" width="500%" height="180%">
+      <feGaussianBlur stdDeviation="23.0"/>
+    </filter>
+    <mask id="cut">
+      <rect x="69.1" y="69.1" width="373.8" height="373.8" rx="25.6" fill="#fff"/>
+      <rect x="240.6" y="110.1" width="30.7" height="291.8" rx="15.4" fill="#000"/>
+    </mask>
+    <clipPath id="edge"><rect width="512" height="512" rx="114"/></clipPath>
   </defs>
   <rect width="512" height="512" rx="114" fill="url(#tile)"/>
-  <rect x="89.6" y="147.2" width="307.2" height="28.2" rx="14.1" fill="#0a84ff"/>
-  <rect x="89.6" y="241.9" width="122.9" height="28.2" rx="14.1" fill="#0a84ff"/>
-  <rect x="89.6" y="336.6" width="307.2" height="28.2" rx="14.1" fill="#0a84ff"/>
-  <rect x="234.0" y="76.8" width="44.0" height="358.4" rx="22.0" fill="#f5f5f7"/>
+  <g clip-path="url(#edge)">
+    <rect x="240.6" y="110.1" width="30.7" height="291.8" rx="15.4" fill="#c4d8ff" opacity="0.9" filter="url(#back)"/>
+    <rect x="69.1" y="69.1" width="373.8" height="373.8" rx="25.6" fill="url(#plate)" mask="url(#cut)"/>
+    <rect x="240.6" y="110.1" width="30.7" height="291.8" rx="15.4" fill="#c4d8ff" opacity="0.85" filter="url(#lip)"/>
+    <rect x="240.6" y="110.1" width="30.7" height="291.8" rx="15.4" fill="url(#along)"/>
+  </g>
 </svg>

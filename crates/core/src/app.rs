@@ -3462,8 +3462,25 @@ impl App {
         }
         let n = needle.to_lowercase();
         for (si, s) in self.sessions.iter().enumerate() {
+            // The session itself, first. Searching only what was *said* meant
+            // typing a session's own name — the most obvious thing to type,
+            // with the name sitting right there in the list — found nothing at
+            // all. A session matches on what it is called and where it runs.
+            let named = s.label().to_lowercase().contains(&n)
+                || s.cwd.to_lowercase().contains(&n)
+                || s.id.to_lowercase().contains(&n);
+            if named {
+                // Anchored at its most recent event so following the hit lands
+                // where the session got to; a session that has said nothing yet
+                // still matches, and lands on the session.
+                self.hits.push((si, s.events.len().saturating_sub(1)));
+            }
             for (ei, ev) in s.events.iter().enumerate() {
                 if ev.head.to_lowercase().contains(&n) || ev.body.to_lowercase().contains(&n) {
+                    // Not twice for the same row.
+                    if named && ei == s.events.len().saturating_sub(1) {
+                        continue;
+                    }
                     self.hits.push((si, ei));
                 }
             }

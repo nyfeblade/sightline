@@ -559,12 +559,20 @@ fn search(shared: State<Shared>, text: String) -> Vec<HitDto> {
             .iter()
             .filter_map(|(si, ei)| {
                 let s = app.sessions.get(*si)?;
-                let e = s.events.get(*ei)?;
+                // A session can match on its own name while having said
+                // nothing, and dropping those was half the reason searching for
+                // a session by name came back empty.
+                let e = s.events.get(*ei);
                 Some(HitDto {
                     id: s.id.clone(),
                     session: s.label(),
-                    at: e.ts.map(|t| t.to_rfc3339()).unwrap_or_default(),
-                    head: e.head.clone(),
+                    at: e
+                        .and_then(|e| e.ts)
+                        .map(|t| t.to_rfc3339())
+                        .unwrap_or_default(),
+                    head: e
+                        .map(|e| e.head.clone())
+                        .unwrap_or_else(|| format!("{} — nothing said yet", s.where_())),
                 })
             })
             .take(300)

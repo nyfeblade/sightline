@@ -1748,3 +1748,142 @@ html[data-platform="windows"] .ambient { background-color: rgba(14, 14, 17, .55)
 body { background: transparent !important; }
 html { background: #0e0e11; }
 html[data-platform="mac"], html[data-platform="windows"] { background: transparent; }
+
+/* ── the controls, in the same material ─────────────────────────────────────
+   The same four layers at a smaller scale: blur and saturate behind, a
+   low-opacity fill, a specular lip along the top, and a shadow that lifts the
+   piece off the surface. A blurred button over a blurred panel does composite
+   correctly — what it picks up is the panel and the field behind that. */
+.ghost, .primary, .icon, .answer, .chip, .menu-grid button, kbd, .metrics {
+  backdrop-filter: blur(14px) saturate(180%);
+  -webkit-backdrop-filter: blur(14px) saturate(180%);
+}
+
+.ghost, .answer, .chip, .menu-grid button {
+  background: rgba(255, 255, 255, .07);
+  border: 1px solid rgba(255, 255, 255, .10);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, .12),
+    0 1px 3px rgba(0, 0, 0, .35);
+}
+.ghost:hover, .answer:hover, .chip:hover, .menu-grid button:hover {
+  background: rgba(255, 255, 255, .12);
+  border-color: rgba(255, 255, 255, .16);
+}
+
+/* The one action that starts something is tinted glass rather than a solid
+   slab: still unmistakably the blue one, still the only filled thing in the
+   window, but made of the same material as everything around it. The tint is
+   kept strong enough that white on top stays readable — a translucent accent
+   over a dark field goes muddy long before it goes subtle. */
+.primary {
+  background: rgba(0, 122, 255, .82);
+  border: 1px solid rgba(120, 180, 255, .45);
+  color: #fff;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, .28),
+    0 2px 10px rgba(0, 90, 200, .35);
+}
+.primary:hover { background: rgba(20, 138, 255, .92); filter: none; }
+
+/* Keys and figures: the same plate, thinner. */
+kbd {
+  background: rgba(255, 255, 255, .09);
+  border: 1px solid rgba(255, 255, 255, .11);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, .12);
+}
+.metrics {
+  background: rgba(255, 255, 255, .05);
+  border: 1px solid rgba(255, 255, 255, .07);
+  border-radius: 9999px;
+  padding: 2px 10px;
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, .09);
+}
+
+/* Toggles take the material only once they are on or under the pointer, so a
+   row of them does not read as a row of buttons at rest. */
+.icon { background: transparent; border-color: transparent; box-shadow: none; }
+.icon:hover {
+  background: rgba(255, 255, 255, .08);
+  border-color: rgba(255, 255, 255, .10);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, .12);
+}
+.icon.is-on {
+  background: rgba(0, 122, 255, .20);
+  border-color: rgba(120, 180, 255, .32);
+  color: var(--accent-text);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, .14);
+}
+
+/* The selected row is a plate too — the same lip, no border. */
+.agent.is-on {
+  background: rgba(255, 255, 255, .09);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, .10);
+}
+
+/* ── dark, and no blue ──────────────────────────────────────────────────────
+   The accent is gone. What is left is the material itself: a brighter plate is
+   more important than a dimmer one, and that is the whole hierarchy.
+
+   It buys back the rule this palette kept losing. With no blue in the chrome,
+   any colour on this screen means something is happening — green is running,
+   amber wants a person, red was refused. Nothing competes with them for
+   attention, because nothing else is coloured at all. */
+:root {
+  --accent: rgba(255, 255, 255, .16);
+  --accent-text: #f5f5f7;
+  --accent-wash: rgba(255, 255, 255, .10);
+  --focus-ring: 0 0 0 2px rgba(255, 255, 255, .38);
+  /* An amended call is the kernel stepping in, and the interface speaks in
+     white — so the one place blue survived is white now too. */
+  --amend: #f5f5f7;
+}
+
+/* The one action that starts something: the brightest plate in the window, and
+   nothing more than that. */
+.primary {
+  background: rgba(255, 255, 255, .17);
+  border: 1px solid rgba(255, 255, 255, .26);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, .26),
+    0 2px 10px rgba(0, 0, 0, .45);
+}
+.primary:hover { background: rgba(255, 255, 255, .24); border-color: rgba(255, 255, 255, .34); filter: none; }
+
+.tab.is-on { color: var(--text); border-bottom-color: rgba(255, 255, 255, .85); }
+.tab.wide.is-on { color: var(--text); }
+.icon.is-on {
+  background: rgba(255, 255, 255, .13);
+  border-color: rgba(255, 255, 255, .18);
+  color: var(--text);
+}
+.composer input:focus, .search:focus { border-color: rgba(255, 255, 255, .28); box-shadow: var(--focus-ring); }
+.decision.rewrite .verdict-mark, .verdict.rewrite .figure { color: var(--text); }
+
+/* The field goes quiet with it. Enough gradient left that the glass has
+   something to pick up and stays a material rather than a fill — but neutral,
+   so it reads as depth rather than as decoration. */
+.ambient {
+  background:
+    radial-gradient(85% 55% at 14% -6%, rgba(140, 150, 175, .10), transparent 62%),
+    radial-gradient(75% 55% at 92% 104%, rgba(120, 125, 150, .075), transparent 60%),
+    radial-gradient(55% 40% at 58% 48%, rgba(150, 155, 170, .045), transparent 72%),
+    #0b0b0d;
+}
+
+/* The colour belongs to the light, not to the controls.
+
+   Going dark meant taking the blue out of the chrome — the primary action, the
+   active tab, the toggles — and that is where it was doing harm, competing with
+   green, amber and red for the eye. It was doing no harm at all in the field
+   behind the glass, which is the one place a cast is welcome: it is what a
+   blurred surface picks up, and without it the material goes to grey. */
+.ambient {
+  background:
+    radial-gradient(85% 55% at 14% -6%, rgba(72, 118, 214, .30), transparent 62%),
+    radial-gradient(75% 55% at 92% 104%, rgba(158, 84, 200, .22), transparent 60%),
+    radial-gradient(55% 40% at 58% 48%, rgba(40, 148, 190, .13), transparent 72%),
+    #0b0b0e;
+}
