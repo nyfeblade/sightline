@@ -1950,3 +1950,56 @@ main {
 /* Rounded corners on the window are the compositor's on macOS and Windows;
    on Linux the frame is square, so nothing here should pretend otherwise. */
 html[data-platform="linux"] body, html[data-platform="linux"] body::before { border-radius: 0; }
+
+/* ── something under the glass ──────────────────────────────────────────────
+   Blur is only visible when there is detail to lose. Behind the panels was a
+   smooth gradient, which blurs to itself — so the material read as a tint no
+   matter how the recipe was tuned.
+
+   What goes under it now is texture at two scales: a fine grain, and slow
+   diagonal bands. Neither is meant to be seen directly. The grain is what the
+   blur actually works on, and the bands give the field somewhere for the light
+   to fall off to, so moving a panel across it changes what shows through. */
+.ambient::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  /* Fractal noise, generated in the page rather than shipped as an asset. At
+     this opacity it is invisible as texture and entirely visible as the thing
+     that makes a blurred surface look like glass. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
+  opacity: .16;
+  mix-blend-mode: overlay;
+  pointer-events: none;
+}
+.ambient::before {
+  content: "";
+  position: absolute;
+  inset: -20%;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(
+      117deg,
+      rgba(255, 255, 255, .022) 0px,
+      rgba(255, 255, 255, .022) 2px,
+      transparent 2px,
+      transparent 190px),
+    linear-gradient(117deg,
+      rgba(120, 160, 255, .10) 0%,
+      transparent 38%,
+      transparent 62%,
+      rgba(180, 130, 230, .085) 100%);
+}
+
+/* The bands are gone. They were meant to give the blur something to work on and
+   instead gave the eye something to follow — a repeating stripe is a pattern,
+   and a pattern behind a translucent panel is read as content, not as material.
+   The grain stays, because grain has no direction to follow. */
+.ambient::before {
+  background:
+    linear-gradient(117deg,
+      rgba(120, 160, 255, .10) 0%,
+      transparent 42%,
+      transparent 60%,
+      rgba(180, 130, 230, .085) 100%);
+}
