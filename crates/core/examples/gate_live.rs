@@ -49,6 +49,7 @@ fn main() {
     );
 
     let spec = Spec {
+        agent: "claude".into(),
         model: None,
         // No permission mode: everything asks, so everything reaches the gate.
         // With acceptEdits the writes would be approved before Sightline saw

@@ -361,6 +361,14 @@ mod path_tests {
 /// Kept in one place because it is the whole contract with Claude Code: change
 /// a flag and the parser above is talking to something else.
 pub fn argv(spec: &Spec) -> Vec<String> {
+    // Each agent is started its own way. Claude Code routes permission
+    // decisions to a tool this process serves; Cursor cannot be told that on a
+    // command line and is governed by a hook file written into its worktree
+    // instead. Sharing one flag list between them would mean handing Cursor
+    // arguments it refuses to start with.
+    if spec.agent == "cursor" {
+        return cursor_argv(spec);
+    }
     let mut v = vec![
         "-p".to_string(),
         "--verbose".into(),
@@ -441,6 +449,36 @@ pub fn argv(spec: &Spec) -> Vec<String> {
     v
 }
 
+/// What starts a Cursor worker.
+///
+/// `--print` with a stream is the whole of driving it headlessly, and `--trust`
+/// is not a convenience: without it the agent stops on a workspace-trust prompt
+/// that nothing in this mode can answer, and the session simply never begins.
+/// Trust here means "Sightline prepared this directory", which it did.
+///
+/// Nothing about permissions appears on this line. Cursor's boundary is
+/// `.cursor/hooks.json`, written into the worktree by `hook::config` before the
+/// session starts, so every tool call reaches the same `gate::decide` that a
+/// Claude Code call reaches.
+fn cursor_argv(spec: &Spec) -> Vec<String> {
+    let mut v = vec![
+        "--print".to_string(),
+        "--output-format".into(),
+        "stream-json".into(),
+        "--trust".into(),
+    ];
+    if let Some(m) = &spec.model {
+        v.push("--model".into());
+        v.push(m.clone());
+    }
+    // Effort is not a flag of its own here — it is spelled into the model name,
+    // as `gpt-5.3-codex-high` or a bracketed override. A caller that asked for
+    // effort without naming a model has asked for something this agent cannot
+    // express, and inventing a model to carry it would be choosing a model on
+    // their behalf.
+    v
+}
+
 /// The MCP server Sightline serves to its own sessions, in this process.
 ///
 /// In-process on purpose. A server on a socket, or a CLI on the session's PATH,
@@ -511,6 +549,15 @@ pub struct Spec {
     /// listing permitted directories, or a sandbox — and a supervisor that
     /// works here and is mute on someone else's machine is worse than one
     /// carrying a flag that is sometimes a no-op.
+    /// Which agent this is, by the id its adapter answers to.
+    ///
+    /// Empty means Claude Code, so every spec written before other vendors
+    /// existed still means what it meant. The flags an agent is started with
+    /// differ completely between them — Claude Code takes
+    /// `--permission-prompt-tool`, Cursor takes none of it and is governed
+    /// through a hook file instead — so this is the field `argv` dispatches on.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub agent: String,
     /// How hard the model thinks, per Claude Code's `--effort`.
     ///
     /// The cheapest lever there is on a fleet, and the least used. Reasoning

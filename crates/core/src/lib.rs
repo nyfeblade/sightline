@@ -34,6 +34,7 @@ pub mod pricing;
 pub mod redact;
 pub mod registry;
 pub mod reviewed;
+pub mod routing;
 pub mod screen;
 pub mod session;
 pub mod stream;

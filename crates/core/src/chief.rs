@@ -80,6 +80,12 @@ pub fn spec(model: Option<&str>, opening: &str, project: &std::path::Path) -> cr
     // past the fleet's size and spend, since it is the one asking for more.
     policy.ceilings = true;
     crate::owned::Spec {
+        // Always Claude Code. A chief holds the kernel's own tools — assign,
+        // fleet, tell — and those are served over the control protocol's
+        // in-process MCP server, which is a seam only this agent exposes. A
+        // chief on another vendor could still be governed; it could not ask for
+        // a worker, which is the whole of what a chief does.
+        agent: "claude".into(),
         model: model.map(str::to_string),
         // A chief thinks and does not type. Its whole output is decisions —
         // which work, in what order, split how — and those are the decisions
@@ -172,6 +178,19 @@ pub fn brief(
              about its mission, its constraints, or what done means, so do not assume\n\
              any. If a decision needs one, ask rather than inventing it.\n\n",
         );
+    }
+
+    let routes = crate::routing::load(std::path::Path::new(cwd));
+    if !routes.routes.is_empty() {
+        out.push_str(
+            "HOW WORK IS ROUTED HERE\n\
+             \x20 Somebody wrote these down for this project. Ask for one by name when\n\
+             \x20 you assign — `route: \"mechanical\"` — and it settles the agent, the\n\
+             \x20 model and the effort together. Naming any of those yourself overrides\n\
+             \x20 the route, which is worth doing deliberately and not by habit.\n\n",
+        );
+        out.push_str(&routes.describe());
+        out.push('\n');
     }
 
     out.push_str(&format!("WHERE\n  {cwd}\n"));

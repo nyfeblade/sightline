@@ -38,6 +38,21 @@ pub fn schemas() -> Vec<Value> {
                              "description": "the directory the worker owns and may write in"},
                     "task": {"type": "string",
                              "description": "what it is to do, in full — it sees nothing else"},
+                    "route": {"type": "string",
+                              "description": "A named route from this project's \
+                                   routing file, which settles the agent, the model and \
+                                   the effort together. Prefer this over naming them \
+                                   yourself: somebody decided what belongs on which \
+                                   model, and repeating that decision per assignment is \
+                                   how the two drift apart. Anything you name explicitly \
+                                   overrides the route."},
+                    "agent": {"type": "string",
+                              "description": "Which agent does this work: `claude` or \
+                                   `cursor`. Cursor reaches models Claude Code cannot — \
+                                   GPT-5.x, Codex, Grok, Composer — and draws on a \
+                                   separate quota, so it is a second pool as much as a \
+                                   second opinion. Both are governed by the same \
+                                   boundary. Default is claude."},
                     "effort": {"type": "string",
                                "enum": ["low", "medium", "high", "xhigh", "max"],
                                "description": "How hard this worker should think. \
@@ -140,6 +155,68 @@ fn assign(asked_by: &str, args: &Value) -> Result<String, String> {
         return Err(format!("{} is not a directory", root.display()));
     }
 
+    // Which agent does it. Named by the supervisor, because only the supervisor
+    // knows what the work is — Sightline does not rank them and is not going to.
+    // A route settles all three at once, and is the form a supervisor should
+    // normally use: the person who wrote the routes decided what belongs on
+    // which model, and repeating that decision in every assignment is how the
+    // two drift apart.
+    let routes = crate::routing::load(&root);
+    let chosen = args
+        .get("route")
+        .and_then(Value::as_str)
+        .map(|name| {
+            routes.find(name).cloned().ok_or_else(|| {
+                let known: Vec<&str> = routes.routes.iter().map(|r| r.name.as_str()).collect();
+                if known.is_empty() {
+                    format!(
+                        "there are no routes here — this project has no {}",
+                        crate::routing::FILE
+                    )
+                } else {
+                    format!(
+                        "there is no route called {name}. There is: {}",
+                        known.join(", ")
+                    )
+                }
+            })
+        })
+        .transpose()?;
+
+    let pick = |key: &str, from: Option<&String>| -> Option<String> {
+        // What the assignment says wins over the route, so a supervisor can
+        // depart from the policy deliberately for one piece of work.
+        args.get(key)
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| from.filter(|v| !v.is_empty()).cloned())
+    };
+    let wanted_owned =
+        pick("agent", chosen.as_ref().map(|r| &r.agent)).unwrap_or_else(|| "claude".to_string());
+    let wanted = wanted_owned.as_str();
+    let agent =
+        crate::agent::find(wanted).ok_or_else(|| format!("there is no agent called {wanted}"))?;
+    if agent.governance() != crate::agent::Governance::Full {
+        return Err(format!(
+            "{} cannot be governed, so the kernel will not start one. It can be run \
+             and watched — `sightline new {} --agent {}` — but a worker the boundary \
+             does not reach is not a worker this tool will hand you.",
+            agent.label(),
+            root.display(),
+            wanted
+        ));
+    }
+    // Cursor's boundary is a file in its workspace rather than a flag, so it is
+    // written before the session starts. Doing it after would leave the first
+    // few tool calls ungoverned, which is the window that matters.
+    if wanted == "cursor" {
+        let dir = root.join(".cursor");
+        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        let me = std::env::current_exe().map_err(|e| e.to_string())?;
+        std::fs::write(dir.join("hooks.json"), crate::hook::config(&me))
+            .map_err(|e| format!("could not put the boundary in place: {e}"))?;
+    }
+
     let policy = Policy::confined_to(&root);
     // The door, which is where the count ceiling belongs: this is the one moment
     // the question "may another session exist" is actually being asked. The gate
@@ -157,10 +234,8 @@ fn assign(asked_by: &str, args: &Value) -> Result<String, String> {
     }
 
     let spec = Spec {
-        model: args
-            .get("model")
-            .and_then(Value::as_str)
-            .map(str::to_string),
+        agent: agent.id().to_string(),
+        model: pick("model", chosen.as_ref().map(|r| &r.model)),
         // Chosen by whoever wrote the assignment, because only they know
         // whether this is thinking or typing.
         //
@@ -169,10 +244,7 @@ fn assign(asked_by: &str, args: &Value) -> Result<String, String> {
         // re-read on every later request — so effort compounds rather than
         // costing once. Measured on one real project: 924k output against 61.5M
         // cache reads, which is 67 to one.
-        effort: args
-            .get("effort")
-            .and_then(Value::as_str)
-            .map(str::to_string),
+        effort: pick("effort", chosen.as_ref().map(|r| &r.effort)),
         mode: None,
         allow: Vec::new(),
         deny: Vec::new(),
@@ -192,7 +264,7 @@ fn assign(asked_by: &str, args: &Value) -> Result<String, String> {
         reach: Vec::new(),
         kernel_tools: false,
     };
-    let started = owned::start("claude", &root, &spec, SETTLE)?;
+    let started = owned::start(agent.program(), &root, &spec, SETTLE)?;
     let mut store = crate::work::Store::load(crate::work::path_in(&crate::app::data_dir()));
     let id = store.assign(&started.name, task);
     // Who asked. Written here and nowhere else, because here is the only place
@@ -442,5 +514,65 @@ fn thousands(n: u64) -> String {
         format!("{}k", n / 1_000)
     } else {
         n.to_string()
+    }
+}
+
+#[cfg(test)]
+mod vendor_tests {
+    use super::*;
+
+    #[test]
+    fn a_supervisor_can_name_the_agent_and_gets_told_when_it_cannot_have_one() {
+        // Aider is real, installed, and cannot be governed — no hook, no
+        // permission seam. The kernel refuses to hand out a worker the boundary
+        // does not reach, and says what it *can* do instead, because "no" with
+        // no route forward is how somebody ends up starting one by hand outside
+        // everything.
+        let why = assign(
+            "chief",
+            &json!({"path": "/tmp", "task": "x", "agent": "aider"}),
+        )
+        .expect_err("an ungoverned agent is not a worker this kernel starts");
+        assert!(why.contains("cannot be governed"), "{why}");
+        assert!(
+            why.contains("sightline new"),
+            "it names the way that does work: {why}"
+        );
+    }
+
+    #[test]
+    fn an_agent_nobody_has_heard_of_is_refused_by_name() {
+        let why = assign(
+            "chief",
+            &json!({"path": "/tmp", "task": "x", "agent": "nonesuch"}),
+        )
+        .expect_err("unknown agents are not invented");
+        assert!(why.contains("nonesuch"), "{why}");
+    }
+
+    #[test]
+    fn the_two_agents_are_started_completely_differently() {
+        // The reason `agent` is a field on Spec rather than a detail of the
+        // caller: handing Cursor Claude Code's flags makes it refuse to start,
+        // and handing Claude Code Cursor's leaves it ungoverned.
+        let claude = crate::owned::argv(&Spec {
+            agent: "claude".into(),
+            policy: Some(Policy::confined_to(std::path::Path::new("/tmp"))),
+            ..Default::default()
+        });
+        let cursor = crate::owned::argv(&Spec {
+            agent: "cursor".into(),
+            ..Default::default()
+        });
+        assert!(claude.iter().any(|a| a == "--permission-prompt-tool"));
+        assert!(
+            !cursor.iter().any(|a| a == "--permission-prompt-tool"),
+            "Cursor has no such flag and will not start with it: {cursor:?}"
+        );
+        assert!(
+            cursor.iter().any(|a| a == "--trust"),
+            "without it the session stops on a trust prompt nothing can answer: {cursor:?}"
+        );
+        assert!(cursor.iter().any(|a| a == "stream-json"));
     }
 }
