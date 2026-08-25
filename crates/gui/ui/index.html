@@ -62,6 +62,10 @@
         <button class="tab" data-pane="agents">Subagents</button>
         <button class="tab" data-pane="stats">Stats</button>
         <button class="tab" data-pane="errors">Errors</button>
+        <!-- Only meaningful for a session that supervises. Hidden otherwise
+             rather than shown empty: a tab that is usually blank teaches people
+             not to look at it. -->
+        <button class="tab" data-pane="mission" id="tab-mission" hidden>Mission</button>
         <span class="tab-split" aria-hidden="true"></span>
         <!-- These four are about the machine rather than about the session on
              the left, which is why they sit apart. Eleven tabs in an undivided

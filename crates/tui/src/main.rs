@@ -945,6 +945,44 @@ fn main() -> Result<()> {
     // The light behind the glass. Here as well as in the window because both
     // front ends are meant to reach the same engine, and because setting it
     // from a shell is how somebody scripts a machine's appearance.
+    // The shape of one supervised project. Here as well as in the window
+    // because both front ends read the same engine, and because a diagram is
+    // worth having in a terminal too — as an indented tree, which is what a
+    // terminal's version of a flow chart is.
+    if args.first().map(String::as_str) == Some("mission") {
+        let who = args.get(1).cloned().unwrap_or_default();
+        let mut app = App::new(
+            app::default_root(),
+            app::default_sessions_dir(),
+            Duration::from_secs(30 * 86_400),
+            false,
+        );
+        app.discover();
+        let id = app
+            .sessions
+            .iter()
+            .find(|s| s.title == who || s.id == who || s.id.starts_with(&who))
+            .map(|s| s.id.clone())
+            .unwrap_or(who.clone());
+        let chart = app.work.chart(&id);
+        if chart.nodes.is_empty() {
+            anyhow::bail!("{who} has no work of its own on record");
+        }
+        if args.iter().any(|a| a == "--json") {
+            println!("{}", serde_json::to_string_pretty(&chart)?);
+            return Ok(());
+        }
+        println!("{}\n", chart.intent);
+        for node in &chart.nodes {
+            let indent = "  ".repeat(node.depth);
+            let what = node.assignment.replace("supervise:", "").trim().to_string();
+            let what: String = what.chars().take(64).collect();
+            println!("{indent}{:<12} {:<10} {what}", node.session, node.state);
+        }
+        println!("\n{} finished · {} open", chart.done, chart.open);
+        return Ok(());
+    }
+
     if args.first().map(String::as_str) == Some("backdrop") {
         use sightline_core::backdrop::{self, Choice};
         match args.get(1).map(String::as_str) {

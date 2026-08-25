@@ -959,3 +959,207 @@ mod tests {
         );
     }
 }
+
+/// The shape of a supervised project: who was asked to do what, by whom.
+///
+/// A chief and its workers are separate sessions and appear in the list as
+/// separate rows, which is accurate and is not how anyone thinks about the work.
+/// A person hands over a project; what comes back should be the project, with
+/// the sessions inside it, rather than six unrelated rows they have to hold in
+/// their head as a tree.
+///
+/// Assembled here rather than in a front end because it is a reading of the
+/// task store — which parent, which state, what is still open — and both front
+/// ends want the same reading. The layout is not decided here: where a node sits
+/// on screen is a question about the screen.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Node {
+    pub task: String,
+    pub session: String,
+    /// How deep below the chief. The chief itself is 0.
+    pub depth: usize,
+    pub assignment: String,
+    pub state: String,
+    /// Whether this is still work in progress rather than a finished branch.
+    pub open: bool,
+    pub notes: usize,
+    /// How many things have been written to show this work wrong, and how many
+    /// of those have ever actually fired. A refutation nobody has seen catch
+    /// anything has proved nothing, so the second number is the one that counts.
+    pub refutes: usize,
+    pub proven: usize,
+    /// The task that asked for this one, if any.
+    pub from: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Chart {
+    /// The task at the root — the `supervise:` one a person handed over.
+    pub root: Option<String>,
+    /// What the person actually asked for, with the `supervise:` prefix removed.
+    pub intent: String,
+    pub nodes: Vec<Node>,
+    /// Counts by state, for saying how it is going in one line.
+    pub open: usize,
+    pub done: usize,
+}
+
+impl Store {
+    /// Everything descending from one session's task, including its own.
+    ///
+    /// Walks down rather than up: the chief is the root, and a worker's task
+    /// names the session that assigned it. A task whose parent is not in the
+    /// set is not part of this project, which is what keeps two chiefs running
+    /// at once from appearing as one tangle.
+    pub fn chart(&self, chief: &str) -> Chart {
+        // Deliberately not `task_for`, which returns only *open* tasks. A
+        // finished worker has to stay in the picture: this is a diagram of how
+        // the work was distributed, and one where branches disappear as they
+        // succeed shows the opposite of what happened. It reads worst exactly
+        // when a project is going well.
+        let latest = |session: &str| {
+            self.tasks()
+                .iter()
+                .rev()
+                .find(|t| t.session == session && t.state.open())
+                .or_else(|| self.tasks().iter().rev().find(|t| t.session == session))
+        };
+        let root = latest(chief);
+        let intent = root
+            .map(|t| {
+                t.assignment
+                    .strip_prefix("supervise:")
+                    .unwrap_or(&t.assignment)
+                    .trim()
+                    .to_string()
+            })
+            .unwrap_or_default();
+
+        let mut nodes: Vec<Node> = Vec::new();
+        // Breadth first, so depth is the number of hops from the chief and a
+        // cycle — which should not exist and would hang a naive walk — cannot
+        // be entered twice.
+        let mut seen: std::collections::BTreeSet<String> = Default::default();
+        let mut frontier: Vec<(String, usize, Option<String>)> = vec![(chief.to_string(), 0, None)];
+        while let Some((session, depth, from)) = frontier.pop() {
+            if !seen.insert(session.clone()) {
+                continue;
+            }
+            if let Some(task) = latest(&session) {
+                nodes.push(Node {
+                    task: task.id.clone(),
+                    session: task.session.clone(),
+                    depth,
+                    assignment: task.assignment.clone(),
+                    state: task.state.label().to_string(),
+                    open: task.state.open(),
+                    notes: task.notes.len(),
+                    refutes: task.refutes.len(),
+                    proven: task.proven.len(),
+                    from: from.clone(),
+                });
+            }
+            for task in self.tasks() {
+                if task.parent.as_deref() == Some(session.as_str()) {
+                    frontier.push((task.session.clone(), depth + 1, Some(session.clone())));
+                }
+            }
+        }
+        nodes.sort_by(|a, b| a.depth.cmp(&b.depth).then(a.task.cmp(&b.task)));
+        let open = nodes.iter().filter(|n| n.open && n.depth > 0).count();
+        let done = nodes.iter().filter(|n| !n.open && n.depth > 0).count();
+        Chart {
+            root: root.map(|t| t.id.clone()),
+            intent,
+            nodes,
+            open,
+            done,
+        }
+    }
+}
+
+#[cfg(test)]
+mod chart_tests {
+    use super::*;
+
+    fn store() -> Store {
+        let mut s = Store::new();
+        let chief = s.assign("chief-1", "supervise: build me a GUI btop");
+        let _ = chief;
+        s
+    }
+
+    #[test]
+    fn a_project_is_its_chief_and_everything_below_it() {
+        let mut s = store();
+        s.assign("worker-a", "the backend");
+        s.record_lineage("worker-a", "chief-1");
+        s.assign("worker-b", "the panels");
+        s.record_lineage("worker-b", "chief-1");
+
+        let chart = s.chart("chief-1");
+        assert_eq!(
+            chart.intent, "build me a GUI btop",
+            "the prefix is Sightline's, not the person's"
+        );
+        assert_eq!(chart.nodes.len(), 3);
+        assert_eq!(chart.nodes[0].depth, 0, "the chief is the root");
+        assert!(chart.nodes[1..].iter().all(|n| n.depth == 1));
+        assert!(
+            chart.nodes[1..]
+                .iter()
+                .all(|n| n.from.as_deref() == Some("chief-1"))
+        );
+    }
+
+    #[test]
+    fn two_chiefs_at_once_are_two_projects_and_not_one_tangle() {
+        // The reason this walks down from a root rather than collecting every
+        // task: a machine running two supervised projects would otherwise show
+        // both as a single diagram with no root, which is worse than no diagram.
+        let mut s = store();
+        s.assign("worker-a", "the backend");
+        s.record_lineage("worker-a", "chief-1");
+        s.assign("chief-2", "supervise: something else entirely");
+        s.assign("worker-z", "unrelated work");
+        s.record_lineage("worker-z", "chief-2");
+
+        let first = s.chart("chief-1");
+        assert_eq!(first.nodes.len(), 2);
+        assert!(first.nodes.iter().all(|n| n.session != "worker-z"));
+        let second = s.chart("chief-2");
+        assert_eq!(second.nodes.len(), 2);
+        assert!(second.nodes.iter().all(|n| n.session != "worker-a"));
+    }
+
+    #[test]
+    fn a_cycle_does_not_hang_it() {
+        // Lineage is written by the kernel and should never loop. "Should never"
+        // is not a reason to walk a graph without a visited set: this is the
+        // difference between a bug and a window that stops responding.
+        let mut s = store();
+        s.assign("worker-a", "one");
+        s.record_lineage("worker-a", "chief-1");
+        s.record_lineage("chief-1", "worker-a");
+
+        let chart = s.chart("chief-1");
+        assert_eq!(chart.nodes.len(), 2);
+    }
+
+    #[test]
+    fn open_and_done_count_the_work_and_not_the_supervision() {
+        let mut s = store();
+        let a = s.assign("worker-a", "one");
+        s.assign("worker-b", "two");
+        s.record_lineage("worker-a", "chief-1");
+        s.record_lineage("worker-b", "chief-1");
+        s.set_state(&a, State::Verified).unwrap();
+
+        let chart = s.chart("chief-1");
+        assert_eq!(chart.done, 1);
+        assert_eq!(
+            chart.open, 1,
+            "the chief's own task is supervision, not work"
+        );
+    }
+}

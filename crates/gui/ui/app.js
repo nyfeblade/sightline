@@ -1255,6 +1255,189 @@ function holdScroll(out) {
   };
 }
 
+
+/// Put a session in front of you. The chart and the roster both need it, and a
+/// second copy of "set selected, redraw, redraw the pane" is how the two get to
+/// disagree about what selecting means.
+function show(id) {
+  if (!sessions.some((x) => x.id === id)) return say("that session is no longer on the list");
+  selected = id;
+  draw();
+  soon(0);
+}
+
+// ── the mission ─────────────────────────────────────────────────────────────
+//
+// One project, in one place. A chief and the workers it started are separate
+// sessions and show as separate rows, which is true and is not how the work is
+// thought about: somebody hands over a project. So this draws the project — the
+// intent at the top, a diagram of how it was distributed, and every worker
+// underneath with what it was asked and where that has got to.
+//
+// The diagram is drawn rather than laid out by a library. It is a tree two or
+// three deep with a handful of nodes, and the whole layout is: chief at the
+// top, its workers in a row beneath, elbow connectors between. Anything general
+// enough to lay out an arbitrary graph would be more code than this and would
+// have to be fetched from somewhere the policy forbids.
+const NODE = { w: 172, h: 62, gapX: 18, gapY: 54, pad: 12 };
+
+function missionChart(chart) {
+  const byDepth = new Map();
+  for (const n of chart.nodes) {
+    if (!byDepth.has(n.depth)) byDepth.set(n.depth, []);
+    byDepth.get(n.depth).push(n);
+  }
+  const depths = [...byDepth.keys()].sort((a, b) => a - b);
+  const widest = Math.max(...depths.map((d) => byDepth.get(d).length), 1);
+  const width = widest * NODE.w + (widest - 1) * NODE.gapX + NODE.pad * 2;
+  const height = depths.length * NODE.h + (depths.length - 1) * NODE.gapY + NODE.pad * 2;
+
+  const at = new Map();
+  for (const d of depths) {
+    const row = byDepth.get(d);
+    const rowWidth = row.length * NODE.w + (row.length - 1) * NODE.gapX;
+    const left = (width - rowWidth) / 2;
+    row.forEach((n, i) => {
+      at.set(n.task, {
+        x: left + i * (NODE.w + NODE.gapX),
+        y: NODE.pad + d * (NODE.h + NODE.gapY),
+        node: n,
+      });
+    });
+  }
+
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "chart");
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("width", String(width));
+  svg.setAttribute("height", String(height));
+  const el2 = (name, attrs) => {
+    const node = document.createElementNS("http://www.w3.org/2000/svg", name);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, String(v));
+    return node;
+  };
+
+  // Connectors first, so a node always sits over its own lines.
+  for (const { x, y, node } of at.values()) {
+    if (!node.from) continue;
+    const parent = chart.nodes.find((p) => p.session === node.from);
+    const start = parent && at.get(parent.task);
+    if (!start) continue;
+    const x1 = start.x + NODE.w / 2;
+    const y1 = start.y + NODE.h;
+    const x2 = x + NODE.w / 2;
+    const mid = y1 + NODE.gapY / 2;
+    // An elbow rather than a curve: this is a hierarchy, and a right angle says
+    // "reports to" in a way a bezier does not.
+    svg.append(
+      el2("path", {
+        d: `M ${x1} ${y1} V ${mid} H ${x2} V ${y}`,
+        class: `wire${node.open ? "" : " is-done"}`,
+      }),
+    );
+  }
+
+  for (const { x, y, node } of at.values()) {
+    const g = el2("g", { class: `node is-${node.state.replace(/\s+/g, "-")}`, transform: `translate(${x} ${y})` });
+    g.append(el2("rect", { width: NODE.w, height: NODE.h, rx: 8, class: "node-box" }));
+    const name = el2("text", { x: 11, y: 21, class: "node-name" });
+    name.textContent = node.depth === 0 ? "chief" : node.session;
+    g.append(name);
+    const state = el2("text", { x: NODE.w - 11, y: 21, class: "node-state", "text-anchor": "end" });
+    state.textContent = node.state;
+    g.append(state);
+    const what = el2("text", { x: 11, y: 40, class: "node-what" });
+    const words = node.assignment.replace(/^supervise:\s*/, "");
+    what.textContent = words.length > 26 ? `${words.slice(0, 25)}…` : words;
+    g.append(what);
+    const mark = el2("text", { x: 11, y: 54, class: "node-mark" });
+    mark.textContent = node.proven
+      ? `${node.proven} of ${node.refutes} refutations have fired`
+      : node.refutes
+        ? `${node.refutes} refutation${node.refutes === 1 ? "" : "s"}, none seen to fire`
+        : node.depth === 0
+          ? `${chart.done} done · ${chart.open} open`
+          : "nothing refutes this yet";
+    g.append(mark);
+    g.addEventListener("click", () => show(node.session));
+    g.style.cursor = "pointer";
+    svg.append(g);
+  }
+  return svg;
+}
+
+async function drawMission(s) {
+  if (!s) return;
+  const chart = await invoke("mission", { id: s.id });
+  const shape = JSON.stringify(chart);
+  if (alreadyDrawn("mission", shape)) return;
+  const out = el("pane");
+  const restore = holdScroll(out);
+  clear(out);
+
+  if (!chart.nodes.length) {
+    return out.append(empty("this session has no work of its own on record"));
+  }
+
+  out.append(make("div", "group", "THE PROJECT"));
+  out.append(make("div", "mission-intent", chart.intent || "—"));
+  out.append(
+    make(
+      "div",
+      "sub",
+      chart.nodes.length === 1
+        ? "nothing assigned yet"
+        : `${chart.done + chart.open} assignment${chart.done + chart.open === 1 ? "" : "s"} · ${chart.done} finished · ${chart.open} open`,
+    ),
+  );
+
+  out.append(make("div", "group", "HOW IT IS DISTRIBUTED"));
+  const frame = make("div", "chart-frame");
+  frame.append(missionChart(chart));
+  out.append(frame);
+
+  out.append(make("div", "group", "EVERY ASSIGNMENT"));
+  for (const n of chart.nodes) {
+    if (n.depth === 0) continue;
+    const row = make("div", `task-row is-${n.state.replace(/\s+/g, "-")}`);
+    const head = make("div", "task-row-head");
+    head.append(make("span", "task-who", n.session));
+    head.append(make("span", "task-state", n.state));
+    head.append(make("span", "grow"));
+    // Everything you can do to a worker without leaving the project.
+    const tell = make("button", "ghost", "Tell…");
+    tell.addEventListener("click", async () => {
+      const text = await ask(`Say something to ${n.session}:`);
+      if (!text) return;
+      try {
+        await invoke("send", { id: n.session, text });
+        say(`sent to ${n.session}`);
+      } catch (e) {
+        say(String(e));
+      }
+    });
+    head.append(tell);
+    const open = make("button", "ghost", "Open");
+    open.addEventListener("click", () => show(n.session));
+    head.append(open);
+    row.append(head);
+    row.append(make("div", "task-what", n.assignment));
+    row.append(
+      make(
+        "div",
+        "sub",
+        n.proven
+          ? `${n.proven} of ${n.refutes} refutations have been seen to fire`
+          : n.refutes
+            ? `${n.refutes} refutation${n.refutes === 1 ? "" : "s"} written, none seen to fire — this cannot reach verified`
+            : "nothing has been written that would show this wrong",
+      ),
+    );
+    out.append(row);
+  }
+  restore();
+}
+
 async function drawWork() {
   const tasks = await invoke("tasks");
   // The other half of the Hub. Watching a fleet and directing one are different
@@ -1422,6 +1605,21 @@ const FILTERS = {
 function drawFilters() {
   const box = el("filters");
   box.hidden = pane !== "feed" && pane !== "stream";
+  // The Mission tab belongs to a session that supervises. Hidden otherwise
+  // rather than shown empty: a tab that is usually blank teaches people not to
+  // look at it, and this is the one they should look at.
+  const supervising = !!current()?.task?.assignment?.startsWith("supervise:");
+  const missionTab = el("tab-mission");
+  if (missionTab) {
+    missionTab.hidden = !supervising;
+    // And if it vanishes while you are on it, you are not left on a blank pane.
+    if (!supervising && pane === "mission") {
+      pane = "talk";
+      for (const tab of document.querySelectorAll(".tab")) {
+        tab.classList.toggle("is-on", tab.dataset.pane === "talk");
+      }
+    }
+  }
   if (box.hidden) return;
   clear(box);
   if (pane === "stream") {
@@ -2013,6 +2211,7 @@ const painters = {
   stream: () => drawStream(),
   boundary: () => drawBoundary(),
   work: () => drawWork(),
+  mission: (s) => drawMission(s),
   fleet: () => drawFleet(),
 };
 
@@ -3089,10 +3288,7 @@ const GRID = {
   // linear in distance, so this is the maximum.
   most: 13,
   ease: 0.1,
-  // How much taller than the window the grid is drawn. It only has to exceed
-  // one cell: the drift below wraps, so the canvas never needs to cover more
-  // than a single row's worth of travel.
-  margin: 60,
+
   // Read through a panel at seven tenths, twelve percent white arrives as about
   // three and a half. The dots are drawn stronger so what reaches the far side
   // is the value that was asked for.
@@ -3121,9 +3317,7 @@ const grid = (() => {
   function lay() {
     const dpr = window.devicePixelRatio || 1;
     const w = window.innerWidth;
-    // Drawn taller than the window at both ends, so the parallax shift moves
-    // dots that already exist rather than revealing empty canvas.
-    const h = window.innerHeight + GRID.margin * 2;
+    const h = window.innerHeight;
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -3198,51 +3392,22 @@ const grid = (() => {
     requestAnimationFrame(step);
   }
 
-  // Parallax. The grid is fixed to the viewport, so scrolling the conversation
-  // does not move it — and a background that is perfectly still under content
-  // that is moving reads as painted on rather than as behind. A twentieth of the
-  // scroll is enough to separate the two planes and little enough that nobody
-  // will say the background moves.
-  //
-  // A transform on the canvas element rather than a redraw: the dots do not
-  // change, only where the layer sits, and asking the compositor to shift a
-  // layer costs nothing next to five thousand arcs.
-  let drift = 0;
-  function shift(top) {
-    // The grid is infinite, and this is how — not by drawing more of it, but by
-    // wrapping. A lattice with a 20px period is identical to itself shifted by
-    // 20px, so the parallax offset is taken modulo the spacing: it drifts
-    // continuously, forever, and never travels more than one cell from home.
-    //
-    // Clamping was tried first and is the wrong shape of answer. It stops, and
-    // then the background is pinned while the text keeps moving, which is worse
-    // than no parallax at all. This has no end to run into.
-    const next = -((top * 0.05) % GRID.spacing);
-    if (Math.abs(next - drift) < 0.25) return;
-    drift = next;
-    canvas.style.transform = `translate3d(0, ${next.toFixed(2)}px, 0)`;
-  }
-  document.addEventListener(
-    "scroll",
-    (e) => {
-      const box = e.target;
-      if (box && box.classList && box.classList.contains("pane")) shift(box.scrollTop);
-    },
-    { capture: true, passive: true },
-  );
+  // No parallax. The grid was bound to the conversation's scroll for a while
+  // and it is out again: a background that moves under text is a thing you
+  // notice, and this one is meant to be felt rather than watched. It also cost
+  // two bugs that only existed because of it — dots walking out of the window
+  // on a long transcript, and a pointer whose coordinates no longer matched the
+  // shifted lattice. Removing the feature removed both.
 
   window.addEventListener("resize", lay);
   window.addEventListener(
     "pointermove",
     (e) => {
       if (!flow) return;
-      // The pointer is in viewport coordinates and the dots are in the
-      // canvas's, which is offset by the margin and moved again by the
-      // parallax. Without both corrections the dots push away from a point
-      // that is not where the cursor is — or, at enough drift, from nothing at
-      // all, which reads as the grid having stopped responding.
+      // The canvas fills the viewport exactly, so the pointer needs no
+      // correction to land in the same space as the dots.
       mx = e.clientX;
-      my = e.clientY + GRID.margin - drift;
+      my = e.clientY;
       wake();
     },
     { passive: true },

@@ -884,6 +884,20 @@ fn attach_image(name: String, data: String) -> Result<String, String> {
 /// Keeping the name matters more than it looks — a worker reading
 /// `crash-2026-08-25.log` knows something about it that `attachment-3` does not
 /// say.
+/// The shape of one supervised project.
+///
+/// A chief and its workers are separate sessions and appear as separate rows,
+/// which is accurate and is not how anyone thinks about the work: a person hands
+/// over a project, and what comes back should be the project with the sessions
+/// inside it.
+#[tauri::command]
+fn mission(shared: State<Shared>, id: String) -> Result<serde_json::Value, String> {
+    shared.raw(|app| {
+        let chart = app.work.chart(&id);
+        serde_json::to_value(chart).map_err(|e| e.to_string())
+    })
+}
+
 #[tauri::command]
 fn attach_file(name: String, data: String) -> Result<String, String> {
     use base64::Engine;
@@ -1513,6 +1527,7 @@ fn main() {
             send,
             attach_image,
             attach_file,
+            mission,
             clipboard_image,
             answer,
             interrupt,

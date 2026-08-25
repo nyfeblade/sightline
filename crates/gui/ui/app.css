@@ -2736,13 +2736,7 @@ html[data-mood="needs"] .rail-group {
   .middle:has(.pane.is-streaming)::after { animation: none; opacity: .5; }
 }
 
-/* Drawn past the top and bottom of the window so the parallax shift moves dots
-   that are already there. The element is positioned to match. */
-#grid-canvas {
-  top: -60px;
-  height: calc(100% + 120px);
-  will-change: transform;
-}
+
 
 /* Programmatic jumps — following new output, opening a file — ease rather than
    cut. The wheel is handled in script; this covers everything else. */
@@ -2903,3 +2897,81 @@ html[data-mood="needs"] .rail-group {
   color: var(--tertiary) !important;
 }
 .composer .plus:hover { color: var(--text) !important; }
+
+/* ══ the mission ════════════════════════════════════════════════════════════
+
+   One project in one place: what was asked, how it was distributed, and every
+   assignment underneath. A chief and its workers are separate sessions and show
+   as separate rows, which is true and is not how the work is thought about. */
+.mission-intent {
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.5;
+  margin: 2px 0 6px;
+}
+.chart-frame {
+  overflow-x: auto;
+  padding: 10px 0 16px;
+}
+.chart { display: block; margin: 0 auto; }
+
+/* A node is the same material as everything else that floats: a fill, a rim,
+   and a lit top edge. Drawn in SVG, so the rim is a stroke and the light is a
+   second stroke inset by half a pixel. */
+.chart .node-box {
+  fill: rgba(255, 255, 255, .035);
+  stroke: rgba(255, 255, 255, .12);
+  stroke-width: 1;
+}
+.chart .node:hover .node-box { fill: rgba(255, 255, 255, .07); stroke: rgba(255, 255, 255, .22); }
+.chart .node-name { fill: var(--text); font: 500 12px var(--ui); }
+.chart .node-state { fill: var(--tertiary); font: 11px var(--ui); }
+.chart .node-what { fill: var(--secondary); font: 11.5px var(--ui); }
+.chart .node-mark { fill: var(--quaternary); font: 10.5px var(--ui); }
+
+/* State is carried on the rim rather than on the fill, so a diagram of a
+   healthy project is not a wall of colour. Only the two that matter are
+   coloured at all. */
+.chart .node.is-working .node-box,
+.chart .node.is-claimed .node-box { stroke: rgba(52, 199, 89, .5); }
+.chart .node.is-blocked .node-box { stroke: rgba(255, 212, 38, .55); }
+.chart .node.is-refuted .node-box,
+.chart .node.is-broke .node-box,
+.chart .node.is-refused .node-box { stroke: rgba(255, 105, 97, .65); }
+.chart .node.is-verified .node-box { stroke: rgba(255, 255, 255, .3); }
+.chart .node.is-working .node-state { fill: var(--running); }
+.chart .node.is-blocked .node-state { fill: var(--paused); }
+.chart .node.is-refuted .node-state,
+.chart .node.is-broke .node-state,
+.chart .node.is-refused .node-state { fill: var(--failed); }
+
+.chart .wire {
+  fill: none;
+  stroke: rgba(255, 255, 255, .16);
+  stroke-width: 1;
+}
+.chart .wire.is-done { stroke: rgba(255, 255, 255, .08); }
+
+/* The roster. One block per assignment, with what it was asked in full — an
+   assignment truncated is an assignment nobody can check. */
+.task-row {
+  padding: 10px 0 12px;
+  border-bottom: 1px solid var(--hairline-soft);
+}
+.task-row-head { display: flex; align-items: center; gap: 10px; }
+.task-who { color: var(--text); font-weight: 500; font-size: 12.5px; }
+.task-state { color: var(--tertiary); font-size: 11px; }
+.task-row.is-working .task-state { color: var(--running); }
+.task-row.is-blocked .task-state { color: var(--paused); }
+.task-row.is-refuted .task-state,
+.task-row.is-broke .task-state,
+.task-row.is-refused .task-state { color: var(--failed); }
+.task-row .task-what {
+  color: var(--secondary);
+  font-size: 12px;
+  line-height: 1.55;
+  margin: 6px 0 4px;
+  max-height: 7.2em;
+  overflow-y: auto;
+}
+.task-row .ghost { height: 26px; padding: 0 10px !important; font-size: 11.5px; }

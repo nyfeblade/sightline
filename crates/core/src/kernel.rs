@@ -90,7 +90,7 @@ pub fn call(session: &str, name: &str, args: &Value) -> Result<String, String> {
         .filter(|s| !s.is_empty())
         .unwrap_or(name);
     match bare {
-        "assign" => assign(args),
+        "assign" => assign(session, args),
         "fleet" => Ok(fleet()),
         "tell" => tell(args),
         "claim" => claim(session, args),
@@ -104,6 +104,8 @@ pub fn call(session: &str, name: &str, args: &Value) -> Result<String, String> {
 /// because a supervisor asking for a worker should not be able to ask for a less
 /// constrained one:
 ///
+/// - it is recorded as this session's, so the shape of a project survives the
+///   sessions that made it;
 /// - it is confined to `path`, with the ceilings in force there;
 /// - it gets no kernel tools, so it cannot start workers of its own — the tree
 ///   stays one deep until somebody decides otherwise;
@@ -114,7 +116,7 @@ pub fn call(session: &str, name: &str, args: &Value) -> Result<String, String> {
 ///   this kernel. `acceptEdits` would be the obvious kindness and it is the one
 ///   thing that must not be done: it approves writes before Sightline is asked,
 ///   which blinds the scope kernel to exactly the calls it exists for.
-fn assign(args: &Value) -> Result<String, String> {
+fn assign(asked_by: &str, args: &Value) -> Result<String, String> {
     let path = args
         .get("path")
         .and_then(Value::as_str)
@@ -171,6 +173,12 @@ fn assign(args: &Value) -> Result<String, String> {
     let started = owned::start("claude", &root, &spec, SETTLE)?;
     let mut store = crate::work::Store::load(crate::work::path_in(&crate::app::data_dir()));
     let id = store.assign(&started.name, task);
+    // Who asked. Written here and nowhere else, because here is the only place
+    // that knows: a worker's task records what it was told to do, and without
+    // this it does not record that anybody told it. The fleet then has no tree
+    // — every task an unrelated root — and nothing downstream can say how a
+    // project was distributed, because the fact was never kept.
+    store.record_lineage(&started.name, asked_by);
     store.save().map_err(|e| {
         format!(
             "{} started but its task could not be recorded: {e}",
@@ -272,6 +280,31 @@ fn tell(args: &Value) -> Result<String, String> {
 mod tests {
 
     #[test]
+    fn an_assignment_records_who_asked_for_it() {
+        // The defect this was written for: `assign` started a worker, wrote its
+        // task, and never recorded the chief that asked. Every task in the store
+        // was a root, the fleet had no tree, and nothing downstream could say
+        // how a project had been distributed — because the fact had never been
+        // kept. It is unrecoverable after the fact: the only moment anybody
+        // knows who asked is the moment they ask.
+        //
+        // Asserted on the source rather than by running `assign`, which starts
+        // a process and spends quota. The thing being protected is that the
+        // call exists on that path at all.
+        let source = include_str!("kernel.rs");
+        let body = &source[source.find("fn assign(").unwrap()..];
+        let body = &body[..body.find("\n}").unwrap()];
+        assert!(
+            body.contains("record_lineage"),
+            "a worker with no recorded parent is a project with no shape"
+        );
+        assert!(
+            body.contains("asked_by"),
+            "the parent recorded has to be the session that asked, not a guess"
+        );
+    }
+
+    #[test]
     fn a_worker_is_confined_and_a_chief_is_not() {
         // The two halves of the same decision, asserted together so that
         // widening one cannot quietly widen the other. A supervisor needs to
@@ -328,14 +361,18 @@ mod tests {
 
     #[test]
     fn a_worker_cannot_be_asked_for_outside_a_directory() {
-        let e = assign(&json!({"path": "/no/such/place/here", "task": "x"})).unwrap_err();
+        let e = assign(
+            "chief",
+            &json!({"path": "/no/such/place/here", "task": "x"}),
+        )
+        .unwrap_err();
         assert!(e.contains("not a directory"), "{e}");
     }
 
     #[test]
     fn assign_will_not_take_a_task_it_was_not_given() {
-        assert!(assign(&json!({"path": "/tmp"})).is_err());
-        assert!(assign(&json!({"task": "something"})).is_err());
+        assert!(assign("chief", &json!({"path": "/tmp"})).is_err());
+        assert!(assign("chief", &json!({"task": "something"})).is_err());
     }
 
     #[test]
