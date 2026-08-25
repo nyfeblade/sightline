@@ -2121,32 +2121,6 @@ html[data-platform="linux"] body, html[data-platform="linux"] body::before { bor
    Everything else in this pane is a record of something that already happened.
    This is the one row that is the present tense, so it is the only thing here
    allowed to move. */
-.live-card {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 14px 0 4px;
-  padding: 9px 12px;
-  border-radius: 8px;
-  background-color: rgba(48, 209, 88, .06);
-  border: 1px solid rgba(48, 209, 88, .18);
-  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, .06);
-  font-family: var(--code);
-  font-size: 12px;
-  color: var(--running);
-}
-.live-dot {
-  width: 7px; height: 7px;
-  border-radius: 50%;
-  background: var(--running);
-  flex: none;
-  animation: breathe 1.6s ease-in-out infinite;
-}
-@keyframes breathe {
-  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(48, 209, 88, .45); }
-  50% { opacity: .55; box-shadow: 0 0 0 4px rgba(48, 209, 88, 0); }
-}
-.live-since { margin-left: auto; color: var(--quaternary); }
 
 /* ── tactile controls ───────────────────────────────────────────────────────
    Machined tiles rather than filled rectangles: a rim light along the top, a
@@ -2509,3 +2483,100 @@ html[data-mood="needs"] .ambient::before {
 .live-act { color: var(--text); font-weight: 500; }
 .live-tally { color: var(--tertiary); font-size: 12px; }
 .live-since { margin-left: auto; color: var(--quaternary); font-size: 12px; }
+
+/* ══ Raycast dark, exactly ══════════════════════════════════════════════════
+   The last word on this surface. Two earlier passes are reversed here and it is
+   worth saying which, so the next person does not restore them thinking they
+   were lost: the coloured blooms behind the glass are gone, and the blur comes
+   back down from 40–50px to 24. Both were asked for, both are out.
+
+   What replaces atmosphere is precision. Ultra-dark translucent fills, a single
+   1px border of low-opacity white, one specular line along the top edge, and a
+   long soft shadow underneath. Nothing else. */
+
+/* No orbs, no glows. A flat near-black field, with the grain kept because it is
+   what stops a blurred surface banding — texture, not atmosphere. */
+.ambient {
+  background: #0d0e12;
+}
+.ambient::before { background: none; }
+
+.bar, .status, #rail, .rail.detail, dialog, .composer, .metrics, kbd,
+.ghost, .primary, .answer, .chip, .menu-grid button {
+  backdrop-filter: blur(24px) saturate(190%);
+  -webkit-backdrop-filter: blur(24px) saturate(190%);
+}
+
+/* The panels. */
+.bar, .status, #rail, .rail.detail {
+  background-color: rgba(18, 20, 26, .70) !important;
+  border: 1px solid rgba(255, 255, 255, .07);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, .12),
+    0 20px 40px -15px rgba(0, 0, 0, .5);
+}
+/* Chrome that meets the window has no edge there to catch anything. */
+.bar { border-left: 0; border-right: 0; border-top: 0; }
+.status { border-left: 0; border-right: 0; border-bottom: 0; }
+#rail { border-top: 0; border-bottom: 0; border-left: 0; }
+.rail.detail { border-top: 0; border-bottom: 0; border-right: 0; }
+.middle { background: rgba(18, 20, 26, .34); }
+
+dialog {
+  background-color: rgba(24, 26, 33, .80) !important;
+  border: 1px solid rgba(255, 255, 255, .07);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, .12),
+    0 20px 40px -15px rgba(0, 0, 0, .5);
+}
+
+/* Controls: the same material, the same one border, the same one highlight. */
+.ghost, .metrics, kbd, .answer, .chip, .menu-grid button {
+  background-color: rgba(24, 26, 33, .80) !important;
+  border: 1px solid rgba(255, 255, 255, .07);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, .12);
+}
+.primary {
+  background-color: rgba(255, 255, 255, .08) !important;
+  border: 1px solid rgba(255, 255, 255, .18);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, .12),
+    0 20px 40px -15px rgba(0, 0, 0, .5);
+}
+
+/* One hover, one active, everywhere. */
+.ghost:hover, .answer:hover, .chip:hover, .menu-grid button:hover,
+.agent:hover:not(.is-on), .detail .actions button:hover, .icon:hover {
+  background-color: rgba(255, 255, 255, .05) !important;
+  border-color: rgba(255, 255, 255, .12);
+}
+.primary:hover { background-color: rgba(255, 255, 255, .13) !important; border-color: rgba(255, 255, 255, .24); }
+.agent.is-on, .icon.is-on, .tab.is-on {
+  background-color: rgba(255, 255, 255, .08);
+  border-color: rgba(255, 255, 255, .18);
+}
+.tab.is-on { background-color: transparent; border-bottom-color: rgba(255, 255, 255, .55); }
+.ghost:active, .primary:active, .icon:active, .answer:active {
+  background-color: rgba(0, 0, 0, .3) !important;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, .6);
+  transform: translateY(.5px);
+}
+
+.composer {
+  background-color: rgba(18, 20, 26, .70) !important;
+  border: 1px solid rgba(255, 255, 255, .07);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, .12),
+    0 20px 40px -15px rgba(0, 0, 0, .5);
+}
+.composer:focus-within { border-color: rgba(255, 255, 255, .18); box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, .12), 0 0 0 2px rgba(255, 255, 255, .10); }
+
+/* Text by opacity rather than by hex, so it sits in the frosted surface rather
+   than on it — a fixed grey stays the same colour whatever the glass is over,
+   which is what makes it read as printed on the panel. */
+:root {
+  --text: rgba(255, 255, 255, .95);
+  --secondary: rgba(255, 255, 255, .70);
+  --tertiary: rgba(255, 255, 255, .50);
+  --quaternary: rgba(255, 255, 255, .38);
+}
