@@ -2725,3 +2725,149 @@ html[data-mood="needs"] .rail-group {
   height: calc(100% + 120px);
   will-change: transform;
 }
+
+/* Programmatic jumps — following new output, opening a file — ease rather than
+   cut. The wheel is handled in script; this covers everything else. */
+.pane, #rail, .rail.detail { scroll-behavior: smooth; overscroll-behavior: contain; }
+@media (prefers-reduced-motion: reduce) {
+  .pane, #rail, .rail.detail { scroll-behavior: auto; }
+}
+
+/* ══ what deserves attention ════════════════════════════════════════════════
+
+   Everything above this point is about how the interface looks. This is about
+   what it says first, and it is the more important of the two: a permission
+   request and a timestamp had, until now, almost the same visual weight, which
+   means the window was reporting that they matter equally. They do not.
+
+   Five tiers. The rule for placing something in one is not how interesting it
+   is in general but what happens if it is missed.
+
+     interrupt   nothing proceeds until you answer. One thing qualifies: a
+                 session waiting on a permission. Missing it stalls the fleet.
+     alarm       something is wrong and will stay wrong silently. A failed
+                 tool, a failed check, a refutation that fired, a refusal at
+                 the boundary. Missing it means shipping the failure.
+     content     the conversation. What you are here to read.
+     activity    work happening correctly. A tool that ran, a worker that is
+                 running. Missing it costs nothing — it is reassurance, and
+                 reassurance does not need to compete with prose.
+     furniture   timestamps, counts, line totals, separators. Findable when
+                 looked for, silent otherwise.
+
+   The tiers are separated by weight, colour and space, in that order. Colour is
+   the last resort rather than the first, because a window where six things are
+   coloured has no hierarchy, only decoration. */
+
+/* ── interrupt ─────────────────────────────────────────────────────────────
+   A question in the middle of the conversation, given the room a question
+   needs. It is the only thing in this interface allowed to break the column. */
+.asking-card {
+  margin: 18px -8px !important;
+  padding: 16px 18px !important;
+  border-radius: var(--r-card) !important;
+  background: rgba(255, 212, 38, .05) !important;
+  border: 1px solid rgba(255, 212, 38, .34) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .16), 0 10px 30px rgba(0, 0, 0, .5) !important;
+  animation: waiting 2.6s ease-in-out infinite;
+}
+/* It breathes, because a stalled fleet is the one thing worth pulling an eye
+   back to a window that has been left alone. */
+@keyframes waiting {
+  0%, 100% { border-color: rgba(255, 212, 38, .34); }
+  50%      { border-color: rgba(255, 212, 38, .62); }
+}
+.asking-q {
+  color: var(--text) !important;
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  line-height: 1.5;
+}
+.asking-options { margin-top: 12px !important; }
+.asking-options .answer.first {
+  background-image: var(--glass-control) !important;
+  border-color: rgba(255, 212, 38, .45) !important;
+  color: var(--text) !important;
+}
+/* And it says so from across the room, on the session that is waiting. */
+.pill.needs {
+  background: rgba(255, 212, 38, .16) !important;
+  color: var(--paused) !important;
+  border-color: rgba(255, 212, 38, .35) !important;
+}
+
+/* ── alarm ─────────────────────────────────────────────────────────────────
+   Unmistakable, and never merely a red tint on a line that otherwise looks like
+   every other line. A rule down the left edge, a brighter head, and the mark
+   kept at full strength. */
+.act.bad,
+.row.is-error,
+.row.is-toolFailed,
+.row.is-checksFailed {
+  border-left: 2px solid var(--failed) !important;
+  padding-left: 10px !important;
+  background: rgba(255, 105, 97, .05) !important;
+  border-radius: 0 var(--r-control) var(--r-control) 0;
+}
+.act.bad .act-mark,
+.row.is-error .who,
+.row.is-toolFailed .who,
+.row.is-checksFailed .who {
+  color: var(--failed) !important;
+  opacity: 1 !important;
+}
+.act.bad .act-tool, .act.bad .act-what { color: var(--text) !important; }
+/* A refutation that fired, or a boundary that refused. Both are the system
+   saying no, and both were previously indistinguishable from it saying yes. */
+.verdict-mark { font-weight: 500; }
+.decision.deny .verdict-mark, .verdict-mark.deny { color: var(--failed) !important; }
+.decision.rewrite .verdict-mark, .verdict-mark.rewrite { color: var(--paused) !important; }
+.wf-mark { color: var(--quaternary); }
+.line.bad .wf-mark, .wf-mark.bad { color: var(--failed) !important; }
+
+/* ── content ───────────────────────────────────────────────────────────────
+   The conversation is the only thing set at full brightness and reading size.
+   Nothing else in the window is allowed to be as loud. */
+.turn-said, .turn.you .turn-said, .turn.claude .turn-said {
+  color: rgba(255, 255, 255, .95);
+  font-size: 13.5px;
+  line-height: 1.62;
+}
+.turn { margin: 14px 0; }
+.turn-who { color: var(--tertiary); font-size: 11px; letter-spacing: .04em; }
+
+/* ── activity ──────────────────────────────────────────────────────────────
+   Work going correctly. Present, checkable, and quiet — a tool that ran is
+   reassurance, and reassurance competing with prose is the commonest way an
+   interface like this becomes unreadable. */
+.act { margin: 6px 0; }
+.act .act-mark { color: var(--quaternary); }
+.act .act-tool { color: var(--tertiary); font-weight: 500; }
+.act .act-what { color: var(--tertiary); }
+.act.running .act-mark { color: var(--running); }
+.pill.working {
+  background: rgba(52, 199, 89, .1) !important;
+  color: var(--running) !important;
+  border-color: rgba(52, 199, 89, .22) !important;
+}
+/* A worker running is the least eventful thing this window reports and had one
+   of the loudest treatments in it. */
+.pill.ended, .pill:not(.needs):not(.working) {
+  background: rgba(255, 255, 255, .04) !important;
+  color: var(--quaternary) !important;
+  border-color: rgba(255, 255, 255, .06) !important;
+}
+.thought { opacity: .72; }
+.thought:hover { opacity: 1; }
+
+/* ── furniture ─────────────────────────────────────────────────────────────
+   Times, counts, totals. Tabular figures so a column of them does not shift
+   width as the numbers change, and quiet enough that the eye skips them until
+   it is looking for one. */
+.at, .when, .live-since, .live-tally, .lines, .sub, .act-body .ln, .ctx, .age {
+  color: var(--quaternary) !important;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+.at, .when { opacity: .8; }
+.row.hit:hover .at, .act:hover .at { opacity: 1; }

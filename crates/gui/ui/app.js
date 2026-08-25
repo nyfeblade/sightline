@@ -806,7 +806,10 @@ function eventRow(e) {
     return out;
   };
 
-  const line = make("div", "row hit");
+  // The kind is on the row, not only on the label inside it. What something is
+  // decides how loudly the whole line speaks, and a rule cannot reach up from a
+  // child to say so.
+  const line = make("div", `row hit is-${e.kind}`);
   line.addEventListener("click", () => {
     if (!opens) {
       return showCode(
@@ -3243,6 +3246,97 @@ function drawGridToggle() {
   }
 }
 
+
+// ── scrolling ───────────────────────────────────────────────────────────────
+//
+// A wheel notch moves a scroll container instantly, by a fixed number of
+// pixels, and the eye has nothing to track between the two positions. That is
+// what makes native wheel scrolling feel like stepping rather than moving, and
+// it is most obvious in exactly the pane you spend the most time in.
+//
+// So the wheel sets a target and the container eases toward it. The whole thing
+// is about fifteen lines of arithmetic; the care is all in what it does *not*
+// do:
+//
+//   - It leaves trackpads alone. A two-finger scroll already arrives as a
+//     stream of small pixel deltas with the platform's own momentum on the end
+//     of it, and easing that a second time is what makes these libraries feel
+//     syrupy. Only discrete input — a wheel notch, or a delta reported in lines
+//     or pages — is smoothed.
+//   - It gives up its target whenever anything else moves the container: a
+//     keyboard, a scrollbar drag, a pane following new output. Otherwise the
+//     next frame drags the view back to where the wheel had been aiming, and
+//     the container appears to fight the person using it.
+//   - It stops. When the target is reached, no more frames are requested.
+//   - It does nothing at all for somebody who has asked for reduced motion.
+const GLIDE = { ease: 0.16, arrived: 0.4 };
+
+function glide(box) {
+  if (box.dataset.glide) return;
+  box.dataset.glide = "1";
+  let target = box.scrollTop;
+  let last = box.scrollTop;
+  let running = false;
+
+  const step = () => {
+    // Something else moved it — a keypress, a drag, a pane following output.
+    // Whatever it was is more authoritative than a wheel notch from before it.
+    if (Math.abs(box.scrollTop - last) > 1.5) {
+      running = false;
+      return;
+    }
+    const gap = target - box.scrollTop;
+    if (Math.abs(gap) < GLIDE.arrived) {
+      box.scrollTop = target;
+      last = box.scrollTop;
+      running = false;
+      return;
+    }
+    box.scrollTop += gap * GLIDE.ease;
+    last = box.scrollTop;
+    requestAnimationFrame(step);
+  };
+
+  box.addEventListener(
+    "wheel",
+    (e) => {
+      if (e.ctrlKey) return; // zoom
+      // deltaMode 0 is pixels, which is what a trackpad sends. Anything else is
+      // a discrete device. A large pixel delta is a wheel too — GTK reports
+      // notches in pixels on some configurations.
+      const discrete = e.deltaMode !== 0 || Math.abs(e.deltaY) >= 40;
+      if (!discrete) return;
+      const reach = box.scrollHeight - box.clientHeight;
+      if (reach <= 0) return;
+      const by = e.deltaMode === 0 ? e.deltaY : e.deltaY * 40;
+      // Re-aim from where it actually is when it is not already gliding, or a
+      // notch after a drag jumps back to a stale target.
+      const from = running ? target : box.scrollTop;
+      const next = Math.max(0, Math.min(reach, from + by));
+      // Already at the end: let the event through so the platform can do
+      // whatever it does there rather than swallowing it.
+      if (next === box.scrollTop && !running) return;
+      e.preventDefault();
+      target = next;
+      if (!running) {
+        running = true;
+        last = box.scrollTop;
+        requestAnimationFrame(step);
+      }
+    },
+    { passive: false },
+  );
+}
+
+/// Everything worth gliding, whenever the interface rebuilds one.
+function glideAll() {
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  for (const box of document.querySelectorAll(".pane, #rail, .rail.detail, .notice-text")) {
+    glide(box);
+  }
+}
+
+glideAll();
 paintBackdrop();
 draw();
 startStream();
@@ -3251,6 +3345,7 @@ paneTick();
 // urgent arrives on the stream; this catches the measurements that nothing
 // publishes, and puts right anything the patching above got slightly wrong.
 setInterval(draw, 4000);
+setInterval(glideAll, 2000);
 
 
 

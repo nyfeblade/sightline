@@ -1,0 +1,80 @@
+<!doctype html>
+<!--
+  One of every kind of thing Sightline reports, on one page.
+
+  The information hierarchy is the part of this interface that cannot be checked
+  by looking at the running app, because the things that matter most are the
+  things that are rarely on screen: a permission request, a refutation that
+  fired, a check that failed. Waiting for a real failure to find out whether a
+  failure looks like one is not a test.
+
+  So this renders one of each against the real stylesheet. Open it in a browser,
+  or:
+
+      google-chrome --headless --screenshot=out.png docs/tiers.html
+
+  Five tiers, and the rule for placing something in one is not how interesting
+  it is but what happens if it is missed. Measured on the render:
+
+      interrupt   19.6:1   nothing proceeds until you answer
+      content     17.5:1   the conversation
+      alarm        6.9:1   red, and the only red in the window
+      activity     4.5:1   work going correctly
+      furniture    2.2:1   times and counts
+
+  Alarm sits below content on purpose. It is not competing on brightness — it
+  has a colour nothing else has, and a rule down its left edge. Loudness by hue
+  where everything else is neutral is louder than loudness by luminance, and it
+  leaves the top of the scale for the thing you are actually reading.
+-->
+<html data-platform="linux" data-backdrop="bloom" data-mood="working">
+<head><meta charset="utf-8"><link rel="stylesheet" href="../crates/gui/ui/app.css"></head>
+<body>
+<div class="ambient"></div>
+<main>
+  <div class="middle">
+    <div class="pane talk" style="height:1000px">
+
+      <div class="turn you"><div class="turn-head"><span class="turn-who">you</span><span class="at">09:41:02</span></div>
+        <div class="turn-said">CONTENT — the conversation. This is the thing you are here to read, and nothing else in the window is allowed to be as loud as it.</div></div>
+
+      <div class="turn claude"><div class="turn-head"><span class="turn-who">claude</span><span class="at">09:41:05</span></div>
+        <div class="turn-said">Claude's prose sits at the same tier: full brightness, reading size, generous line height.</div></div>
+
+      <div class="act"><div class="act-head"><span class="act-mark">›</span><span class="act-tool">Bash</span>
+        <span class="act-what">ACTIVITY — cargo test --workspace</span><span class="grow"></span><span class="at">09:41:11</span></div></div>
+
+      <div class="act running"><div class="act-head"><span class="act-mark">◍</span><span class="act-tool">Read</span>
+        <span class="act-what">ACTIVITY, in flight — crates/core/src/gate.rs</span><span class="grow"></span><span class="at">09:41:12</span></div></div>
+
+      <div class="act bad"><div class="act-head"><span class="act-mark">✗</span><span class="act-tool">Bash</span>
+        <span class="act-what">ALARM — ./check.sh exited 1</span><span class="grow"></span><span class="at">09:41:18</span></div></div>
+
+      <div class="row hit is-error"><span class="at">09:41:19</span><span class="who error">error</span>
+        <span class="said">ALARM — refutation refute-liveness.sh fired: the backend is reporting frozen data</span></div>
+
+      <div class="row hit is-checksFailed"><span class="at">09:41:20</span><span class="who checksFailed">checks</span>
+        <span class="said">ALARM — tests failed · 3 of 412</span></div>
+
+      <div class="asking-card">
+        <div class="asking-q">INTERRUPT — Sightline wants to run <code>git push --force origin main</code> in ~/sightline. Allow?</div>
+        <div class="asking-options"><button class="answer first"><span class="key">1</span> Yes</button>
+        <button class="answer"><span class="key">2</span> No</button></div>
+      </div>
+
+      <div class="row hit"><span class="at">09:41:25</span><span class="who text">claude</span>
+        <span class="said">FURNITURE check — the timestamps at the left of these rows should barely exist.</span></div>
+    </div>
+  </div>
+  <div class="rail detail" style="width:320px">
+    <div class="agents" style="padding:8px">
+      <li class="agent is-on"><i class="dot working"></i><span class="name">worker · running</span><span class="age">4s</span>
+        <span class="where"><span class="pill working">working</span> · main</span><span class="ctx">129k</span></li>
+      <li class="agent"><i class="dot needs"></i><span class="name">worker · waiting on you</span><span class="age">1m</span>
+        <span class="where"><span class="pill needs">needs you</span> · main</span><span class="ctx">88k</span></li>
+      <li class="agent"><i class="dot ended"></i><span class="name">worker · finished</span><span class="age">2h</span>
+        <span class="where"><span class="pill ended">ended</span> · main</span><span class="ctx">26k</span></li>
+    </div>
+  </div>
+</main>
+</body></html>
