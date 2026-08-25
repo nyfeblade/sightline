@@ -278,7 +278,24 @@ pub fn serve(path: PathBuf) -> std::io::Result<()> {
                     let reply = match serde_json::from_str::<Request>(&line) {
                         Ok(request) => answer(request),
                         Err(e) => Reply::Failed {
-                            why: format!("could not read that request: {e}"),
+                            // An unknown field is not a malformed request, it
+                            // is a newer Sightline talking to a daemon that has
+                            // been running since before that field existed —
+                            // which is the ordinary state of affairs after an
+                            // upgrade, and reads as a parse bug unless it says
+                            // so. `deny_unknown_fields` is deliberate; the
+                            // remedy is a restart, not a looser parser.
+                            why: if e.to_string().contains("unknown field") {
+                                format!(
+                                    "this daemon (pid {}) has been running since before that \
+                                     field existed — it is an older Sightline. Restart it to \
+                                     pick up the new one; it is holding sessions, so that ends \
+                                     them. Underlying: {e}",
+                                    std::process::id()
+                                )
+                            } else {
+                                format!("could not read that request: {e}")
+                            },
                         },
                     };
                     let mut text = serde_json::to_string(&reply).unwrap_or_default();

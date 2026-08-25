@@ -482,7 +482,15 @@ pub struct Spec {
     /// listing permitted directories, or a sandbox — and a supervisor that
     /// works here and is mute on someone else's machine is worse than one
     /// carrying a flag that is sometimes a no-op.
-    #[serde(default)]
+    ///
+    /// Not serialised when empty, and that is a compatibility decision rather
+    /// than tidiness. `Spec` is `deny_unknown_fields` on purpose — a daemon that
+    /// ignored a field it did not know would start a session with the wrong
+    /// permissions and say nothing — so every field added here is refused
+    /// outright by any daemon still running from before it existed. A worker's
+    /// reach is always empty, and an empty field that is never sent cannot break
+    /// a daemon that has not been restarted since the upgrade.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reach: Vec<String>,
     /// Whether Sightline also offers this session tools of its own.
     ///
