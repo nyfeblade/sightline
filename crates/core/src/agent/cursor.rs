@@ -22,16 +22,14 @@
 //! if ("deny" === i?.permission) { throw new S(H("Command execution", i.user_message)) }
 //! ```
 //!
-//! So a Cursor session can be stopped at the boundary for shell, for MCP and for
-//! reads. What it has no *before* hook for is its own file edits: `afterFileEdit`
-//! fires once the write has happened. That is the honest gap, and it is the one
-//! the scope kernel cares about most — a write outside the worktree can be
-//! noticed here and not prevented. Confining it is then the worktree's job and
-//! `--sandbox`'s, which is a boundary made of the operating system rather than
-//! of the agent's cooperation.
+//! `afterFileEdit` fires only once a write has happened, which looked at first
+//! like a gap the scope kernel could never close. It is not: `preToolUse` is
+//! generic, sees every tool including the edit tools, and takes the same `deny`.
+//! So the boundary reaches everything, and `hook.rs` is the door.
 //!
-//! Hence three states rather than two. Rounding this up would claim a boundary
-//! that is not there; rounding it down would throw away most of one that is.
+//! Proved by running it. A session asked to `git push --force` was refused by
+//! the forbid kernel; a session asked to write outside its worktree with its own
+//! edit tool was refused by the scope kernel, and the file is not on disk.
 
 use super::{Adapter, Found, Naming, Options, Record};
 use std::path::PathBuf;
@@ -117,7 +115,16 @@ impl Adapter for Cursor {
     }
 
     fn governance(&self) -> super::Governance {
-        super::Governance::Partial
+        // Full, through `hook.rs`, and proved by a real session rather than by
+        // reading a contract: a Cursor agent asked to run `git push --force` was
+        // refused by the forbid kernel, and one asked to write outside its
+        // worktree with its own edit tool was refused by the scope kernel — the
+        // file is not on disk. That second case is what made this `Partial`.
+        //
+        // It needs `sightline govern <dir>` to have written `.cursor/hooks.json`
+        // there. A Cursor somebody starts by hand elsewhere is not governed, and
+        // is not claimed to be.
+        super::Governance::Full
     }
 }
 

@@ -20,6 +20,7 @@ pub mod gateway;
 pub mod git;
 pub mod glue;
 pub mod history;
+pub mod hook;
 // Selected only on Windows, but built and tested everywhere, so on Unix its
 // surface is unused by design.
 #[cfg_attr(not(windows), allow(dead_code))]

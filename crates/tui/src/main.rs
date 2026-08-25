@@ -1008,6 +1008,38 @@ fn main() -> Result<()> {
     // The question somebody has on their first day and nowhere to ask it: they
     // have cloned this, and the README tells them what is possible rather than
     // what is missing on their own machine.
+    // The boundary, reached the way Cursor reaches one: a call on stdin, a
+    // decision on stdout. Not a command anybody types — Cursor spawns it, once
+    // per tool call — so it says nothing, reads nothing else, and answers.
+    if args.first().map(String::as_str) == Some("hook") {
+        use std::io::Read;
+        let mut request = String::new();
+        std::io::stdin().read_to_string(&mut request).ok();
+        println!("{}", sightline_core::hook::answer(&request));
+        return Ok(());
+    }
+
+    // Put the hook file where Cursor will find it. A worktree at a time, rather
+    // than globally: a session Sightline governs is one it prepared, and a
+    // Cursor somebody runs by hand stays their own.
+    if args.first().map(String::as_str) == Some("govern") {
+        let where_ = args
+            .get(1)
+            .filter(|a| !a.starts_with("--"))
+            .cloned()
+            .unwrap_or_else(|| ".".into());
+        let dir = std::path::PathBuf::from(app::expand(&where_)).join(".cursor");
+        std::fs::create_dir_all(&dir)?;
+        let me = std::env::current_exe()?;
+        let path = dir.join("hooks.json");
+        std::fs::write(&path, sightline_core::hook::config(&me))?;
+        println!(
+            "{} — every tool call in {where_} now stops at Sightline's boundary",
+            path.display()
+        );
+        return Ok(());
+    }
+
     if args.first().map(String::as_str) == Some("connections") {
         let deep = !args.iter().any(|a| a == "--quick");
         let all = sightline_core::agent::connections(deep);
