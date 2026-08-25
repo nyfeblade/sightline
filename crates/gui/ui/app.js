@@ -463,6 +463,28 @@ window.addEventListener("error", (e) => say(`${e.message} · ${e.filename}:${e.l
 window.addEventListener("unhandledrejection", (e) => say(String(e.reason)));
 const current = () => sessions.find((s) => s.id === selected);
 
+/// Let the room know what the fleet is doing.
+///
+/// The field behind the glass is the only surface in the window with nothing on
+/// it, which makes it the only one free to carry a mood. So it carries the one
+/// fact you want to feel rather than read: whether anything needs you, whether
+/// anything is running, or whether it has all gone quiet.
+///
+/// It is deliberately slow — a two second transition — because a field that
+/// snapped would be a notification, and this is meant to be something you
+/// notice having changed rather than something that interrupts.
+function setMood() {
+  const live = sessions.filter((s) => s.state !== "ended");
+  const mood = live.some((s) => s.asking)
+    ? "needs"
+    : live.some((s) => s.state === "running" || s.state === "working")
+      ? "working"
+      : "quiet";
+  if (document.documentElement.dataset.mood !== mood) {
+    document.documentElement.dataset.mood = mood;
+  }
+}
+
 // What an empty constitution offers to be. The headings are the ones the parser
 // looks for, so a person filling this in is filling in something that will
 // actually reach a brief rather than a document nothing reads.
@@ -493,6 +515,7 @@ The shape of it, and what must not change.
 
 // ── the session list ───────────────────────────────────────────────────────
 function drawAgents() {
+  setMood();
   const shown = liveOnly ? sessions.filter((s) => s.live) : sessions;
   text("agent-count", liveOnly ? `Live (${shown.length})` : "Sessions");
   el("filter").classList.toggle("is-on", liveOnly);
@@ -1485,7 +1508,12 @@ async function drawTalk(id) {
         continue;
       }
       const node = talkNode(e, events, i);
-      if (node) out.append(node);
+      if (node) {
+        // Only on the incremental path: a rebuild would animate the whole
+        // transcript at once, which is a slot machine rather than a arrival.
+        node.classList.add("arriving");
+        out.append(node);
+      }
       if (e.kind === "tool") talkOn.lastCall = { node, at: e.at, head: e.head };
     }
   }
