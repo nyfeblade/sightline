@@ -124,16 +124,49 @@ pub trait Adapter: Send + Sync {
         None
     }
 
-    /// Whether Sightline's kernels apply to work this agent does.
+    /// How much of Sightline's boundary reaches work this agent does.
     ///
-    /// True only where the agent can hand a permission decision to a host —
-    /// which today is Claude Code and nothing else. Everything else can be
-    /// watched, driven and measured, and is not policed. This is a difference in
-    /// what is being promised, so it is a property of the adapter rather than a
-    /// footnote: an ungoverned worker that looks governed is the worst thing
-    /// this program could show.
-    fn governed(&self) -> bool {
-        false
+    /// Three states rather than two, and the middle one was found by being wrong
+    /// about it. Cursor was recorded here as ungoverned on the strength of its
+    /// `--help`, which mentions no permission hook. Its binary does: a
+    /// `hooks.json` with `beforeShellExecution`, `beforeMCPExecution` and
+    /// `beforeReadFile`, each of which takes `{"permission": "deny"}` and throws
+    /// rather than running the call. What it has no *before* hook for is its own
+    /// file edits — `afterFileEdit` fires once the write has happened.
+    ///
+    /// So "can it be governed" has no yes-or-no answer, and forcing one would
+    /// have to round in a direction. Rounding up claims a boundary that is not
+    /// there; rounding down throws away most of one that is.
+    fn governance(&self) -> Governance {
+        Governance::None
+    }
+}
+
+/// How much of the boundary reaches an agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Governance {
+    /// Every call stops at the gate before it happens.
+    Full,
+    /// Some calls do. The rest are seen afterwards, which catches a mistake and
+    /// does not prevent one.
+    Partial,
+    /// Watched, driven and measured. Not policed.
+    None,
+}
+
+impl Governance {
+    /// Said in a line, because this is the difference between what a person
+    /// thinks they have and what they have.
+    pub fn describe(self) -> &'static str {
+        match self {
+            Governance::Full => "governed — every call stops at the boundary",
+            Governance::Partial => {
+                "partly governed — shell, MCP and reads stop at the boundary; its own \
+                 file edits are seen only after they happen"
+            }
+            Governance::None => "not governed — watched and driven only",
+        }
     }
 }
 
@@ -148,7 +181,9 @@ pub struct Connection {
     pub version: String,
     /// `None` where there is no cheap way to ask.
     pub signed_in: Option<bool>,
-    pub governed: bool,
+    pub governance: Governance,
+    /// The same thing in a sentence, so a view does not have to know the rules.
+    pub governance_note: String,
     pub install_hint: String,
     pub signin_hint: String,
 }
@@ -188,7 +223,8 @@ pub fn connections(check_signin: bool) -> Vec<Connection> {
                 installed: found,
                 version,
                 signed_in,
-                governed: a.governed(),
+                governance: a.governance(),
+                governance_note: a.governance().describe().into(),
                 install_hint: a.install_hint().unwrap_or_default().into(),
                 signin_hint: a.signin_hint().unwrap_or_default().into(),
             }

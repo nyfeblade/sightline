@@ -81,7 +81,7 @@ impl Adapter for ClaudeCode {
     /// `gate::decide` runs before a call happens. No other agent here exposes
     /// that seam, which is a difference in what is being promised rather than a
     /// difference in polish.
-    fn governed(&self) -> bool {
-        true
+    fn governance(&self) -> super::Governance {
+        super::Governance::Full
     }
 }

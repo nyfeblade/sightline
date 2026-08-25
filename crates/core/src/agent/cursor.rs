@@ -10,14 +10,28 @@
 //! quota pool and a second set of models, on a wire close enough to Claude
 //! Code's to read with a shim rather than a second parser.
 //!
-//! What it is not: governable. There is no `--permission-prompt-tool` or
-//! anything like it. Permissions are settled by `--force`, by a server-side
-//! classifier under `--auto-review`, or by its own sandbox — never by handing
-//! the decision to a host. So a Cursor session can be watched, driven and
-//! measured, and Sightline's kernels do not apply to it. That is a real
-//! difference in what is being promised and it has to stay visible wherever a
-//! Cursor session appears, because an ungoverned worker that looks governed is
-//! the worst thing this program could show.
+//! How much of the boundary reaches it: most of it, and this was recorded wrong
+//! at first. Its `--help` mentions no permission hook, so it was written down as
+//! ungoverned. Its binary says otherwise — a `hooks.json` with
+//! `beforeShellExecution`, `beforeMCPExecution`, `beforeReadFile` and
+//! `beforeSubmitPrompt`, each of which takes `{"permission": "deny"}` and throws
+//! rather than running the call:
+//!
+//! ```text
+//! const i = yield e.executeHookForStep(beforeShellExecution, {…command, cwd, sandbox});
+//! if ("deny" === i?.permission) { throw new S(H("Command execution", i.user_message)) }
+//! ```
+//!
+//! So a Cursor session can be stopped at the boundary for shell, for MCP and for
+//! reads. What it has no *before* hook for is its own file edits: `afterFileEdit`
+//! fires once the write has happened. That is the honest gap, and it is the one
+//! the scope kernel cares about most — a write outside the worktree can be
+//! noticed here and not prevented. Confining it is then the worktree's job and
+//! `--sandbox`'s, which is a boundary made of the operating system rather than
+//! of the agent's cooperation.
+//!
+//! Hence three states rather than two. Rounding this up would claim a boundary
+//! that is not there; rounding it down would throw away most of one that is.
 
 use super::{Adapter, Found, Naming, Options, Record};
 use std::path::PathBuf;
@@ -100,6 +114,10 @@ impl Adapter for Cursor {
 
     fn signin_probe(&self) -> Option<(&'static [&'static str], &'static str)> {
         Some((&["cursor-agent", "status"], "Logged in"))
+    }
+
+    fn governance(&self) -> super::Governance {
+        super::Governance::Partial
     }
 }
 

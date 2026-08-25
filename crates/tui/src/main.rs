@@ -1025,16 +1025,7 @@ fn main() -> Result<()> {
                     None => format!("installed · {}", c.version),
                 }
             };
-            println!(
-                "{:<8} {:<26} {}",
-                c.id,
-                state,
-                if c.governed {
-                    "governed — the kernels apply"
-                } else {
-                    "not governed — watched and driven only"
-                }
-            );
+            println!("{:<8} {:<26} {}", c.id, state, c.governance_note);
             if !c.installed && !c.install_hint.is_empty() {
                 println!("         install: {}", c.install_hint);
             } else if c.signed_in == Some(false) && !c.signin_hint.is_empty() {
