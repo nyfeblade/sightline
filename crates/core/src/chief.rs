@@ -37,6 +37,19 @@ use crate::work;
 /// guarantee.
 pub const DENIED: &[&str] = &["Write", "Edit", "NotebookEdit"];
 
+/// The person's home directory, if the platform will say where it is.
+///
+/// Deliberately not the filesystem root. A supervisor is given the reach its
+/// person has, not more — and `cannot tell` is an answer, so a platform that
+/// will not say leaves the chief with the directory it started in rather than
+/// with everything.
+fn home() -> Option<String> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(|h| h.to_string_lossy().into_owned())
+        .filter(|h| !h.is_empty())
+}
+
 /// What a chief is, in one place.
 ///
 /// This function exists because both front ends used to build this themselves,
@@ -76,6 +89,14 @@ pub fn spec(model: Option<&str>, opening: &str, project: &std::path::Path) -> cr
         deny: DENIED.iter().map(|s| s.to_string()).collect(),
         opening: Some(opening.to_string()),
         policy: Some(policy),
+        // The reach a person has when they start a session in their own home
+        // directory. A chief starts in the project so that its constitution and
+        // ceilings are found there, and the work it supervises is very often
+        // somewhere else — which is exactly what happened the first time one ran
+        // for real. Widening what Claude Code will let a tool touch does not
+        // widen the boundary: every call still arrives at `gate::decide`, and
+        // the scope kernel still confines writes to the root above.
+        reach: home().into_iter().collect(),
         // The whole point: it can ask for a worker, and cannot start one.
         kernel_tools: true,
     }
@@ -147,7 +168,14 @@ pub fn brief(
         );
     }
 
-    out.push_str(&format!("WHERE\n  {cwd}\n\n"));
+    out.push_str(&format!("WHERE\n  {cwd}\n"));
+    out.push_str(
+        "\x20 Where you start, not where you are confined. You can read and run\n\
+         \x20 commands anywhere under the home directory, and you can assign a worker\n\
+         \x20 to any directory on the machine — a worker is confined to the one it is\n\
+         \x20 given, which is the point of giving it one. If the work is somewhere\n\
+         \x20 else, go there; do not report yourself stuck in this folder.\n\n",
+    );
 
     out.push_str("CEILINGS\n");
     out.push_str(&format!("  {}\n", limits.describe()));
@@ -401,6 +429,16 @@ mod tests {
             spec.mode.is_none(),
             "a permission mode approves calls before Sightline is asked about them"
         );
+        // The reach a person has. A chief pinned to the folder the window
+        // happened to be pointed at reported the mission undispatchable while
+        // the codebase it had been given sat one directory away.
+        if let Some(home) = std::env::var_os("HOME") {
+            let home = home.to_string_lossy().into_owned();
+            assert!(
+                spec.reach.contains(&home),
+                "a supervisor is given its person's reach, not a narrower one"
+            );
+        }
 
         // And the flags that carry all of it. The struct being right is worth
         // nothing if the command line does not say so.
@@ -417,6 +455,12 @@ mod tests {
             !argv.iter().any(|a| a == "--allowedTools"),
             "a grant on the command line is a hole in the boundary, silently"
         );
+        if std::env::var_os("HOME").is_some() {
+            assert!(
+                argv.iter().any(|a| a == "--add-dir"),
+                "reach is this flag; without it the field above is decoration"
+            );
+        }
     }
 
     #[test]

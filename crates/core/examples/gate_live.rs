@@ -59,6 +59,8 @@ fn main() {
         deny: Vec::new(),
         opening: Some(task),
         policy: Some(policy),
+        // This example is about the boundary, not about reach.
+        reach: Vec::new(),
         kernel_tools: false,
     };
 

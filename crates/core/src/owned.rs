@@ -385,6 +385,13 @@ pub fn argv(spec: &Spec) -> Vec<String> {
             v.push(tool.clone());
         }
     }
+    // Widens the directories Claude Code will let a tool touch. It does not
+    // widen anything here: every call still arrives at the gate, and the scope
+    // kernel still confines writes to the policy's root.
+    for dir in &spec.reach {
+        v.push("--add-dir".into());
+        v.push(dir.clone());
+    }
     // The seam `claude --help` does not mention, and the reason any of this is
     // more than advice: every permission decision is routed to a tool Sightline
     // serves in-process, so `gate::decide` runs before the call does.
@@ -455,6 +462,28 @@ pub struct Spec {
     /// which is the older behaviour and still what a one-shot wants.
     #[serde(default)]
     pub policy: Option<crate::gate::Policy>,
+    /// Directories this session may reach beyond the one it starts in.
+    ///
+    /// Claude Code confines a session's tools to its working directory, and
+    /// that — not any kernel here — is what pinned the first live chief to one
+    /// project while the work it had been given was in another. The scope
+    /// kernel only ever judges `WRITES`, so it was never the thing in the way.
+    ///
+    /// A person who starts a session in their home directory can work anywhere
+    /// under it. A supervisor is worth less than that, not more, so it is given
+    /// the same reach rather than a narrower one.
+    ///
+    /// Worth being exact about what this was measured to do, because the
+    /// obvious claim for it is false. Removing it and running the same live
+    /// chief again, the read outside the project still succeeded — so on this
+    /// machine and this Claude Code, neither Bash nor Read was confined to the
+    /// working directory, and this flag changed nothing. It is kept because the
+    /// confinement it lifts is real where it is configured — a settings file
+    /// listing permitted directories, or a sandbox — and a supervisor that
+    /// works here and is mute on someone else's machine is worse than one
+    /// carrying a flag that is sometimes a no-op.
+    #[serde(default)]
+    pub reach: Vec<String>,
     /// Whether Sightline also offers this session tools of its own.
     ///
     /// This is how a supervisor creates work: not by starting a process, which

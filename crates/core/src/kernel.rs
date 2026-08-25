@@ -160,6 +160,12 @@ fn assign(args: &Value) -> Result<String, String> {
         // for something Sightline had not finished doing.
         opening: None,
         policy: Some(policy.on_assigned_work()),
+        // No reach beyond `path`, and this is the difference between a worker
+        // and the chief that asked for it. A supervisor needs to see across the
+        // machine to decide anything; a worker has one assignment in one
+        // directory, and everything Sightline claims about confinement is this
+        // line.
+        reach: Vec::new(),
         kernel_tools: false,
     };
     let started = owned::start("claude", &root, &spec, SETTLE)?;
@@ -264,6 +270,31 @@ fn tell(args: &Value) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_worker_is_confined_and_a_chief_is_not() {
+        // The two halves of the same decision, asserted together so that
+        // widening one cannot quietly widen the other. A supervisor needs to
+        // see across the machine to decide anything; a worker has one
+        // assignment in one directory.
+        let dir = std::env::temp_dir();
+        let chief = crate::chief::spec(None, "the brief", &dir);
+        assert!(
+            !chief.reach.is_empty() || std::env::var_os("HOME").is_none(),
+            "a chief with no reach is the bug this was written for"
+        );
+
+        // The worker's spec is built inside `assign`, which starts a process,
+        // so assert the rule the way the rest of this file states it: nothing
+        // may hand a worker `reach`.
+        let source = include_str!("kernel.rs");
+        let assign = &source[source.find("fn assign(").unwrap()..];
+        let assign = &assign[..assign.find("\n}").unwrap()];
+        assert!(
+            assign.contains("reach: Vec::new()"),
+            "everything Sightline claims about confining a worker is that line"
+        );
+    }
     use super::*;
 
     #[test]

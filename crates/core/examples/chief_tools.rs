@@ -39,15 +39,29 @@ fn main() {
     };
     limits::write_machine(&ceiling).expect("could not write the ceiling");
 
-    let opening = "Call the tool that reports every worker in the fleet. \
-                   Then say DONE and stop. Do not use any other tool, \
-                   do not read any file, and do not explain yourself.";
-    let spec = chief::spec(None, opening, &project);
+    // A file the chief has no business being able to read: it is outside the
+    // directory it starts in, which is exactly what pinned the first live one.
+    let outside = std::env::temp_dir().join(format!("sightline-outside-{stamp}"));
+    std::fs::create_dir_all(&outside).unwrap();
+    let marker = outside.join("marker.txt");
+    std::fs::write(&marker, "REACHED\n").unwrap();
+
+    // The two facts are chained on purpose, so one short turn proves both: the
+    // fleet call cannot happen unless the read outside the project did.
+    let opening = format!(
+        "Run this shell command: cat {}\n\
+         If it prints REACHED, call the tool that reports every worker in the \
+         fleet, then say DONE. If it does not, call no tool at all and say \
+         BLOCKED. Do not use any other tool and do not explain yourself.",
+        marker.display()
+    );
+    let spec = chief::spec(None, &opening, &project);
 
     // Say what is about to be true, so a failure names itself rather than
     // arriving as a timeout with no explanation.
     let argv = owned::argv(&spec);
     println!("project  {}", project.display());
+    println!("outside  {}", marker.display());
     println!("flags    {}\n", argv.join(" "));
 
     let started = match owned::start("claude", &project, &spec, Duration::from_secs(5)) {
@@ -96,7 +110,18 @@ fn main() {
     // called Read instead has proved only that it can read, which was never in
     // doubt and is not what supervision is.
     if called.iter().any(|t| t.contains("fleet")) {
-        println!("\nthe chief reached the kernel. Supervision is attached.");
+        println!(
+            "\nthe chief reached the kernel, having first read a file outside the \
+             folder it started in. Supervision is attached."
+        );
+        // Stated as two observations rather than one causal claim, because the
+        // causal claim was tested and is false: with `reach` removed the read
+        // outside the project still succeeded. What had stopped the first live
+        // chief was not directory confinement — it was having no policy, so
+        // `--permission-prompt-tool` was never passed, and a headless session
+        // that cannot be asked refuses every call it was not granted. Bash was
+        // never granted. The chief inferred a sandbox from the refusals and
+        // reported itself confined to one folder; it was refused everywhere.
     } else {
         println!(
             "\nthe chief never reached the kernel — this is the shipped defect, \
