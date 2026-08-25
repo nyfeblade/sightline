@@ -466,6 +466,21 @@ fn cursor_argv(spec: &Spec) -> Vec<String> {
         "--output-format".into(),
         "stream-json".into(),
         "--trust".into(),
+        // `--force` is the opposite of what it sounds like here, and that is
+        // worth stating because it looks exactly like the flag somebody turns a
+        // safety off with.
+        //
+        // Cursor has its own approval layer, which asks a person. Headless there
+        // is no person, so it refuses — everything, including Sightline's own
+        // kernel tools: a Cursor worker calling `note` came back "User rejected
+        // MCP", with nobody having rejected anything.
+        //
+        // This turns that layer off. What remains is `.cursor/hooks.json`,
+        // written into the worktree before the session starts, routing every
+        // call to `gate::decide`. So it is not removing a boundary, it is
+        // removing the second one — and two boundaries, where one is blind and
+        // answers no to everything, is worse than one that can actually decide.
+        "--force".into(),
     ];
     if let Some(m) = &spec.model {
         v.push("--model".into());

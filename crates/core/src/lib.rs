@@ -28,6 +28,7 @@ pub mod host;
 pub mod kernel;
 pub mod ladder;
 pub mod limits;
+pub mod mcp;
 pub mod notify;
 pub mod owned;
 pub mod pricing;

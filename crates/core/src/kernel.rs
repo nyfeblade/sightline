@@ -23,6 +23,48 @@ use serde_json::{Value, json};
 /// moments later either way.
 const SETTLE: std::time::Duration = std::time::Duration::from_millis(1500);
 
+/// Which tools a session is offered, by what it is.
+///
+/// One list was wrong, and wrong in both directions at once. A worker was given
+/// none — so `claim`, whose own description reads "say the work you were
+/// assigned is finished", could be called by nobody who had ever been assigned
+/// anything, and the ladder had no entrance from the session doing the work. A
+/// chief was given all four, including a `claim` for work it does not do.
+///
+/// The split is not a preference. A worker that could `assign` would start
+/// workers of its own, and Sightline's tree stays one deep so that the ceiling
+/// means something — a fleet counting only the sessions it knows about is not a
+/// ceiling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    /// Decides what work exists and who does it.
+    Chief,
+    /// Does one assignment, and says when it thinks it is finished.
+    Worker,
+}
+
+impl Role {
+    fn allows(self, tool: &str) -> bool {
+        match self {
+            Role::Chief => matches!(tool, "assign" | "fleet" | "tell"),
+            Role::Worker => matches!(tool, "claim" | "note"),
+        }
+    }
+}
+
+/// The tools for a role, as the session is told about them.
+pub fn schemas_for(role: Role) -> Vec<Value> {
+    schemas()
+        .into_iter()
+        .filter(|t| {
+            t.get("name")
+                .and_then(Value::as_str)
+                .map(|n| role.allows(n))
+                .unwrap_or(false)
+        })
+        .collect()
+}
+
 /// The tools, as the session is told about them.
 pub fn schemas() -> Vec<Value> {
     vec![
@@ -88,6 +130,21 @@ pub fn schemas() -> Vec<Value> {
             },
         }),
         json!({
+            "name": "note",
+            "description": "Write something down against your assignment — a thing \
+                            you learned, a decision you made, or why you did not do \
+                            the obvious thing. The session ends; the task record \
+                            outlives it, and this is the only part of what you know \
+                            that anybody will still have tomorrow.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "what was learned"},
+                },
+                "required": ["text"],
+            },
+        }),
+        json!({
             "name": "tell",
             "description": "Say something to a worker you started — an answer, a \
                             correction, or more of the task.",
@@ -119,6 +176,7 @@ pub fn call(session: &str, name: &str, args: &Value) -> Result<String, String> {
         "fleet" => Ok(fleet()),
         "tell" => tell(args),
         "claim" => claim(session, args),
+        "note" => note(session, args),
         other => Err(format!("{other} is not one of Sightline's tools")),
     }
 }
@@ -216,6 +274,7 @@ fn assign(asked_by: &str, args: &Value) -> Result<String, String> {
         std::fs::write(dir.join("hooks.json"), crate::hook::config(&me))
             .map_err(|e| format!("could not put the boundary in place: {e}"))?;
     }
+    let me = std::env::current_exe().map_err(|e| e.to_string())?;
 
     let policy = Policy::confined_to(&root);
     // The door, which is where the count ceiling belongs: this is the one moment
@@ -267,6 +326,15 @@ fn assign(asked_by: &str, args: &Value) -> Result<String, String> {
     let started = owned::start(agent.program(), &root, &spec, SETTLE)?;
     let mut store = crate::work::Store::load(crate::work::path_in(&crate::app::data_dir()));
     let id = store.assign(&started.name, task);
+    // Its own tools, now that it has a name to be attributed by. A worker gets
+    // `claim` and `note` and not `assign`: one that could assign would start
+    // workers of its own, and a ceiling that counts only the sessions it knows
+    // about is not a ceiling.
+    if wanted == "cursor" {
+        let dir = root.join(".cursor");
+        let _ = std::fs::write(dir.join("mcp.json"), crate::mcp::config(&me, &started.name));
+    }
+
     // How it was routed, at the only moment anybody knows.
     store.attribute(
         &id,
@@ -578,9 +646,35 @@ mod vendor_tests {
             "Cursor has no such flag and will not start with it: {cursor:?}"
         );
         assert!(
+            cursor.iter().any(|a| a == "--force"),
+            "without it Cursor's own approval layer refuses every call, including \
+             Sightline's kernel tools, with nobody having refused anything: {cursor:?}"
+        );
+        assert!(
             cursor.iter().any(|a| a == "--trust"),
             "without it the session stops on a trust prompt nothing can answer: {cursor:?}"
         );
         assert!(cursor.iter().any(|a| a == "stream-json"));
     }
+}
+
+/// Leave something behind for whoever reads the task next.
+///
+/// A session's knowledge dies with it. The task record does not, and a note is
+/// the only channel between a worker that learned something at three in the
+/// afternoon and whoever picks the work up afterwards.
+fn note(session: &str, args: &Value) -> Result<String, String> {
+    let text = args
+        .get("text")
+        .and_then(Value::as_str)
+        .ok_or("note needs something to write down")?;
+    let path = crate::work::path_in(&crate::app::data_dir());
+    let mut store = crate::work::Store::load(path);
+    let id = store
+        .task_for(session)
+        .map(|t| t.id.clone())
+        .ok_or("this session has no assignment to write against")?;
+    store.note(&id, text)?;
+    store.flush();
+    Ok(format!("written against {id}"))
 }

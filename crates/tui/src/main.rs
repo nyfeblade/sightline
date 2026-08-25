@@ -1011,6 +1011,40 @@ fn main() -> Result<()> {
     // The boundary, reached the way Cursor reaches one: a call on stdin, a
     // decision on stdout. Not a command anybody types — Cursor spawns it, once
     // per tool call — so it says nothing, reads nothing else, and answers.
+    // The tools, over JSON-RPC on stdin and stdout, for an agent that reaches an
+    // MCP server the ordinary way. Spawned by the agent, one line in and one
+    // line out; it says nothing else, because anything else on this stream is a
+    // protocol error to whoever is reading it.
+    if args.first().map(String::as_str) == Some("mcp") {
+        use std::io::{BufRead, Write};
+        let session = args
+            .iter()
+            .position(|a| a == "--as")
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+            .unwrap_or_default();
+        // A worker unless told otherwise. Erring the other way would hand
+        // `assign` to a session that should not have it, and the ceiling stops
+        // meaning anything.
+        let role = if args.iter().any(|a| a == "--chief") {
+            sightline_core::kernel::Role::Chief
+        } else {
+            sightline_core::kernel::Role::Worker
+        };
+        let stdin = std::io::stdin();
+        let mut out = std::io::stdout();
+        for line in stdin.lock().lines().map_while(Result::ok) {
+            if line.trim().is_empty() {
+                continue;
+            }
+            if let Some(reply) = sightline_core::mcp::respond(&line, &session, role) {
+                writeln!(out, "{reply}")?;
+                out.flush()?;
+            }
+        }
+        return Ok(());
+    }
+
     if args.first().map(String::as_str) == Some("hook") {
         use std::io::Read;
         let mut request = String::new();
