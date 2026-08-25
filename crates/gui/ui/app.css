@@ -2654,3 +2654,164 @@ main {
 /* The edge fade belongs to the window's chrome, not to a panel with its own
    corners — inside a rounded pane it reads as the content going out of focus. */
 .pane, #rail { -webkit-mask-image: none; mask-image: none; }
+
+/* ══ optical glass ══════════════════════════════════════════════════════════
+   The panels had elevation and no light on them. What is missing from a flat
+   translucent fill is what happens at its edges and inside its corners — glass
+   is mostly visible where it bends light, and a border of one flat grey bends
+   nothing.
+
+   The border is a gradient: bright where the light comes from at the top-left,
+   through the accent as it turns the corner, to nearly nothing at the far edge.
+   CSS cannot put a gradient in `border-color`, so the panel carries two
+   backgrounds — the fill clipped to the padding box, the gradient clipped to
+   the border box — with a transparent border for the second to show through. */
+#rail, .rail.detail, .middle {
+  border: 1px solid transparent !important;
+  background:
+    linear-gradient(rgba(16, 18, 24, .65), rgba(16, 18, 24, .65)) padding-box,
+    linear-gradient(135deg,
+      rgba(255, 255, 255, .30) 0%,
+      rgba(0, 122, 255, .20) 48%,
+      rgba(255, 255, 255, .03) 100%) border-box !important;
+  backdrop-filter: blur(28px) saturate(200%);
+  -webkit-backdrop-filter: blur(28px) saturate(200%);
+  /* Light along the top and down the left, where it would fall; and a cool
+     bounce off the inside of the bottom face, which is the part that makes a
+     translucent solid look like it has an interior rather than a back. */
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, .25),
+    inset 1px 0 0 0 rgba(255, 255, 255, .15),
+    inset 0 -20px 40px -10px rgba(0, 122, 255, .06);
+}
+/* The reading pane sits highest, so it catches a little more of everything. */
+.middle {
+  background:
+    linear-gradient(rgba(20, 22, 29, .62), rgba(20, 22, 29, .62)) padding-box,
+    linear-gradient(135deg,
+      rgba(255, 255, 255, .34) 0%,
+      rgba(0, 122, 255, .22) 48%,
+      rgba(255, 255, 255, .04) 100%) border-box !important;
+}
+
+/* The prompt is the one thing here you act with, so it is the one thing lit
+   from its own edge rather than by the room. */
+.composer {
+  border: 1px solid rgba(0, 122, 255, .30) !important;
+  background-color: rgba(20, 22, 29, .80) !important;
+  box-shadow:
+    0 0 20px rgba(0, 122, 255, .12),
+    inset 0 1px 0 rgba(255, 255, 255, .20);
+}
+.composer:focus-within {
+  border-color: rgba(0, 122, 255, .55) !important;
+  box-shadow:
+    0 0 28px rgba(0, 122, 255, .22),
+    inset 0 1px 0 rgba(255, 255, 255, .24);
+}
+
+/* The gradient border, actually confined to the border.
+
+   The two-background trick only works when the padding-box fill is opaque: it
+   hides the border-box gradient everywhere except the 1px ring. These fills are
+   translucent on purpose, so the gradient came through the whole panel as one
+   long diagonal streak — the fill was never covering it.
+
+   A ring drawn as its own layer instead: a one-pixel frame filled with the
+   gradient, with the middle masked out. `mask-composite: exclude` subtracts the
+   content box from the padding box, and a pixel of padding is what is left. */
+#rail, .rail.detail, .middle {
+  position: relative;
+  border: 0 !important;
+  background: rgba(16, 18, 24, .65) !important;
+}
+.middle { background: rgba(20, 22, 29, .62) !important; }
+
+#rail::before, .rail.detail::before, .middle::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  background: linear-gradient(135deg,
+    rgba(255, 255, 255, .30) 0%,
+    rgba(0, 122, 255, .20) 48%,
+    rgba(255, 255, 255, .03) 100%);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+}
+
+/* ── the edge, as an edge ───────────────────────────────────────────────────
+   A pane of glass is a solid seen side-on, and the thing that says so is the
+   edge having thickness. Three parts, and it needs all three:
+
+     the face     a bright specular line where the light lands, top and left
+     the wall     a dark line immediately inside it — the depth of the pane
+     dispersion   the face is not one colour: glass splits light along an edge,
+                  so it runs white → cool → accent → violet → nothing
+
+   A single flat 1px line has none of that, which is why it reads as a drawn
+   outline rather than as something with a side to it. */
+#rail::before, .rail.detail::before, .middle::before {
+  background: linear-gradient(135deg,
+    rgba(255, 255, 255, .55) 0%,
+    rgba(186, 222, 255, .34) 20%,
+    rgba(0, 122, 255, .28) 48%,
+    rgba(146, 120, 255, .16) 72%,
+    rgba(255, 255, 255, .04) 100%);
+}
+
+#rail, .rail.detail, .middle {
+  box-shadow:
+    /* the lit faces */
+    inset 0 1px 0 0 rgba(255, 255, 255, .22),
+    inset 1px 0 0 0 rgba(255, 255, 255, .10),
+    /* and the walls behind them, which is what gives the edge a thickness
+       rather than a colour */
+    inset 0 -1px 0 0 rgba(0, 0, 0, .55),
+    inset -1px 0 0 0 rgba(0, 0, 0, .38),
+    /* light that got in, bouncing off the inside of the far face */
+    inset 0 -26px 46px -16px rgba(0, 122, 255, .08);
+}
+
+/* The prompt is a smaller pane of the same material, so it is made the same
+   way — an edge with a lit face and a wall, not a coloured outline. */
+.composer {
+  position: relative;
+  border: 0 !important;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, .20),
+    inset 0 -1px 0 0 rgba(0, 0, 0, .5),
+    0 0 22px rgba(0, 122, 255, .13);
+}
+.composer::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  background: linear-gradient(135deg,
+    rgba(255, 255, 255, .5) 0%,
+    rgba(0, 122, 255, .45) 55%,
+    rgba(0, 122, 255, .18) 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+}
+.composer:focus-within::before {
+  background: linear-gradient(135deg,
+    rgba(255, 255, 255, .7) 0%,
+    rgba(0, 122, 255, .75) 55%,
+    rgba(0, 122, 255, .3) 100%);
+}
