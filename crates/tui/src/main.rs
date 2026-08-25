@@ -971,7 +971,7 @@ fn main() -> Result<()> {
             .find(|s| s.title == who || s.id == who || s.id.starts_with(&who))
             .map(|s| s.id.clone())
             .unwrap_or(who.clone());
-        let chart = app.work.chart(&id);
+        let chart = app.mission(&id);
         if chart.nodes.is_empty() {
             anyhow::bail!("{who} has no work of its own on record");
         }
@@ -979,12 +979,25 @@ fn main() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&chart)?);
             return Ok(());
         }
-        println!("{}\n", chart.intent);
+        // The first line only. `intent` is the whole paragraph a person
+        // handed over, which in a terminal is a wall in front of the tree it
+        // is supposed to introduce.
+        println!("{}\n", chart.intent.lines().next().unwrap_or("").trim());
         for node in &chart.nodes {
             let indent = "  ".repeat(node.depth);
             let what = node.assignment.replace("supervise:", "").trim().to_string();
             let what: String = what.chars().take(64).collect();
-            println!("{indent}{:<12} {:<10} {what}", node.session, node.state);
+            // A subagent is marked, because it is not the same kind of thing
+            // as a worker: not counted against the ceiling, not confined by a
+            // policy of its own, and gone when its parent's turn ends.
+            let name: String = if node.inner {
+                format!("· {}", node.name)
+            } else if node.name.is_empty() {
+                node.session.chars().take(14).collect()
+            } else {
+                node.name.clone()
+            };
+            println!("{indent}{name:<18} {:<10} {what}", node.state);
         }
         println!("\n{} finished · {} open", chart.done, chart.open);
         return Ok(());

@@ -3189,3 +3189,17 @@ html[data-mood="needs"] .rail-group {
   font-size: 10.5px;
   white-space: nowrap;
 }
+
+/* A subagent is not a session. Smaller, dashed, and never coloured by state —
+   it is not counted against the ceiling, not confined by a policy of its own,
+   and gone when its parent's turn ends. Drawing it like a worker would say it
+   is one. */
+.chart .node.is-inner .node-box {
+  fill: rgba(255, 255, 255, .018);
+  stroke: rgba(255, 255, 255, .1);
+  stroke-dasharray: 3 3;
+}
+.chart .node.is-inner .node-name { fill: var(--tertiary); font-size: 11px; }
+.chart .node.is-inner .node-state,
+.chart .node.is-inner .node-mark { fill: var(--quaternary); }
+.chart .wire.is-inner { stroke-dasharray: 3 3; }

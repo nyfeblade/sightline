@@ -976,6 +976,16 @@ mod tests {
 pub struct Node {
     pub task: String,
     pub session: String,
+    /// What to call it on screen.
+    ///
+    /// A session id is a uuid, which is thirty-six characters of nothing a
+    /// person can read and does not fit in a node. Filled in by whoever knows
+    /// the session — the store does not.
+    #[serde(default)]
+    pub name: String,
+    /// A subagent inside a session rather than a session of its own.
+    #[serde(default)]
+    pub inner: bool,
     /// How deep below the chief. The chief itself is 0.
     pub depth: usize,
     pub assignment: String,
@@ -1049,6 +1059,8 @@ impl Store {
                 nodes.push(Node {
                     task: task.id.clone(),
                     session: task.session.clone(),
+                    name: String::new(),
+                    inner: false,
                     depth,
                     assignment: task.assignment.clone(),
                     state: task.state.label().to_string(),
@@ -1069,6 +1081,8 @@ impl Store {
                 nodes.push(Node {
                     task: String::new(),
                     session: session.clone(),
+                    name: String::new(),
+                    inner: false,
                     depth: 0,
                     assignment: String::new(),
                     state: "supervising".to_string(),

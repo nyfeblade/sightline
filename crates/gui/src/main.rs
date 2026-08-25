@@ -1013,7 +1013,7 @@ fn revert(shared: State<Shared>, id: String, path: String) -> Result<String, Str
 #[tauri::command]
 fn mission(shared: State<Shared>, id: String) -> Result<serde_json::Value, String> {
     shared.raw(|app| {
-        let chart = app.work.chart(&id);
+        let chart = app.mission(&id);
         serde_json::to_value(chart).map_err(|e| e.to_string())
     })
 }

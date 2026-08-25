@@ -1774,6 +1774,24 @@ function closePalette() {
 // have to be fetched from somewhere the policy forbids.
 const NODE = { w: 172, h: 62, gapX: 18, gapY: 54, pad: 12 };
 
+
+/// The part of an assignment that distinguishes it from the others.
+///
+/// Every assignment a chief writes for a worktree opens the same way — "Work in
+/// /home/nyfe/adaudit-wt-replay, a git worktree of adaudit on branch …" — so
+/// truncating at the front produced three nodes that all read "Work in
+/// /home/nyfe/adaudi…" and told you nothing. The opening clause is where the
+/// work is not.
+function shortAssignment(text) {
+  let words = (text || "").replace(/^supervise:\s*/i, "").trim();
+  // Drop a leading "Work in <path>[, a git worktree …]." clause, and any
+  // sentence that is only about where rather than what.
+  words = words.replace(/^work in\s+\S+(,[^.]*)?\.\s*/i, "");
+  words = words.replace(/^in the [^,]+ repository,?\s*/i, "");
+  const cut = 34;
+  return words.length > cut ? `${words.slice(0, cut - 1)}…` : words || "—";
+}
+
 function missionChart(chart) {
   // Laid out bottom-up rather than by centring each row.
   //
@@ -1868,20 +1886,32 @@ function missionChart(chart) {
   }
 
   for (const { x, y, node } of at.values()) {
-    const g = el2("g", { class: `node is-${node.state.replace(/\s+/g, "-")}`, transform: `translate(${x} ${y})` });
+    const g = el2("g", {
+      class: `node is-${node.state.replace(/\s+/g, "-")}${node.inner ? " is-inner" : ""}`,
+      transform: `translate(${x} ${y})`,
+    });
     g.append(el2("rect", { width: NODE.w, height: NODE.h, rx: 8, class: "node-box" }));
     const name = el2("text", { x: 11, y: 21, class: "node-name" });
-    name.textContent = node.depth === 0 ? "chief" : node.session;
+    // Never the raw session id. A uuid is thirty-six characters of nothing a
+    // person can read, it does not fit the box, and three of them side by side
+    // are indistinguishable — which is what the diagram looked like the first
+    // time it drew a real project.
+    const called = node.depth === 0 ? "chief" : node.name || node.session.slice(0, 8);
+    // A session's title is written by whoever named it and can be a sentence.
+    // The box is 172px; anything past about twenty characters leaves it and
+    // lands on the node beside it.
+    name.textContent = called.length > 20 ? `${called.slice(0, 19)}…` : called;
     g.append(name);
     const state = el2("text", { x: NODE.w - 11, y: 21, class: "node-state", "text-anchor": "end" });
     state.textContent = node.state;
     g.append(state);
     const what = el2("text", { x: 11, y: 40, class: "node-what" });
-    const words = node.assignment.replace(/^supervise:\s*/, "");
-    what.textContent = words.length > 26 ? `${words.slice(0, 25)}…` : words;
+    what.textContent = shortAssignment(node.assignment);
     g.append(what);
     const mark = el2("text", { x: 11, y: 54, class: "node-mark" });
-    mark.textContent = node.proven
+    mark.textContent = node.inner
+      ? "subagent · inside its session"
+      : node.proven
       ? `${node.proven} of ${node.refutes} refutations have fired`
       : node.refutes
         ? `${node.refutes} refutation${node.refutes === 1 ? "" : "s"}, none seen to fire`

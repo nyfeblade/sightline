@@ -2002,6 +2002,68 @@ impl App {
         Ok(id)
     }
 
+    /// A supervised project, with the sessions named and their subagents in it.
+    ///
+    /// The work store knows who assigned what and nothing about what a session
+    /// is called or what it launched inside itself. Both of those live here, and
+    /// a diagram without them is a row of uuids that all say the same thing.
+    ///
+    /// Subagents are the layer that was missing. A worker cannot start another
+    /// worker — Sightline's tree is deliberately one deep — but a worker is a
+    /// Claude Code session and can use its own Agent tool freely, and those do
+    /// the bulk of the work in a large task. Sightline already watches for them
+    /// and shows them in their own view; leaving them out of the diagram meant
+    /// the picture of how work was distributed omitted most of the distribution.
+    ///
+    /// They are marked `inner`, because they are not the same kind of thing: not
+    /// counted against the ceiling, not confined by a policy of their own, and
+    /// gone when their parent's turn ends.
+    pub fn mission(&self, chief: &str) -> work::Chart {
+        let mut chart = self.work.chart(chief);
+        let name_of = |id: &str| {
+            self.sessions
+                .iter()
+                .find(|s| s.id == id)
+                .map(|s| s.title.clone())
+                .filter(|t| !t.is_empty())
+                .unwrap_or_else(|| id.chars().take(8).collect())
+        };
+        for node in &mut chart.nodes {
+            node.name = name_of(&node.session);
+        }
+
+        let mut inner: Vec<work::Node> = Vec::new();
+        for node in &chart.nodes {
+            let Some(session) = self.sessions.iter().find(|s| s.id == node.session) else {
+                continue;
+            };
+            for (i, run) in session.agents.iter().enumerate() {
+                inner.push(work::Node {
+                    // Unique, and not a task id: these are not tasks and must
+                    // not collide with one.
+                    task: format!("agent:{}:{i}", node.session),
+                    session: node.session.clone(),
+                    name: if run.kind.is_empty() {
+                        "subagent".into()
+                    } else {
+                        run.kind.clone()
+                    },
+                    inner: true,
+                    depth: node.depth + 1,
+                    assignment: run.description.clone(),
+                    state: run.status.clone(),
+                    open: run.finished.is_none(),
+                    notes: 0,
+                    refutes: 0,
+                    proven: 0,
+                    from: Some(node.session.clone()),
+                });
+            }
+        }
+        chart.nodes.extend(inner);
+        chart
+    }
+
     /// Move the selected session up or down the list, and remember it.
     pub fn move_session(&mut self, delta: isize) {
         let Some(id) = self.current().map(|s| s.id.clone()) else {
