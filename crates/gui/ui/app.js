@@ -1775,28 +1775,48 @@ function closePalette() {
 const NODE = { w: 172, h: 62, gapX: 18, gapY: 54, pad: 12 };
 
 function missionChart(chart) {
-  const byDepth = new Map();
+  // Laid out bottom-up rather than by centring each row.
+  //
+  // Centring rows is one line of arithmetic and it is wrong in the way that
+  // matters here: a lone grandchild lands in the middle of the diagram, under
+  // whichever of its aunts happens to sit there, and a picture whose whole job
+  // is showing who assigned what then shows the wrong parent. Leaves take the
+  // next free column, and every parent sits at the mean of its children — so a
+  // node is always above its own work.
+  const kids = new Map();
   for (const n of chart.nodes) {
-    if (!byDepth.has(n.depth)) byDepth.set(n.depth, []);
-    byDepth.get(n.depth).push(n);
+    const from = n.from ? chart.nodes.find((p) => p.session === n.from) : null;
+    const key = from ? from.task : "";
+    if (!kids.has(key)) kids.set(key, []);
+    if (from) kids.get(key).push(n);
   }
-  const depths = [...byDepth.keys()].sort((a, b) => a - b);
-  const widest = Math.max(...depths.map((d) => byDepth.get(d).length), 1);
-  const width = widest * NODE.w + (widest - 1) * NODE.gapX + NODE.pad * 2;
-  const height = depths.length * NODE.h + (depths.length - 1) * NODE.gapY + NODE.pad * 2;
+  const roots = chart.nodes.filter((n) => !n.from || !chart.nodes.some((p) => p.session === n.from));
 
+  let column = 0;
   const at = new Map();
-  for (const d of depths) {
-    const row = byDepth.get(d);
-    const rowWidth = row.length * NODE.w + (row.length - 1) * NODE.gapX;
-    const left = (width - rowWidth) / 2;
-    row.forEach((n, i) => {
-      at.set(n.task, {
-        x: left + i * (NODE.w + NODE.gapX),
-        y: NODE.pad + d * (NODE.h + NODE.gapY),
-        node: n,
-      });
-    });
+  const place = (node) => {
+    const mine = kids.get(node.task) || [];
+    if (!mine.length) {
+      at.set(node.task, { col: column++, node });
+      return at.get(node.task).col;
+    }
+    const cols = mine.map(place);
+    const mid = (Math.min(...cols) + Math.max(...cols)) / 2;
+    at.set(node.task, { col: mid, node });
+    return mid;
+  };
+  for (const root of roots) place(root);
+
+  const cols = [...at.values()].map((v) => v.col);
+  const span = Math.max(...cols) - Math.min(...cols);
+  const left0 = Math.min(...cols);
+  const depths = Math.max(...chart.nodes.map((n) => n.depth)) + 1;
+  const width = (span + 1) * NODE.w + span * NODE.gapX + NODE.pad * 2;
+  const height = depths * NODE.h + (depths - 1) * NODE.gapY + NODE.pad * 2;
+
+  for (const v of at.values()) {
+    v.x = NODE.pad + (v.col - left0) * (NODE.w + NODE.gapX);
+    v.y = NODE.pad + v.node.depth * (NODE.h + NODE.gapY);
   }
 
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
