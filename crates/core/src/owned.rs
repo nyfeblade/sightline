@@ -269,6 +269,68 @@ fn value_text(v: &Value) -> String {
     }
 }
 
+/// `PATH` for a session Sightline starts, with Sightline on it.
+///
+/// The chief's brief tells it to run `sightline check`, because that is the one
+/// step that turns a worker's claim into a verdict. Nothing made that command
+/// reachable: this module's own documentation described "a session with
+/// `sightline` on its path" and no code put it there. A live chief ran
+/// `which sightline`, got nothing, and reported — correctly — that it could not
+/// verify any work.
+///
+/// The directory taken is the one this executable is in, so a session is handed
+/// the same Sightline that started it rather than whichever one happens to be
+/// installed. Prepended, never replacing: everything the machine already
+/// provides stays provided.
+fn path_with_sightline() -> std::ffi::OsString {
+    let existing = std::env::var_os("PATH").unwrap_or_default();
+    let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf))
+    else {
+        return existing;
+    };
+    // `join_paths` rather than a literal separator: it is ';' on Windows and
+    // ':' everywhere else, and this file is cross-checked against Windows.
+    let mut entries = vec![dir];
+    entries.extend(std::env::split_paths(&existing));
+    std::env::join_paths(entries).unwrap_or(existing)
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::path_with_sightline;
+
+    #[test]
+    fn a_session_is_handed_the_sightline_that_started_it() {
+        let path = path_with_sightline();
+        let text = path.to_string_lossy().into_owned();
+        let here = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+
+        assert!(
+            text.starts_with(&here),
+            "the running executable's own directory has to come first, or a \
+             different Sightline answers: {text}"
+        );
+        // Prepended, not replacing. A session that lost the machine's PATH
+        // would fail on `git`, which is most of what it does.
+        if let Some(existing) = std::env::var_os("PATH") {
+            let existing = existing.to_string_lossy().into_owned();
+            if !existing.is_empty() {
+                assert!(
+                    text.ends_with(&existing),
+                    "everything the machine already provides stays provided"
+                );
+            }
+        }
+    }
+}
+
 /// The command line that starts an owned session.
 ///
 /// Kept in one place because it is the whole contract with Claude Code: change
@@ -753,6 +815,7 @@ impl OwnedSession {
         let mut child = Command::new(program)
             .args(argv(spec))
             .current_dir(cwd)
+            .env("PATH", path_with_sightline())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(match stderr {

@@ -15,8 +15,7 @@
 //!     SIGHTLINE_DATA_DIR=/tmp/some-scratch \
 //!       cargo run -p sightline-core --example chief_live
 
-use sightline_core::gate::Policy;
-use sightline_core::owned::{self, Spec};
+use sightline_core::owned;
 use sightline_core::{brief, chief, limits, work};
 use std::time::{Duration, Instant};
 
@@ -76,21 +75,9 @@ fn main() {
         &work::Store::default(),
     );
 
-    let mut policy = Policy::confined_to(&project);
-    policy.ceilings = true;
-    let spec = Spec {
-        model: None,
-        // Nothing pre-approved: every call is a question, and the kernel is
-        // what answers it.
-        mode: None,
-        allow: Vec::new(),
-        // A chief does not write code. Denied at the agent, not asked for.
-        deny: chief::DENIED.iter().map(|s| s.to_string()).collect(),
-        opening: Some(opening),
-        policy: Some(policy),
-        // The whole point: it can ask for a worker, and cannot start one.
-        kernel_tools: true,
-    };
+    // The same definition the front ends start, on purpose: an example that
+    // proves a configuration nobody ships proves nothing about the product.
+    let spec = chief::spec(None, &opening, &project);
 
     let started = match owned::start("claude", &project, &spec, Duration::from_secs(5)) {
         Ok(s) => s,

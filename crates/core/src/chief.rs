@@ -37,25 +37,49 @@ use crate::work;
 /// guarantee.
 pub const DENIED: &[&str] = &["Write", "Edit", "NotebookEdit"];
 
-/// What a chief is granted without being asked.
+/// What a chief is, in one place.
 ///
-/// Not a sandbox — an allow list grants and does not restrict. It is here
-/// because a headless session cannot be asked anything, so a command the
-/// machine's own settings do not already cover is refused outright. The first
-/// live chief could not run a single `sightline` command for exactly this
-/// reason, and correctly reported itself blocked rather than working around it.
-/// These are the commands the job is made of.
-pub const GRANTED: &[&str] = &["Read", "Grep", "Glob"];
-
-/// What a chief is *not* granted, and why the list above is now short.
+/// This function exists because both front ends used to build this themselves,
+/// and both built the same three things wrong: no kernel tools, so the chief
+/// could not ask for a worker; no policy, so no `--permission-prompt-tool` and
+/// therefore no boundary at all; and a grant list, which would have been a hole
+/// in that boundary had there been one. A live chief run against a real
+/// codebase got as far as reading it, writing the assignments, and reporting
+/// that the mechanism to dispatch them did not exist. It was right.
 ///
-/// A chief used to be given `Bash(sightline:*)`, because the way it started a
-/// worker was to run a command. That is no longer how it works — it asks the
-/// kernel — and the grants had to go with it for a reason worth stating: a
-/// granted tool does not prompt, and a call that does not prompt never reaches
-/// the permission boundary. Every entry here was a hole in the thing the chief
-/// is supervised by. See `owned::argv`.
-const _: () = ();
+/// The configuration below is not new. It is what `examples/chief_live.rs`
+/// already used — the one that was run end to end and came back with the right
+/// answer — so what ships and what was proved are now the same code rather than
+/// two descriptions of it that drifted.
+///
+/// Three properties, each of which was individually absent:
+///
+/// - `kernel_tools`, which is the whole of a supervisor. Without it a chief has
+///   a brief describing tools it does not have.
+/// - a `policy`, which is what routes every call to `gate::decide`. A chief
+///   without one is not supervised by anything.
+/// - an empty `allow`, because a granted tool does not prompt and what does not
+///   prompt never reaches the gate. With a policy attached, `owned::argv` drops
+///   grants anyway; leaving them here would only mislead the next reader.
+pub fn spec(model: Option<&str>, opening: &str, project: &std::path::Path) -> crate::owned::Spec {
+    let mut policy = crate::gate::Policy::confined_to(project);
+    // A supervisor is the one session that must not be able to talk its way
+    // past the fleet's size and spend, since it is the one asking for more.
+    policy.ceilings = true;
+    crate::owned::Spec {
+        model: model.map(str::to_string),
+        // Nothing pre-approved: every call is a question, and the kernel
+        // answers it.
+        mode: None,
+        allow: Vec::new(),
+        // A chief does not write code. Denied at the agent, not asked for.
+        deny: DENIED.iter().map(|s| s.to_string()).collect(),
+        opening: Some(opening.to_string()),
+        policy: Some(policy),
+        // The whole point: it can ask for a worker, and cannot start one.
+        kernel_tools: true,
+    }
+}
 
 /// What the chief is told when it starts.
 ///
@@ -342,22 +366,56 @@ mod tests {
     }
 
     #[test]
-    fn nothing_the_chief_is_granted_can_bypass_the_boundary() {
-        // This test used to assert the opposite: that `Bash(sightline:*)` was
-        // granted, because running a command was how a chief started a worker.
-        // It asks the kernel now, and the grant had to go — a granted tool does
-        // not prompt, and a call that does not prompt never reaches the gate.
+    fn a_chief_is_born_able_to_act_and_supervised_while_it_does() {
+        // Each assertion here is a thing that was actually false in the shipped
+        // binary while this module's prose described it as true. A live chief
+        // read its brief, went looking for the tools the brief promised, found
+        // none, and reported the mission undispatchable. Assert the properties
+        // that failed, not the shape of the struct.
+        let dir = std::env::temp_dir();
+        let spec = spec(None, "the brief", &dir);
+
         assert!(
-            !GRANTED.iter().any(|g| g.starts_with("Bash")),
-            "a Bash grant is a hole in the boundary the chief is supervised by"
+            spec.kernel_tools,
+            "a supervisor that cannot ask for a worker is not a supervisor"
+        );
+        let policy = spec
+            .policy
+            .as_ref()
+            .expect("without a policy no call reaches gate::decide, so nothing is supervised");
+        assert!(
+            policy.ceilings,
+            "the one session that asks for more sessions is the one that must not raise the ceiling"
         );
         assert!(
-            GRANTED.iter().any(|g| *g == "Read"),
-            "reading the code it is supervising is half the job"
+            spec.allow.is_empty(),
+            "a granted tool does not prompt, and what does not prompt never reaches the gate"
+        );
+        for denied in DENIED {
+            assert!(
+                spec.deny.iter().any(|d| d == denied),
+                "{denied} must be refused at the agent, not asked for in prose"
+            );
+        }
+        assert!(
+            spec.mode.is_none(),
+            "a permission mode approves calls before Sightline is asked about them"
+        );
+
+        // And the flags that carry all of it. The struct being right is worth
+        // nothing if the command line does not say so.
+        let argv = crate::owned::argv(&spec);
+        assert!(
+            argv.iter().any(|a| a == "--permission-prompt-tool"),
+            "the boundary is this flag; without it the policy above is decoration"
         );
         assert!(
-            !GRANTED.iter().any(|g| DENIED.contains(g)),
-            "nothing is granted and denied at once"
+            argv.iter().any(|a| a == "--mcp-config"),
+            "the kernel's own tools are callable only when the server is declared"
+        );
+        assert!(
+            !argv.iter().any(|a| a == "--allowedTools"),
+            "a grant on the command line is a hole in the boundary, silently"
         );
     }
 

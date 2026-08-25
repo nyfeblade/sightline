@@ -93,3 +93,8 @@ refute = "! grep -q 'deny_unknown_fields' crates/core/src/owned.rs"
 name   = "the front ends share one engine"
 must   = "Neither front end grows logic the other needs. Sending, answering, starting, reopening: one implementation in core, two callers."
 refute = "grep -rlq 'fn pending_approval' crates/tui/src crates/gui/src"
+
+[[invariant]]
+name   = "there is one definition of what a chief is"
+must   = "Both front ends start a chief through chief::spec. Each used to build owned::Spec itself, and both drifted from the one configuration that had been proved live — losing the kernel tools, the policy, and therefore the whole of supervision, silently."
+refute = "! (grep -q 'chief::spec(' crates/core/src/app.rs && grep -q 'chief::spec(' crates/tui/src/main.rs) || grep -rq 'chief::DENIED' crates/tui/src crates/gui/src"

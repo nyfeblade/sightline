@@ -1968,14 +1968,7 @@ impl App {
             &limits,
             &self.work,
         );
-        let it = control::own(
-            cwd,
-            &owned::Spec::default()
-                .with_model(model)
-                .allowing(crate::chief::GRANTED)
-                .denying(crate::chief::DENIED)
-                .opening(Some(&packet)),
-        )?;
+        let it = control::own(cwd, &crate::chief::spec(model, &packet, cwd))?;
         let id = if it.session_id.is_empty() {
             it.name.clone()
         } else {

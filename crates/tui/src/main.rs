@@ -600,11 +600,7 @@ fn main() -> Result<()> {
 
         let it = control::own(
             &cwd,
-            &owned::Spec::default()
-                .with_model(opt("--model").as_deref())
-                .allowing(sightline_core::chief::GRANTED)
-                .denying(sightline_core::chief::DENIED)
-                .opening(Some(&packet)),
+            &sightline_core::chief::spec(opt("--model").as_deref(), &packet, &cwd),
         )
         .map_err(|e| anyhow::anyhow!(e))?;
         let id = if it.session_id.is_empty() {
