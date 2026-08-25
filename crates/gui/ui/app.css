@@ -2673,15 +2673,16 @@ html[data-mood="needs"] .rail-group {
 
 /* A focused field opens slightly and lights from within. The padding change is
    two pixels — enough to feel, not enough to move the words. */
+/* Deliberately not a padding transition. Padding is a layout property: changing
+   it reflows the field, and a reflow on a field somebody is typing into is felt
+   as the characters arriving late. The backlight stays — it is paint, not
+   layout — and the two pixels of opening are gone. They were not worth a
+   keystroke. */
 .composer input, .search {
-  transition: padding .28s cubic-bezier(.16, 1, .3, 1),
-              box-shadow .28s cubic-bezier(.16, 1, .3, 1),
-              border-color .28s cubic-bezier(.16, 1, .3, 1),
-              background .28s cubic-bezier(.16, 1, .3, 1);
+  transition: box-shadow .28s cubic-bezier(.16, 1, .3, 1),
+              border-color .28s cubic-bezier(.16, 1, .3, 1);
 }
 .composer input:focus, .search:focus {
-  padding-left: 12px !important;
-  padding-right: 12px !important;
   background:
     radial-gradient(120% 180% at 50% 130%, rgba(255, 255, 255, .05), transparent 70%),
     rgba(0, 0, 0, .7) !important;
@@ -2704,18 +2705,35 @@ html[data-mood="needs"] .rail-group {
 /* And the container being written into breathes, so you can tell a turn is
    still going without reading it. One signal on the whole surface rather than a
    marker on every line. */
-.pane.is-streaming {
-  animation: streaming 2.4s ease-in-out infinite;
+/* The breathing ring is an overlay whose opacity animates, not an inset
+   box-shadow on the pane itself. Box-shadow is paint: animating one on a large
+   scrolling container invalidates the whole container every frame, for as long
+   as the turn lasts, and the cost lands on whatever else the window is doing —
+   which turned out to be someone typing. Opacity on a separate layer is handed
+   to the compositor and costs nothing. */
+.middle { position: relative; }
+.middle::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
   border-radius: var(--r-card);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .25);
+  opacity: 0;
+  will-change: opacity;
+}
+.middle:has(.pane.is-streaming)::after {
+  animation: streaming 2.4s ease-in-out infinite;
 }
 @keyframes streaming {
-  0%, 100% { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .04); }
-  50%      { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .25); }
+  0%, 100% { opacity: .16; }
+  50%      { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .turn.claude.arriving, .act.arriving, .thought.arriving { animation: none; }
-  .pane.is-streaming { animation: none; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .12); }
+  .middle:has(.pane.is-streaming)::after { animation: none; opacity: .5; }
 }
 
 /* Drawn past the top and bottom of the window so the parallax shift moves dots
@@ -2871,3 +2889,17 @@ html[data-mood="needs"] .rail-group {
 }
 .at, .when { opacity: .8; }
 .row.hit:hover .at, .act:hover .at { opacity: 1; }
+
+/* The attach button. Square, the height of the field, and quiet — it is a way
+   in rather than an action, and the only round thing in a composer of squares
+   would be asking for attention it does not need. */
+.composer .plus {
+  width: 34px;
+  height: 34px;
+  padding: 0 !important;
+  flex: none;
+  font-size: 17px;
+  line-height: 1;
+  color: var(--tertiary) !important;
+}
+.composer .plus:hover { color: var(--text) !important; }

@@ -79,6 +79,10 @@
       <!-- What is going with the next message. Hidden until something is. -->
       <div class="attached" id="attached" hidden></div>
       <form class="composer" id="composer">
+        <!-- Attach. Before the field rather than after it, where every other
+             composer of this shape puts it. -->
+        <button class="ghost plus" id="attach" type="button" title="Attach a file">+</button>
+        <input type="file" id="attach-file" multiple hidden>
         <input id="message" spellcheck="false" autocomplete="off"
                placeholder="Message this session…" />
         <button class="ghost" id="queue" type="button" title="Hold it until this session is idle">Queue</button>

@@ -564,6 +564,32 @@ let attached = [];
 /// take the bytes directly. So a paste becomes a file and the message carries
 /// its path, which works the same for a session in a terminal and leaves the
 /// image on disk afterwards rather than only inside a conversation.
+/// Anything that is not a picture: kept by name, referred to by path.
+async function takeFile(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  const path = await invoke("attach_file", {
+    name: file.name || "attachment",
+    data: btoa(binary),
+  });
+  attached.push({ path, kind: "file" });
+  drawAttached();
+}
+
+/// Route by what it is. A picture is shown; everything else is handed over as a
+/// path for the session to read, which is what it would do with a file anyway.
+async function takeAny(file) {
+  try {
+    if (file.type.startsWith("image/")) await takeImage(file);
+    else await takeFile(file);
+  } catch (e) {
+    say(String(e));
+  }
+}
+
 async function takeImage(file) {
   const bytes = new Uint8Array(await file.arrayBuffer());
   // In chunks: one apply() over a few million bytes overflows the call stack,
@@ -601,8 +627,9 @@ function drawAttached() {
       thumb.alt = "";
       chip.append(thumb);
     } else {
-      // Read from the host clipboard: the bytes are on disk, not in the page.
-      chip.append(make("span", "attachment-mark", "▣"));
+      // A file has no thumbnail, and an image read from the host clipboard has
+      // its bytes on disk rather than in the page.
+      chip.append(make("span", "attachment-mark", item.kind === "file" ? "◫" : "▣"));
     }
     chip.append(make("span", "attachment-name", item.path.split("/").pop()));
     const drop = make("button", "attachment-drop", "×");
@@ -619,7 +646,9 @@ function drawAttached() {
 /// The paths, as a line the agent can act on, ahead of whatever was typed.
 function withAttachments(text) {
   if (!attached.length) return text;
-  const lines = attached.map((a) => `[image] ${a.path}`).join("\n");
+  const lines = attached
+    .map((a) => `${a.kind === "file" ? "[file]" : "[image]"} ${a.path}`)
+    .join("\n");
   const said = text.trim();
   return said ? `${lines}\n${said}` : `${lines}\nHave a look at this.`;
 }
@@ -2846,6 +2875,21 @@ function chooseBackdrop() {
   input.click();
 }
 
+{
+  const button = el("attach");
+  const picker = el("attach-file");
+  if (button && picker) {
+    button.addEventListener("click", () => {
+      picker.value = "";
+      picker.click();
+    });
+    picker.addEventListener("change", async () => {
+      for (const file of Array.from(picker.files || [])) await takeAny(file);
+      el("message").focus();
+    });
+  }
+}
+
 let notifyOn = true;
 async function drawMenu() {
   const grid = el("menu-grid");
@@ -3269,7 +3313,12 @@ function drawGridToggle() {
 //     the container appears to fight the person using it.
 //   - It stops. When the target is reached, no more frames are requested.
 //   - It does nothing at all for somebody who has asked for reduced motion.
-const GLIDE = { ease: 0.16, arrived: 0.4 };
+// `ease` is the fraction of the remaining distance covered per frame; `step` is
+// how far one wheel notch travels. The first version had ease 0.16 and moved a
+// notch by exactly the delta the event reported, which on this desktop is about
+// 50px — a third of what the platform moves natively — so it read as barely
+// scrolling at all. Smoothing a scroll must not also shorten it.
+const GLIDE = { ease: 0.22, arrived: 0.5, step: 2.6, lines: 100 };
 
 function glide(box) {
   if (box.dataset.glide) return;
@@ -3281,7 +3330,12 @@ function glide(box) {
   const step = () => {
     // Something else moved it — a keypress, a drag, a pane following output.
     // Whatever it was is more authoritative than a wheel notch from before it.
-    if (Math.abs(box.scrollTop - last) > 1.5) {
+    //
+    // The threshold is 24px rather than 1.5. Sub-pixel scroll positions get
+    // rounded by the engine, and a pane that follows new output nudges by a few
+    // pixels a second: at 1.5 this fired constantly, cancelled every glide a
+    // frame or two in, and was most of why scrolling had gone stiff.
+    if (Math.abs(box.scrollTop - last) > 24) {
       running = false;
       return;
     }
@@ -3308,7 +3362,8 @@ function glide(box) {
       if (!discrete) return;
       const reach = box.scrollHeight - box.clientHeight;
       if (reach <= 0) return;
-      const by = e.deltaMode === 0 ? e.deltaY : e.deltaY * 40;
+      const by =
+        e.deltaMode === 0 ? e.deltaY * GLIDE.step : e.deltaY * GLIDE.lines;
       // Re-aim from where it actually is when it is not already gliding, or a
       // notch after a drag jumps back to a stale target.
       const from = running ? target : box.scrollTop;

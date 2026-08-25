@@ -875,6 +875,81 @@ fn attach_image(name: String, data: String) -> Result<String, String> {
     write_pasted(&bytes, ext)
 }
 
+/// Keep a file somebody attached, and hand back where it went.
+///
+/// A copy, in Sightline's own directory, under the name it arrived with. The
+/// session is told a path and reads the file itself, which is the whole reason
+/// this is a copy and not a reference: the picker in a webview hands over bytes
+/// and a name and deliberately never a path, so there is nothing to point at.
+/// Keeping the name matters more than it looks — a worker reading
+/// `crash-2026-08-25.log` knows something about it that `attachment-3` does not
+/// say.
+#[tauri::command]
+fn attach_file(name: String, data: String) -> Result<String, String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data.as_bytes())
+        .map_err(|e| format!("that file did not decode: {e}"))?;
+    if bytes.is_empty() {
+        return Err("that file was empty".into());
+    }
+    if bytes.len() > 64 * 1024 * 1024 {
+        return Err(format!(
+            "that file is {} MB, which is more than 64",
+            bytes.len() / 1_048_576
+        ));
+    }
+    let dir = core_app::data_dir().join("attached");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+
+    // Only the last component, and nothing that climbs. The name comes from a
+    // file chooser rather than from a person typing, but a path separator in it
+    // would write outside this directory and that is not a thing to leave to
+    // the goodwill of the source.
+    let safe: String = std::path::Path::new(&name)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "attachment".into())
+        .chars()
+        .map(|c| {
+            if c == '/' || c == '\\' || c == '\0' {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let safe = if safe.trim().is_empty() || safe == "." || safe == ".." {
+        "attachment".to_string()
+    } else {
+        safe
+    };
+
+    // Two files of the same name in one conversation is normal. Numbered rather
+    // than overwritten, or the second one silently replaces the first and the
+    // session reads the wrong thing.
+    let mut path = dir.join(&safe);
+    if path.exists() {
+        let stem = std::path::Path::new(&safe)
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "attachment".into());
+        let ext = std::path::Path::new(&safe)
+            .extension()
+            .map(|e| format!(".{}", e.to_string_lossy()))
+            .unwrap_or_default();
+        for n in 2..1000 {
+            let next = dir.join(format!("{stem}-{n}{ext}"));
+            if !next.exists() {
+                path = next;
+                break;
+            }
+        }
+    }
+    std::fs::write(&path, &bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
 #[tauri::command]
 fn answer(shared: State<Shared>, id: String, option: usize) -> Result<(), String> {
     shared
@@ -1437,6 +1512,7 @@ fn main() {
             screen,
             send,
             attach_image,
+            attach_file,
             clipboard_image,
             answer,
             interrupt,
