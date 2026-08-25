@@ -3089,3 +3089,32 @@ html[data-mood="needs"] .rail-group {
 }
 .lens-line.is-toolFailed, .lens-line.is-checksFailed { color: var(--failed); }
 .lens-line .at { flex: none; }
+
+/* ══ scrollbars ═════════════════════════════════════════════════════════════
+
+   There are rules for these near the top of the file, from before the palette
+   and the notice cards existed, and they cover three containers by name. Every
+   surface that has appeared since got the platform's own — a light bar, which
+   on a window this dark is the brightest thing on screen and permanently in the
+   corner of your eye. This covers everything, thin and dim, brighter under the
+   pointer: present when you reach for it. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, .14) transparent;
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, .14);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, .3);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-corner { background: transparent; }
+/* The tab strip keeps none at all — it scrolls sideways under a gesture and a
+   bar under it would sit on the tabs. */
+.tabs::-webkit-scrollbar { height: 0; }
