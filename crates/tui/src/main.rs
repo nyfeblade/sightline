@@ -957,7 +957,14 @@ fn main() -> Result<()> {
             Duration::from_secs(30 * 86_400),
             false,
         );
+        // Both, and in this order. `discover` walks transcripts and is what
+        // makes a name resolvable; `with_state` loads the work store, which is
+        // where the assignments are. Without the second the chart was built
+        // against an empty store and reported a chief with nothing assigned —
+        // which is a real state, and so it looked like an answer rather than a
+        // mistake.
         app.discover();
+        app.with_state();
         let id = app
             .sessions
             .iter()

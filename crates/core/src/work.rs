@@ -1058,6 +1058,26 @@ impl Store {
                     proven: task.proven.len(),
                     from: from.clone(),
                 });
+            } else if depth == 0 {
+                // A chief with no task of its own still has a project.
+                //
+                // Found by running the real thing: `start_chief` in the window
+                // writes a `supervise:` task, and a chief started any other way
+                // does not — so the walk began at a node that did not exist and
+                // the entire project vanished, workers and all. The root is the
+                // session, not the record of it.
+                nodes.push(Node {
+                    task: String::new(),
+                    session: session.clone(),
+                    depth: 0,
+                    assignment: String::new(),
+                    state: "supervising".to_string(),
+                    open: true,
+                    notes: 0,
+                    refutes: 0,
+                    proven: 0,
+                    from: None,
+                });
             }
             for task in self.tasks() {
                 if task.parent.as_deref() == Some(session.as_str()) {
@@ -1130,6 +1150,28 @@ mod chart_tests {
         let second = s.chart("chief-2");
         assert_eq!(second.nodes.len(), 2);
         assert!(second.nodes.iter().all(|n| n.session != "worker-a"));
+    }
+
+    #[test]
+    fn a_chief_with_no_task_of_its_own_still_has_a_project() {
+        // The window's `start_chief` writes a `supervise:` task; a chief started
+        // any other way — the live example, a future front end — does not. The
+        // walk then began at a node that did not exist and the whole project
+        // vanished, workers included. Caught by running the real thing, which is
+        // the only place this shape occurs.
+        let mut s = Store::new();
+        s.assign("worker-a", "add the numbers up");
+        s.record_lineage("worker-a", "chief-1");
+
+        let chart = s.chart("chief-1");
+        assert_eq!(
+            chart.nodes.len(),
+            2,
+            "the root is the session, not the record of it"
+        );
+        assert_eq!(chart.nodes[0].session, "chief-1");
+        assert_eq!(chart.nodes[0].state, "supervising");
+        assert_eq!(chart.nodes[1].from.as_deref(), Some("chief-1"));
     }
 
     #[test]

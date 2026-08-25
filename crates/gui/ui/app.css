@@ -2982,7 +2982,11 @@ html[data-mood="needs"] .rail-group {
    here is doing real work — there is a whole interface behind it, and dimming
    it without softening it would leave a dozen sharp edges competing with the
    one thing you are meant to be reading. */
-#palette {
+/* `[open]`, not bare. A dialog is hidden by the browser's own
+   `dialog:not([open]) { display: none }`, and setting `display: flex` on the
+   element beats it — so the palette was painted over the conversation at all
+   times, closed, with its footer hints showing through the transcript. */
+#palette[open] {
   width: min(620px, 88vw);
   max-height: 62vh;
   padding: 0 !important;

@@ -3,48 +3,59 @@
      xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#1d1f27"/>
-      <stop offset="1" stop-color="#0a0b0e"/>
+      <stop offset="0" stop-color="#17181c"/>
+      <stop offset="1" stop-color="#08090b"/>
     </linearGradient>
-    <!-- The glass itself: white where the light hits it, the accent where it
-         falls away. -->
-    <linearGradient id="glassFace" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.18"/>
-      <stop offset="100%" stop-color="#007AFF" stop-opacity="0.05"/>
+    <!-- The line itself. Brighter where the light lands, falling away as the
+         figure turns from it — which is the only way a drawing made of strokes
+         can describe a solid. -->
+    <linearGradient id="edge" x1="10%" y1="0%" x2="90%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.95"/>
+      <stop offset="55%" stop-color="#FFFFFF" stop-opacity="0.62"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0.38"/>
     </linearGradient>
-    <!-- Its edges, which is where a transparent solid becomes visible at all. -->
-    <linearGradient id="glassEdge" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.7"/>
-      <stop offset="50%" stop-color="#E6EDF3" stop-opacity="0.3"/>
-      <stop offset="100%" stop-color="#007AFF" stop-opacity="0.5"/>
+    <linearGradient id="beam" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.30"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0.9"/>
+    </linearGradient>
+    <!-- Barely there, and the reason the interior is not flat. -->
+    <linearGradient id="face" x1="0%" y1="0%" x2="60%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.07"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0.012"/>
     </linearGradient>
   </defs>
 
   <rect width="64" height="64" rx="14.3" fill="url(#tile)"/>
 
-  <g transform="translate(32 32) scale(0.84)
-                translate(-32 -28)">
-    <!-- The beam arriving. -->
-    <path d="M 6 42 L 20 34" stroke="#007AFF" stroke-width="3" stroke-linecap="round"/>
+  <g transform="translate(32 32) scale(0.78)
+                translate(-32 -28)"
+     stroke="url(#edge)" stroke-linejoin="round" stroke-linecap="round"
+     fill="none">
 
-    <!-- The solid, and the void inside it. -->
-    <path d="M 32 10 L 52 46 L 12 46 Z" fill="url(#glassFace)"
-          stroke="url(#glassEdge)" stroke-width="1.5" stroke-linejoin="round"/>
-    <path d="M 32 20 L 44 41 L 20 41 Z" fill="#0F1117"
-          stroke="url(#glassEdge)" stroke-width="1.2" stroke-linejoin="round"/>
+    <!-- Two solids sharing an edge, neither of which can be in front. The
+         left reads as nearer along the shared edge and the right reads as
+         nearer at its own corner, and the eye cannot settle which — which is
+         the same trick the old prism used and the reason it kept being looked
+         at.
 
-    <!-- Inside the glass: offset from the line it came in on, and dimmer,
-         because that is what passing through something does to a beam. -->
-    <path d="M 20 35.5 L 44 21.5" stroke="#007AFF" stroke-width="2.5"
-          stroke-opacity="0.45" stroke-dasharray="2 1"/>
+         Drawn large and with few lines. The first version of this figure was
+         accurate at 512 and a smudge at 64, which is the size that matters:
+         an icon is a thing recognised in a dock at a glance, not a diagram
+         read at leisure. Everything here is in service of surviving that. -->
+    <path d="M 6 28 L 24 8 L 42 28 L 24 48 Z" fill="url(#face)" stroke-width="2.4"/>
+    <path d="M 38 8 L 58 28 L 40 48 L 20 48 Z" fill="url(#face)" stroke-width="2.4"/>
+    <!-- The shared edge last and at full strength, so the overlap is where the
+         eye lands. -->
+    <path d="M 24 48 L 42 28" stroke-width="2.4" stroke-opacity="1"/>
 
-    <!-- The front beam of the figure, laid over the rear face: the overlap is
-         what makes the solid impossible. -->
-    <path d="M 32 10 L 44 41 L 52 46 L 32 10 Z" fill="url(#glassFace)"
-          stroke="url(#glassEdge)" stroke-width="1.2" stroke-linejoin="round"/>
-
-    <!-- Out the other side, clean, and where it lands. -->
-    <path d="M 44 20 L 58 12" stroke="#007AFF" stroke-width="3" stroke-linecap="round"/>
-    <circle cx="58" cy="12" r="1.5" fill="#FFFFFF"/>
+    <!-- Light in at the lower left, out at the upper right, both clear of the
+         figure. In the first attempt they crossed the interior and read as
+         more edges rather than as rays. -->
+    <g stroke="url(#beam)" stroke-width="2">
+      <path d="M -10 46 L 2 33"/>
+      <path d="M -7 53 L 5 40"/>
+      <path d="M 50 15 L 70 -4"/>
+      <path d="M 55 22 L 75 3"/>
+    </g>
   </g>
 </svg>
