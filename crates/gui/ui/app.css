@@ -2815,3 +2815,146 @@ main {
     rgba(0, 122, 255, .75) 55%,
     rgba(0, 122, 255, .3) 100%);
 }
+
+/* No glow.
+
+   The interior bounce and the halo around the prompt were both soft coloured
+   light thrown outward, which is a different thing from an edge catching it.
+   Removed. What stays is the structure — the lit face, the dark wall behind it,
+   and the dispersion along the ring — because none of that is a glow: it is the
+   edge being a surface rather than a line. */
+#rail, .rail.detail, .middle {
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, .22),
+    inset 1px 0 0 0 rgba(255, 255, 255, .10),
+    inset 0 -1px 0 0 rgba(0, 0, 0, .55),
+    inset -1px 0 0 0 rgba(0, 0, 0, .38);
+}
+.composer {
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, .20),
+    inset 0 -1px 0 0 rgba(0, 0, 0, .5);
+}
+.composer:focus-within {
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, .24),
+    inset 0 -1px 0 0 rgba(0, 0, 0, .5);
+}
+/* The mark on the in-flight row was throwing light too. */
+.live-spark { box-shadow: none; }
+
+/* ══ what Raycast actually does ═════════════════════════════════════════════
+   Read off the window rather than described: it is one surface. The list and
+   the detail are divided by a single hairline — no gap between them, no radius
+   on either, no border around either. One rim goes round the whole window and
+   that is the only edge in the picture. There is no gradient border, no
+   dispersion, and no glow anywhere.
+
+   Which contradicts the last two passes, and this is the one taken from the
+   screenshot. The richness in that window is not edge treatment; it is a
+   translucent surface over a wallpaper, and everything drawn on it is quiet
+   enough to let that be the effect. Every edge added here was competing with
+   the thing that was supposed to be doing the work. */
+
+/* The window is the card. Nothing inside it has its own. */
+main { gap: 0; padding: 60px 0 50px; }
+#rail, .rail.detail, .middle {
+  border-radius: 0 !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+#rail::before, .rail.detail::before, .middle::before { display: none; }
+
+/* One translucent field for the whole window, and hairlines cut into it. */
+.ambient { background: rgba(16, 17, 21, .88); }
+#rail { border-right: 1px solid rgba(255, 255, 255, .06) !important; }
+.rail.detail { border-left: 1px solid rgba(255, 255, 255, .06) !important; }
+.tabs { border-bottom: 1px solid rgba(255, 255, 255, .06); }
+.bar {
+  background-color: transparent !important;
+  border-bottom: 1px solid rgba(255, 255, 255, .06);
+  box-shadow: none;
+}
+/* The action bar reads as its own strip, a shade off the rest. */
+.status {
+  background-color: rgba(255, 255, 255, .022) !important;
+  border-top: 1px solid rgba(255, 255, 255, .06);
+  box-shadow: none;
+}
+
+/* One rim, around the window itself. */
+body::before {
+  background: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .09);
+}
+
+/* A selected row is a soft rounded fill inside the list's padding — no border,
+   no highlight line, nothing but a lighter patch. */
+.agent { border: 0 !important; border-radius: 6px; }
+.agent.is-on {
+  background-color: rgba(255, 255, 255, .07) !important;
+  box-shadow: none;
+}
+.agent:hover:not(.is-on) { background-color: rgba(255, 255, 255, .035) !important; }
+
+/* The prompt: a plain recessed field, no rim and no halo. */
+.composer {
+  margin: 0 10px 10px;
+  border-radius: 8px;
+  background-color: rgba(255, 255, 255, .04) !important;
+  border: 1px solid rgba(255, 255, 255, .07) !important;
+  box-shadow: none;
+}
+.composer::before { display: none; }
+.composer:focus-within {
+  border-color: rgba(255, 255, 255, .16) !important;
+  box-shadow: none;
+}
+
+/* ══ the backdrop ═══════════════════════════════════════════════════════════
+   Built into the window rather than blurred through from behind it. Nothing on
+   this machine can blur the desktop under a window anyway, and relying on
+   whatever wallpaper happens to be there makes the app look different on every
+   machine — this way the light is the program's own.
+
+   Geometric, not atmospheric: a few large angular shards with hard edges,
+   raking across from one corner. Not a repeating pattern — a repeat is texture
+   the eye follows, and this is meant to be structure you notice once. The angle
+   is the icon's: the beam enters low and leaves high, and these run the same
+   way.
+
+   Blue rather than red, because red is a state here — it means refused. */
+.ambient {
+  background:
+    /* the shards, hard-edged, raking from the lower left */
+    linear-gradient(114deg,
+      transparent 12%, rgba(0, 122, 255, .085) 12%, rgba(0, 122, 255, .085) 15.5%,
+      transparent 15.5%),
+    linear-gradient(114deg,
+      transparent 17%, rgba(90, 160, 255, .05) 17%, rgba(90, 160, 255, .05) 18.2%,
+      transparent 18.2%),
+    linear-gradient(114deg,
+      transparent 62%, rgba(0, 122, 255, .06) 62%, rgba(0, 122, 255, .06) 68%,
+      transparent 68%),
+    linear-gradient(114deg,
+      transparent 70.5%, rgba(120, 90, 230, .045) 70.5%, rgba(120, 90, 230, .045) 72%,
+      transparent 72%),
+    /* the depth behind them */
+    radial-gradient(120% 90% at 8% 108%, rgba(0, 90, 210, .16), transparent 58%),
+    radial-gradient(100% 80% at 96% -8%, rgba(90, 70, 190, .10), transparent 60%),
+    #0a0b0f;
+}
+/* Kept: the grain, which is what stops large flat gradients banding. */
+.ambient::after { opacity: .13; }
+
+/* The window's own field goes translucent over it, so the shards read through
+   the glass rather than sitting on top of the page. */
+html[data-platform="linux"] { background: #07080b; }
+
+/* The surface over the backdrop: translucent enough that the shards show, dark
+   enough that everything written on it still reads. */
+#rail, .rail.detail, .middle, .bar { background-color: rgba(14, 15, 20, .72) !important; }
+.status { background-color: rgba(14, 15, 20, .78) !important; }
