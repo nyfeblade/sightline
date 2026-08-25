@@ -3069,3 +3069,355 @@ dialog {
     inset 0 .5px 0 0 rgba(255, 255, 255, .18),
     0 24px 60px rgba(0, 0, 0, .55);
 }
+
+/* ══ refraction ═════════════════════════════════════════════════════════════
+   The thing blur cannot do.
+
+   A blur softens what is behind a surface; it never moves it. Real glass bends
+   light, so a pane displaces its background — most visibly in a band along the
+   edges, where the view compresses and shifts. That single cue is most of the
+   difference between "frosted panel" and "pane of glass", and no amount of
+   blur, tint or rim work substitutes for it.
+
+   CSS cannot sample a backdrop, so normally this is impossible. It is possible
+   here only because the backdrop belongs to the program: the shard layer can
+   simply be drawn a second time, scaled and offset, and masked to a band along
+   each edge. `background-attachment: fixed` is what makes it line up — it pins
+   the gradients to the viewport, so the copy starts registered with the
+   original and the transform is a true displacement of it rather than an
+   unrelated pattern. */
+:root {
+  --shards:
+    linear-gradient(114deg, transparent 11%, rgba(0, 122, 255, .20) 11%,
+      rgba(0, 122, 255, .20) 15%, transparent 15%),
+    linear-gradient(114deg, transparent 16.4%, rgba(120, 180, 255, .12) 16.4%,
+      rgba(120, 180, 255, .12) 17.8%, transparent 17.8%),
+    linear-gradient(114deg, transparent 60%, rgba(0, 122, 255, .15) 60%,
+      rgba(0, 122, 255, .15) 67%, transparent 67%),
+    linear-gradient(114deg, transparent 69.5%, rgba(130, 95, 240, .11) 69.5%,
+      rgba(130, 95, 240, .11) 71.4%, transparent 71.4%),
+    radial-gradient(120% 90% at 6% 110%, rgba(0, 92, 214, .30), transparent 56%),
+    radial-gradient(100% 80% at 97% -10%, rgba(96, 74, 200, .20), transparent 58%);
+}
+
+/* The lensed band. A displaced copy of the light behind, brightened, confined
+   to the first few pixels inside each edge — which is where a real pane bends
+   most and the centre barely bends at all. */
+#rail::after, .rail.detail::after, .middle::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: var(--shards);
+  background-attachment: fixed;
+  transform: scale(1.045);
+  transform-origin: center;
+  filter: brightness(1.9) saturate(1.3) blur(1.5px);
+  opacity: .85;
+  -webkit-mask: linear-gradient(to right, #000 0, transparent 26px),
+                linear-gradient(to left, #000 0, transparent 26px),
+                linear-gradient(to bottom, #000 0, transparent 22px),
+                linear-gradient(to top, #000 0, transparent 22px);
+  mask: linear-gradient(to right, #000 0, transparent 26px),
+        linear-gradient(to left, #000 0, transparent 26px),
+        linear-gradient(to bottom, #000 0, transparent 22px),
+        linear-gradient(to top, #000 0, transparent 22px);
+}
+/* The rails already spend ::after on grain, so the grain moves to the pane. */
+#rail.grain::after, .rail.detail.grain::after { background-image: var(--shards); opacity: .85; mix-blend-mode: normal; }
+
+/* Chromatic split along the rim. Glass disperses at a boundary, so a real edge
+   is never one colour: a warm line and a cool one, a pixel apart. Too subtle to
+   see and the reason an edge looks photographed rather than drawn. */
+body::before {
+  box-shadow:
+    inset 0 0 0 .5px rgba(255, 255, 255, .14),
+    inset .5px .5px 0 .5px rgba(255, 190, 160, .05),
+    inset -.5px -.5px 0 .5px rgba(150, 200, 255, .06);
+}
+
+/* One raking sheen across the whole surface, the way light falls on something
+   polished. A single band, very low, at the shards' angle. */
+main::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  background: linear-gradient(114deg,
+    transparent 34%,
+    rgba(255, 255, 255, .022) 41%,
+    rgba(255, 255, 255, .045) 44%,
+    rgba(255, 255, 255, .014) 47%,
+    transparent 54%);
+}
+
+/* Dialled back. The lensing was doing its job and overshooting into a glow,
+   which is the thing this surface is explicitly not supposed to do. What tells
+   you it is refraction rather than light thrown outward is that it is confined
+   inside the edge and carries the shape of what is behind it — so the band
+   narrows and dims, and keeps the displacement. */
+#rail::after, .rail.detail::after, .middle::after {
+  filter: brightness(1.45) saturate(1.25) blur(1.2px);
+  opacity: .62;
+  transform: scale(1.035);
+  -webkit-mask: linear-gradient(to right, #000 0, transparent 18px),
+                linear-gradient(to left, #000 0, transparent 18px),
+                linear-gradient(to bottom, #000 0, transparent 15px),
+                linear-gradient(to top, #000 0, transparent 15px);
+  mask: linear-gradient(to right, #000 0, transparent 18px),
+        linear-gradient(to left, #000 0, transparent 18px),
+        linear-gradient(to bottom, #000 0, transparent 15px),
+        linear-gradient(to top, #000 0, transparent 15px);
+}
+main::after {
+  background: linear-gradient(114deg,
+    transparent 36%,
+    rgba(255, 255, 255, .014) 42%,
+    rgba(255, 255, 255, .030) 44.5%,
+    rgba(255, 255, 255, .010) 47%,
+    transparent 53%);
+}
+
+/* ══ everything up one level ════════════════════════════════════════════════
+   The panels were a dark tint and the controls on them were translucent white.
+   That is backwards for the effect: the tint was holding the light back, and
+   the only genuinely glassy things in the window were the buttons.
+
+   So the whole hierarchy moves up a step. The panels take what the buttons had
+   — a light translucent fill over the backdrop rather than a dark one in front
+   of it — and the buttons go a step further still, so they stay a distinct
+   sheet on top rather than merging into what they sit on. */
+#rail, .rail.detail, .middle, .bar {
+  background-color: rgba(255, 255, 255, .045) !important;
+  backdrop-filter: blur(26px) saturate(190%);
+  -webkit-backdrop-filter: blur(26px) saturate(190%);
+  box-shadow: inset 0 .5px 0 0 rgba(255, 255, 255, .16);
+}
+.status {
+  background-color: rgba(255, 255, 255, .055) !important;
+  backdrop-filter: blur(26px) saturate(190%);
+  -webkit-backdrop-filter: blur(26px) saturate(190%);
+  box-shadow: inset 0 .5px 0 0 rgba(255, 255, 255, .16);
+}
+
+/* One sheet further: brighter fill, brighter rim, and a blur of their own, so a
+   control still reads as something laid on the panel rather than cut out of it. */
+.ghost, .metrics, kbd, .answer, .chip, .menu-grid button, .attachment {
+  background-color: rgba(255, 255, 255, .10) !important;
+  border: .5px solid rgba(255, 255, 255, .18) !important;
+  backdrop-filter: blur(18px) saturate(185%);
+  -webkit-backdrop-filter: blur(18px) saturate(185%);
+  box-shadow:
+    inset 0 .5px 0 0 rgba(255, 255, 255, .30),
+    inset 0 -.5px 0 0 rgba(0, 0, 0, .30);
+}
+.ghost:hover, .answer:hover, .chip:hover, .menu-grid button:hover {
+  background-color: rgba(255, 255, 255, .16) !important;
+  border-color: rgba(255, 255, 255, .26) !important;
+}
+.primary {
+  background-color: rgba(255, 255, 255, .18) !important;
+  border: .5px solid rgba(255, 255, 255, .30) !important;
+  box-shadow:
+    inset 0 .5px 0 0 rgba(255, 255, 255, .40),
+    inset 0 -.5px 0 0 rgba(0, 0, 0, .30);
+}
+.primary:hover { background-color: rgba(255, 255, 255, .25) !important; border-color: rgba(255, 255, 255, .40) !important; }
+.composer {
+  background-color: rgba(255, 255, 255, .07) !important;
+  border: .5px solid rgba(255, 255, 255, .14) !important;
+  box-shadow: inset 0 .5px 0 0 rgba(255, 255, 255, .22);
+}
+.agent.is-on { background-color: rgba(255, 255, 255, .12) !important; }
+
+/* The ground goes darker to carry it. A light fill needs something dark behind
+   it or the whole window drifts grey and every ink loses its footing. */
+.ambient { background-color: #05060a; }
+
+/* ══ that level, everywhere ═════════════════════════════════════════════════
+   The panels take the fill the buttons had, and the buttons go one further. The
+   whole window becomes the material, and a control is a second sheet of it
+   rather than the only piece of it in the room. */
+#rail, .rail.detail, .middle, .bar {
+  background-color: rgba(255, 255, 255, .10) !important;
+  box-shadow: inset 0 .5px 0 0 rgba(255, 255, 255, .20);
+}
+.status { background-color: rgba(255, 255, 255, .115) !important; }
+
+.ghost, .metrics, kbd, .answer, .chip, .menu-grid button, .attachment {
+  background-color: rgba(255, 255, 255, .17) !important;
+  border: .5px solid rgba(255, 255, 255, .26) !important;
+  box-shadow:
+    inset 0 .5px 0 0 rgba(255, 255, 255, .38),
+    inset 0 -.5px 0 0 rgba(0, 0, 0, .28);
+}
+.ghost:hover, .answer:hover, .chip:hover, .menu-grid button:hover {
+  background-color: rgba(255, 255, 255, .24) !important;
+  border-color: rgba(255, 255, 255, .36) !important;
+}
+.primary {
+  background-color: rgba(255, 255, 255, .26) !important;
+  border: .5px solid rgba(255, 255, 255, .42) !important;
+  box-shadow:
+    inset 0 .5px 0 0 rgba(255, 255, 255, .50),
+    inset 0 -.5px 0 0 rgba(0, 0, 0, .28);
+}
+.primary:hover { background-color: rgba(255, 255, 255, .34) !important; }
+.composer { background-color: rgba(255, 255, 255, .13) !important; border-color: rgba(255, 255, 255, .22) !important; }
+.agent.is-on { background-color: rgba(255, 255, 255, .19) !important; }
+
+/* A tenth of white over everything lifts the whole window, so the light behind
+   it has to give way or the text loses its footing — every surface is now a
+   step brighter than the one this backdrop was tuned for. The shards keep their
+   geometry and lose their intensity, and the ground goes to near-black.
+
+   Measured before this: body text over the brightest shard band was 5.06:1 and
+   the metadata on it 3.45:1, which is the floor. Raising the fills without
+   touching the light would have taken both under. */
+.ambient {
+  background:
+    linear-gradient(114deg, transparent 11%, rgba(0, 122, 255, .10) 11%,
+      rgba(0, 122, 255, .10) 15%, transparent 15%),
+    linear-gradient(114deg, transparent 16.4%, rgba(120, 180, 255, .06) 16.4%,
+      rgba(120, 180, 255, .06) 17.8%, transparent 17.8%),
+    linear-gradient(114deg, transparent 60%, rgba(0, 122, 255, .075) 60%,
+      rgba(0, 122, 255, .075) 67%, transparent 67%),
+    linear-gradient(114deg, transparent 69.5%, rgba(130, 95, 240, .055) 69.5%,
+      rgba(130, 95, 240, .055) 71.4%, transparent 71.4%),
+    radial-gradient(120% 90% at 6% 110%, rgba(0, 92, 214, .16), transparent 56%),
+    radial-gradient(100% 80% at 97% -10%, rgba(96, 74, 200, .11), transparent 58%),
+    #030408;
+}
+
+/* The displaced shard copies are gone.
+
+   It was a real technique — a second, offset copy of the backdrop masked to the
+   panel edges, which is the only way to fake refraction when you cannot sample
+   what is behind a surface. It also looked like a smear, because a hard-edged
+   shard displaced by a few pixels does not read as light bending; it reads as
+   the same shape drawn twice slightly wrong. Blur is forgiving about that and
+   geometry is not.
+
+   Kept: the backdrop itself. Removed: every distorted copy of it, and the
+   raking sheen that came in with them. */
+#rail::after, .rail.detail::after, .middle::after {
+  background: none !important;
+  filter: none !important;
+  transform: none !important;
+  opacity: 1 !important;
+  -webkit-mask: none !important;
+  mask: none !important;
+}
+main::after { display: none; }
+
+/* The rails get their grain back — ::after had been taken over by the copies. */
+#rail.grain::after, .rail.detail.grain::after {
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E") !important;
+  opacity: .035 !important;
+  mix-blend-mode: overlay;
+}
+
+/* ══ why only the buttons looked like glass ═════════════════════════════════
+   Two reasons, and neither was the fill.
+
+   The blur. At 26px nothing recognisable survives behind a panel, so there is
+   nothing left to see *through* — heavy blur is anti-glass. The buttons blur at
+   18px over a surface that is itself carrying detail, which is why they were
+   the only pieces reading as material. The panels come down to 10px: enough to
+   soften what is behind, not enough to erase it.
+
+   The edge. A full-bleed panel has no visible edge anywhere, and an object you
+   cannot see the edge of cannot read as an object — it reads as the window's
+   background. The buttons have a rim on all four sides. So the panels get one
+   too, which means they have to come apart again: a rim needs a gap to be
+   visible in. */
+main { gap: 7px; padding: 58px 7px 48px; }
+#rail, .rail.detail, .middle {
+  border-radius: 10px;
+  border: .5px solid rgba(255, 255, 255, .22) !important;
+  background-color: rgba(255, 255, 255, .10) !important;
+  backdrop-filter: blur(10px) saturate(190%);
+  -webkit-backdrop-filter: blur(10px) saturate(190%);
+  box-shadow:
+    inset 0 .5px 0 0 rgba(255, 255, 255, .34),
+    inset 0 -.5px 0 0 rgba(0, 0, 0, .30);
+}
+.bar, .status {
+  backdrop-filter: blur(10px) saturate(190%);
+  -webkit-backdrop-filter: blur(10px) saturate(190%);
+  border: 0 !important;
+}
+.bar { border-bottom: .5px solid rgba(255, 255, 255, .12) !important; }
+.status { border-top: .5px solid rgba(255, 255, 255, .12) !important; }
+
+/* The backdrop has to be worth seeing through, so the shards go back up. They
+   were damped for a heavy blur; at 10px they read as geometry again. */
+.ambient {
+  background:
+    linear-gradient(114deg, transparent 11%, rgba(0, 122, 255, .17) 11%,
+      rgba(0, 122, 255, .17) 15%, transparent 15%),
+    linear-gradient(114deg, transparent 16.4%, rgba(120, 180, 255, .10) 16.4%,
+      rgba(120, 180, 255, .10) 17.8%, transparent 17.8%),
+    linear-gradient(114deg, transparent 60%, rgba(0, 122, 255, .13) 60%,
+      rgba(0, 122, 255, .13) 67%, transparent 67%),
+    linear-gradient(114deg, transparent 69.5%, rgba(130, 95, 240, .10) 69.5%,
+      rgba(130, 95, 240, .10) 71.4%, transparent 71.4%),
+    radial-gradient(120% 90% at 6% 110%, rgba(0, 92, 214, .26), transparent 56%),
+    radial-gradient(100% 80% at 97% -10%, rgba(96, 74, 200, .18), transparent 58%),
+    #04050a;
+}
+
+/* ══ the canvas, and the light around it ════════════════════════════════════
+
+   The backdrop was tuned to survive a heavy blur, and once the blur came down
+   it was reading as pattern rather than light — bands you look at instead of
+   through. Down about a third: still geometry, no longer competing with a
+   sentence sitting on top of it. */
+.ambient {
+  background:
+    linear-gradient(114deg, transparent 11%, rgba(0, 122, 255, .11) 11%,
+      rgba(0, 122, 255, .11) 15%, transparent 15%),
+    linear-gradient(114deg, transparent 16.4%, rgba(120, 180, 255, .065) 16.4%,
+      rgba(120, 180, 255, .065) 17.8%, transparent 17.8%),
+    linear-gradient(114deg, transparent 60%, rgba(0, 122, 255, .085) 60%,
+      rgba(0, 122, 255, .085) 67%, transparent 67%),
+    linear-gradient(114deg, transparent 69.5%, rgba(130, 95, 240, .065) 69.5%,
+      rgba(130, 95, 240, .065) 71.4%, transparent 71.4%),
+    radial-gradient(120% 90% at 6% 110%, rgba(0, 92, 214, .17), transparent 56%),
+    radial-gradient(100% 80% at 97% -10%, rgba(96, 74, 200, .12), transparent 58%),
+    #04050a;
+}
+
+/* The reading surface stops being a window and becomes a canvas. This is the
+   macOS split rather than a compromise: the sidebars are the vibrant part and
+   the content area is a settled, near-solid ground, because a paragraph should
+   not have weather behind it. The rim, the gaps and the rails are untouched, so
+   the glass is still there — it is around the text now instead of under it. */
+.middle {
+  background-color: rgba(14, 16, 22, .75) !important;
+}
+
+/* ══ back off the tint ══════════════════════════════════════════════════════
+
+   Three-quarters of an almost-black over an almost-black ground is not a canvas,
+   it is a hole — and next to two glass rails a hole is exactly what it looks
+   like. The tint stays, because a paragraph does want ground under it, but at
+   about half strength and mixed lighter, so the light behind still arrives. */
+.middle {
+  background-color: rgba(19, 23, 33, .52) !important;
+}
+
+/* The ground comes up with it. It had been dropped to carry a much lighter
+   panel fill, and that reason is gone. */
+.ambient { background-color: #070a12; }
+
+/* Caught while measuring the rails: the selected row's highlight is one of the
+   lightest surfaces in the window, and the muted text on it kept the colour it
+   had over the dark rail — 3.15:1, the worst figure anywhere. Muted text is
+   relative to what it sits on, so on this row it is not the same grey. */
+.agent.is-on .age,
+.agent.is-on .ctx,
+.agent.is-on .where { color: #CBD2DF; }
+

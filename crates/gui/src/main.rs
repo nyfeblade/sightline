@@ -741,7 +741,9 @@ fn clipboard_image() -> Result<String, String> {
         .output()
         .map_err(|e| format!("could not read the clipboard: {e}"))?;
     if out.stdout.is_empty() {
-        return Err(format!("the clipboard offered {kind} and then gave nothing"));
+        return Err(format!(
+            "the clipboard offered {kind} and then gave nothing"
+        ));
     }
     let ext = kind.rsplit('/').next().unwrap_or("png");
     let ext = match ext {
@@ -797,7 +799,10 @@ fn attach_image(name: String, data: String) -> Result<String, String> {
     }
     // A quarter of a gigabyte of clipboard is a mistake, not a screenshot.
     if bytes.len() > 32 * 1024 * 1024 {
-        return Err(format!("that image is {} MB, which is more than 32", bytes.len() / 1_048_576));
+        return Err(format!(
+            "that image is {} MB, which is more than 32",
+            bytes.len() / 1_048_576
+        ));
     }
     let ext = std::path::Path::new(&name)
         .extension()
