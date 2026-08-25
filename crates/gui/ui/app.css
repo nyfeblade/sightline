@@ -2535,3 +2535,80 @@ html[data-backdrop="image"] .rail.detail {
   background-size: cover, auto, auto !important;
   background-position: center, center, center !important;
 }
+
+/* The two bars are the same material as the panels, and were left behind when
+   the panels were thinned to let the grid through. An opaque strip across the
+   top of a window whose every other surface is glass reads as a bar bolted on
+   rather than as part of the same object — and the grid visibly stops at its
+   edge, which is what gives it away. */
+.bar, .status {
+  background-color: rgba(6, 7, 9, .7) !important;
+}
+
+/* The bars had 14px of padding, which was set when they ran edge to edge with
+   no border. The window has a rim now and the panels below sit 8px in, so the
+   wordmark was landing almost on the frame — and reading as clipped. */
+.bar, .status { padding-left: 20px !important; padding-right: 20px !important; }
+
+/* The tool badges stop being little glass boxes.
+   
+   They picked up the elevated-control treatment — gradient, specular line, drop
+   shadow — because they share a class with the buttons, and on a button that
+   reads as something you can press. These are labels. Six of them in a row, each
+   with its own rim and its own shadow, is a texture rather than a list, and the
+   thing it most resembles is a row of tiny windows. A label needs to be
+   readable and grouped; it does not need to be lit. */
+.chips .chip {
+  background: rgba(255, 255, 255, .045) !important;
+  background-image: none !important;
+  border: 1px solid rgba(255, 255, 255, .07) !important;
+  box-shadow: none !important;
+  color: var(--tertiary) !important;
+  border-radius: var(--r-chip) !important;
+  padding: 2px 7px !important;
+}
+/* The filter chips above the feed are controls and keep their material. */
+.filters .chip {
+  background-image: var(--glass-control) !important;
+  box-shadow: var(--lift-control) !important;
+}
+
+/* ══ arriving ═══════════════════════════════════════════════════════════════
+
+   A message you just sent should appear the way a message appears — coming from
+   somewhere, briefly, rather than being switched on. Short: 200ms, once, and it
+   never runs on a rebuild, because animating an entire transcript at once is a
+   slot machine rather than an arrival.
+
+   Your own messages rise a little further and scale in slightly, which is the
+   iMessage gesture and reads as "this came from here" rather than "this
+   appeared". Everything else just fades up. */
+.arriving { animation: arrive .2s cubic-bezier(.2, .8, .2, 1) both; }
+@keyframes arrive {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.turn.you.arriving { animation: arrive-mine .22s cubic-bezier(.2, .9, .25, 1) both; }
+@keyframes arrive-mine {
+  from { opacity: 0; transform: translateY(12px) scale(.985); }
+  to { opacity: 1; transform: none; }
+}
+/* The echo is your message before the transcript has it. Deliberately not
+   marked as pending in any way: it is the same message, it is going to be
+   confirmed in a fraction of a second, and a spinner on it would draw attention
+   to exactly the delay this removes. */
+.turn.you.is-echo { }
+
+/* Somebody who has asked their desktop for less motion gets the message with no
+   arrival, which is the point — not no message. */
+@media (prefers-reduced-motion: reduce) {
+  .arriving, .turn.you.arriving { animation: none; }
+}
+
+/* The action bar was packed tight: eight readings and shortcuts abutting each
+   other with nothing between them reads as one long string rather than as
+   separate facts. */
+.status { gap: 18px !important; }
+.status .hint { display: flex; align-items: center; gap: 14px; padding-left: 18px; margin-left: 4px; }
+.status .metrics { padding: 0 2px; }
+#grid-flow { margin-left: 2px; }

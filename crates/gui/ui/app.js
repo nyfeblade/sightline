@@ -1465,6 +1465,50 @@ function resultOf(events, i) {
 }
 
 /// Something a person or an agent said.
+// Your own message, on screen before the round trip.
+//
+// A message used to appear when the transcript next reported it — a write, a
+// poll, a parse and a redraw later. That is a fifth of a second at best, and it
+// is the one delay in this window that is felt, because it sits between an
+// action and its acknowledgement. Every chat application solves it the same
+// way: show the message immediately and reconcile when the record arrives.
+//
+// Held as one echo rather than a queue: the composer clears on send, so there
+// is only ever one message in flight from here.
+let echo = null;
+
+function showEcho(id, text) {
+  dropEcho();
+  const out = el("pane");
+  if (!out || !out.classList.contains("talk")) return;
+  const node = bubble("you", { at: Date.now() / 1000, body: text });
+  node.classList.add("arriving", "is-echo");
+  const card = out.querySelector(".asking-card");
+  const live = out.querySelector(".live-card");
+  out.insertBefore(node, card || live || null);
+  echo = { id, text, node };
+  out.scrollTop = out.scrollHeight;
+}
+
+function dropEcho() {
+  if (echo?.node?.isConnected) echo.node.remove();
+  echo = null;
+}
+
+/// Withdraw the echo once the transcript carries the same message.
+///
+/// Compared on the text rather than on an identifier, because the echo has none
+/// — it exists before the thing that would assign one. Trimmed on both sides:
+/// what comes back has been through a file and a parser.
+function settleEcho(id, events) {
+  if (!echo || echo.id !== id) return;
+  const mine = echo.text.trim();
+  const arrived = events.some(
+    (e) => e.kind === "prompt" && String(e.body || e.head || "").trim() === mine,
+  );
+  if (arrived) dropEcho();
+}
+
 function bubble(who, e) {
   const box = make("div", `turn ${who}`);
   const head = make("div", "turn-head");
@@ -1603,6 +1647,7 @@ function talkNodeInner(e, events, i) {
 
 async function drawTalk(id) {
   const events = await invoke("feed", { id, limit: 400 });
+  settleEcho(id, events);
   const s = current();
   const out = el("pane");
   const asking = s?.asking ? s.asking.question : "";
@@ -1681,6 +1726,10 @@ async function drawTalk(id) {
       if (e.kind === "tool") talkOn.lastCall = { node, at: e.at, head: e.head };
     }
   }
+
+  // A full rebuild clears the pane, which would take the echo with it. It is put
+  // back until the real message arrives, or it would vanish and reappear.
+  if (echo && echo.id === id && !echo.node.isConnected) out.append(echo.node);
 
   if (s?.asking) out.append(askCard(s));
   // The turn in flight, at the bottom where the next thing will appear. It is
@@ -2390,6 +2439,11 @@ on("composer", "submit", async (e) => {
   // An image on its own is a message. Requiring words as well would mean
   // pasting a screenshot and then having to say something about it.
   if ((!text && !attached.length) || !selected) return;
+  // On screen first. If the send then fails, the echo is withdrawn below and
+  // the failure is said out loud — which is better than a message that never
+  // appeared and an error explaining why.
+  const showing = selected;
+  showEcho(showing, text);
   try {
     await invoke("send", { id: selected, text: withAttachments(text) });
     box.value = "";
@@ -2399,8 +2453,9 @@ on("composer", "submit", async (e) => {
     // Stay where you are, the way a prompt does: sending one message is
     // usually the start of a conversation rather than the end of one.
     box.focus();
-    soon();
+    soon(0);
   } catch (err) {
+    dropEcho();
     say(String(err));
   }
 });
