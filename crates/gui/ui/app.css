@@ -2104,3 +2104,151 @@ html[data-platform="linux"] body, html[data-platform="linux"] body::before { bor
   border: 1px solid rgba(255, 255, 255, .10);
   box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, .15);
 }
+
+/* ── the turn in flight ─────────────────────────────────────────────────────
+   Everything else in this pane is a record of something that already happened.
+   This is the one row that is the present tense, so it is the only thing here
+   allowed to move. */
+.live-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 4px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  background-color: rgba(48, 209, 88, .06);
+  border: 1px solid rgba(48, 209, 88, .18);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, .06);
+  font-family: var(--code);
+  font-size: 12px;
+  color: var(--running);
+}
+.live-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--running);
+  flex: none;
+  animation: breathe 1.6s ease-in-out infinite;
+}
+@keyframes breathe {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(48, 209, 88, .45); }
+  50% { opacity: .55; box-shadow: 0 0 0 4px rgba(48, 209, 88, 0); }
+}
+.live-since { margin-left: auto; color: var(--quaternary); }
+
+/* ── tactile controls ───────────────────────────────────────────────────────
+   Machined tiles rather than filled rectangles: a rim light along the top, a
+   cast underneath, and — the part that makes them feel like objects — a
+   compression on press. A control that does not move when clicked is a picture
+   of a control. */
+.ghost {
+  background-color: rgba(255, 255, 255, .03) !important;
+  color: #8c92a4;
+  border: 1px solid rgba(255, 255, 255, .06);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, .08),
+    0 2px 4px rgba(0, 0, 0, .2);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.ghost:hover {
+  background-color: rgba(255, 255, 255, .06) !important;
+  color: #e6edf3;
+  border-color: rgba(255, 255, 255, .12);
+}
+.ghost:active {
+  background-color: rgba(0, 0, 0, .3) !important;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, .6);
+  transform: translateY(.5px);
+}
+
+/* The one action that starts something: tinted glass with an ambient throw,
+   not a filled slab. Low saturation on purpose — it has to be findable without
+   being the brightest thing in a window whose job is to show you your agents. */
+.primary {
+  background-color: rgba(0, 122, 255, .20) !important;
+  color: #d0e2ff;
+  border: 1px solid rgba(0, 122, 255, .35);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, .20),
+    0 4px 12px rgba(0, 122, 255, .15);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.primary:hover {
+  background-color: rgba(0, 122, 255, .30) !important;
+  border-color: rgba(0, 122, 255, .50);
+  color: #fff;
+  filter: none;
+}
+.primary:active {
+  background-color: rgba(0, 122, 255, .15) !important;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, .5);
+  transform: translateY(.5px);
+}
+
+/* The prompt and its actions are one thing. The field is engraved into that
+   container rather than laid on it — the shadow is at the top, where a cut
+   would have it — and the focus ring belongs to the whole group, because what
+   is focused is the act of writing a message, not an input element. */
+.composer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px 8px;
+  padding: 7px;
+  border-radius: 10px;
+  background-color: rgba(8, 9, 12, .65);
+  border: 1px solid rgba(255, 255, 255, .06);
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, .6),
+    0 1px 0 0 rgba(255, 255, 255, .04);
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.composer:focus-within {
+  border-color: rgba(0, 122, 255, .35);
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, .6),
+    0 0 0 2px rgba(0, 122, 255, .15);
+}
+.composer input {
+  flex: 1;
+  background: transparent !important;
+  border: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  padding: 6px 8px;
+  color: var(--text);
+}
+.composer input:focus { border: 0; box-shadow: none; outline: none; }
+
+/* Telemetry, not controls: low-profile chips that carry a figure and nothing
+   else. Borderless enough that a row of them is one texture rather than eight
+   little frames. */
+.metrics, kbd, .agent .pill {
+  background-color: rgba(255, 255, 255, .04);
+  color: #6e7681;
+  border: 1px solid rgba(255, 255, 255, .04);
+  box-shadow: none;
+  font-family: var(--code);
+  font-size: 10px;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.agent .pill.working {
+  background-color: rgba(48, 209, 88, .08);
+  color: var(--running);
+  border-color: rgba(48, 209, 88, .20);
+}
+.agent .pill.needs {
+  background-color: rgba(255, 214, 10, .08);
+  color: var(--paused);
+  border-color: rgba(255, 214, 10, .20);
+}
+
+/* Nothing is a picture of a control. */
+.icon:active, .answer:active, .chip:active, .menu-grid button:active,
+.detail .actions button:active, .tab:active {
+  transform: translateY(.5px);
+}

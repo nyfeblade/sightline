@@ -1417,7 +1417,15 @@ async function drawTalk(id) {
   const s = current();
   const out = el("pane");
   const asking = s?.asking ? s.asking.question : "";
-  const mark = `${events.length}|${events.at(-1)?.at ?? ""}`;
+  // What it is doing *right now* is part of what this pane shows, so it is part
+  // of what decides whether the pane has changed. Without the state and the
+  // clock in here the view sat still through an entire turn — everything had
+  // been rendered, and being mid-thought is not an event.
+  const [tone, doing] = s ? condition(s) : ["", ""];
+  const busy = tone === "working";
+  const mark = `${events.length}|${events.at(-1)?.at ?? ""}|${doing}|${
+    busy ? Math.floor((s.age_secs ?? 0)) : ""
+  }`;
 
   // Nothing has changed, and nothing was scrolled: leave it alone entirely.
   if (talkOn.id === id && talkOn.mark === mark && talkOn.asking === asking && out.firstChild) {
@@ -1442,8 +1450,10 @@ async function drawTalk(id) {
   const grew = talkOn.id === id && out.firstChild && startIdx >= 0;
 
   const follow = keepingUp(out);
-  const existing = out.querySelector(".asking-card");
-  if (existing) existing.remove();
+  for (const sel of [".asking-card", ".live-card"]) {
+    const existing = out.querySelector(sel);
+    if (existing) existing.remove();
+  }
 
   if (!grew) {
     clear(out);
@@ -1481,6 +1491,10 @@ async function drawTalk(id) {
   }
 
   if (s?.asking) out.append(askCard(s));
+  // The turn in flight, at the bottom where the next thing will appear. It is
+  // removed the moment the session goes idle, so it is never left claiming work
+  // that has finished.
+  if (busy) out.append(liveCard(doing, s.age_secs ?? 0));
   talkOn = {
     id,
     lastKey: events.length ? keyOf(events.at(-1)) : null,
@@ -1489,6 +1503,24 @@ async function drawTalk(id) {
     lastCall: talkOn.lastCall,
   };
   if (follow) out.scrollTop = out.scrollHeight;
+}
+
+/// What the session is doing at this instant.
+///
+/// The transcript only gains a line when something has been *said*, so between
+/// a question and the first tool call the pane was still and there was no way
+/// to tell thinking from stopped. This is the only thing in the window that is
+/// not a record of something that already happened.
+function liveCard(doing, since) {
+  const card = make("div", "live-card");
+  card.append(make("span", "live-dot"));
+  const what = make("span", "live-what");
+  // "running Bash" reads better than "working" when the tool is known, and the
+  // tool is the thing you actually want to see.
+  what.textContent = doing === "working" ? "thinking" : doing;
+  card.append(what);
+  card.append(make("span", "live-since", since >= 1 ? `${age(since)}` : ""));
+  return card;
 }
 
 async function drawFiles(id) {
