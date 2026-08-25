@@ -1731,6 +1731,11 @@ async function drawTalk(id) {
   // back until the real message arrives, or it would vanish and reappear.
   if (echo && echo.id === id && !echo.node.isConnected) out.append(echo.node);
 
+  // Tokens are actively appending. The container says so rather than each line
+  // saying it: a border that breathes on the thing being written into is one
+  // signal, where a marker per line is a hundred.
+  out.classList.toggle("is-streaming", s?.state === "working" || s?.state === "running");
+
   if (s?.asking) out.append(askCard(s));
   // The turn in flight, at the bottom where the next thing will appear. It is
   // removed the moment the session goes idle, so it is never left claiming work
@@ -1984,6 +1989,24 @@ const painters = {
 const FLEETWIDE = ["stream", "work", "fleet", "boundary"];
 
 // ── the selected session, and what can be done to it ───────────────────────
+//
+// Whether the actions drawer is open. Held out here rather than read off the
+// element, because the element does not survive: this rail is rebuilt whenever
+// anything about the session changes, which while a turn is in flight is every
+// second.
+let actionsOpen = false;
+/// A titled block in the metadata rail.
+///
+/// These used to be a flat run of headings and lines, all siblings, which is
+/// fine to read and impossible to treat as units — and the rail now dims and
+/// lights them one at a time. A wrapper is the whole of what that needs.
+function section(parent, title, key) {
+  const box = make("section", `rail-group${key ? ` is-${key}` : ""}`);
+  box.append(make("div", "group", title));
+  parent.append(box);
+  return box;
+}
+
 function fact(parent, key, value) {
   const line = make("div", "fact");
   line.append(make("span", "k", key));
@@ -2018,26 +2041,29 @@ function drawDetail(s) {
   const last = age(s.age_secs);
   fact(box, "last active", last === "new" ? "not yet" : `${last} ago`);
 
-  box.append(make("div", "group", "CONTEXT"));
+  const ctx = section(box, "CONTEXT", "context");
   const track = make("div", "bar-line");
   const fill = make("i");
   fill.style.width = `${s.window ? Math.min(100, (s.context / s.window) * 100) : 0}%`;
   track.append(fill);
-  box.append(track);
-  box.append(make("div", "sub", s.window ? `${tokens(s.context)} of ${tokens(s.window)}` : "—"));
+  ctx.append(track);
+  ctx.append(make("div", "sub", s.window ? `${tokens(s.context)} of ${tokens(s.window)}` : "—"));
 
   // Not the machine's numbers — what this one session is costing it. The
   // heading used to say MACHINE, which invited exactly the wrong reading.
-  box.append(make("div", "group", "RESOURCES"));
+  const res = section(box, "RESOURCES", "resources");
   const share = s.cpu === null || s.cpu === undefined ? null : s.cpu / (s.cores || 1);
-  fact(box, "processor", share === null ? "—" : `${share.toFixed(1)}% of ${s.cores} cores`);
-  fact(box, "memory", s.memory ? bytes(s.memory) : "—");
+  fact(res, "processor", share === null ? "—" : `${share.toFixed(1)}% of ${s.cores} cores`);
+  fact(res, "memory", s.memory ? bytes(s.memory) : "—");
 
   if (s.tools.length) {
-    box.append(make("div", "group", "REACHES FOR"));
+    const reach = section(box, "REACHES FOR", "reaches");
+    // A list of tools is reference; a tool mid-call is news. The same block is
+    // both, so it is lit only for the second.
+    if (s.state === "running") reach.classList.add("is-live");
     const chips = make("div", "chips");
     for (const t of s.tools) chips.append(make("span", "chip", t));
-    box.append(chips);
+    reach.append(chips);
   }
 
   if (s.rolled_output > s.output) {
@@ -2081,6 +2107,13 @@ function drawDetail(s) {
   }
 
   const actions = make("details", "actions");
+  // Open if it was open. The rail is rebuilt on every tick, and a `details`
+  // built fresh is a `details` that is closed — so opening this and then
+  // watching it shut a moment later was not a stray click, it was the redraw.
+  actions.open = actionsOpen;
+  actions.addEventListener("toggle", () => {
+    actionsOpen = actions.open;
+  });
   actions.append(make("summary", "actions-head", "Actions"));
   // Assigning does not need a terminal: a task is a record about a session,
   // and it outlives the session it is about.
@@ -3009,6 +3042,10 @@ const GRID = {
   // linear in distance, so this is the maximum.
   most: 13,
   ease: 0.1,
+  // How much taller than the window the grid is drawn. It only has to exceed
+  // one cell: the drift below wraps, so the canvas never needs to cover more
+  // than a single row's worth of travel.
+  margin: 60,
   // Read through a panel at seven tenths, twelve percent white arrives as about
   // three and a half. The dots are drawn stronger so what reaches the far side
   // is the value that was asked for.
@@ -3037,7 +3074,9 @@ const grid = (() => {
   function lay() {
     const dpr = window.devicePixelRatio || 1;
     const w = window.innerWidth;
-    const h = window.innerHeight;
+    // Drawn taller than the window at both ends, so the parallax shift moves
+    // dots that already exist rather than revealing empty canvas.
+    const h = window.innerHeight + GRID.margin * 2;
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -3112,13 +3151,51 @@ const grid = (() => {
     requestAnimationFrame(step);
   }
 
+  // Parallax. The grid is fixed to the viewport, so scrolling the conversation
+  // does not move it — and a background that is perfectly still under content
+  // that is moving reads as painted on rather than as behind. A twentieth of the
+  // scroll is enough to separate the two planes and little enough that nobody
+  // will say the background moves.
+  //
+  // A transform on the canvas element rather than a redraw: the dots do not
+  // change, only where the layer sits, and asking the compositor to shift a
+  // layer costs nothing next to five thousand arcs.
+  let drift = 0;
+  function shift(top) {
+    // The grid is infinite, and this is how — not by drawing more of it, but by
+    // wrapping. A lattice with a 20px period is identical to itself shifted by
+    // 20px, so the parallax offset is taken modulo the spacing: it drifts
+    // continuously, forever, and never travels more than one cell from home.
+    //
+    // Clamping was tried first and is the wrong shape of answer. It stops, and
+    // then the background is pinned while the text keeps moving, which is worse
+    // than no parallax at all. This has no end to run into.
+    const next = -((top * 0.05) % GRID.spacing);
+    if (Math.abs(next - drift) < 0.25) return;
+    drift = next;
+    canvas.style.transform = `translate3d(0, ${next.toFixed(2)}px, 0)`;
+  }
+  document.addEventListener(
+    "scroll",
+    (e) => {
+      const box = e.target;
+      if (box && box.classList && box.classList.contains("pane")) shift(box.scrollTop);
+    },
+    { capture: true, passive: true },
+  );
+
   window.addEventListener("resize", lay);
   window.addEventListener(
     "pointermove",
     (e) => {
       if (!flow) return;
+      // The pointer is in viewport coordinates and the dots are in the
+      // canvas's, which is offset by the margin and moved again by the
+      // parallax. Without both corrections the dots push away from a point
+      // that is not where the cursor is — or, at enough drift, from nothing at
+      // all, which reads as the grid having stopped responding.
       mx = e.clientX;
-      my = e.clientY;
+      my = e.clientY + GRID.margin - drift;
       wake();
     },
     { passive: true },
