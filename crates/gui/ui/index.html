@@ -19,6 +19,10 @@
   <!-- What the window tells you. Over the interface, not inside the status bar:
        a refusal from the trust gate can name a dozen commands, and that does not
        fit on a line. -->
+  <!-- The grid. After the lens in the document rather than before it, so the
+       dots stay crisp: a fixed layer with a 22px backdrop blur sits between the
+       wallpaper and the interface, and anything painted under it is smeared. -->
+  <canvas id="grid-canvas" aria-hidden="true"></canvas>
   <div id="notices" aria-live="polite"></div>
   <input type="file" id="wallpaper-file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif" hidden>
   <!-- Three columns and two bars. What is running, what it is doing, what it
@@ -107,6 +111,7 @@
     <button class="metrics quiet" id="cost" title="Requests, or what the same tokens would cost on the API">
       <span id="spend"></span>
     </button>
+    <button id="grid-flow" title="Whether the grid reacts to the pointer">Grid Flow: <b>On</b></button>
     <span class="hint" id="hint"></span>
   </footer>
 

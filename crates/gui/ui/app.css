@@ -2332,3 +2332,206 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ══ lens clarity ═══════════════════════════════════════════════════════════
+
+   The panels had drifted into acrylic: enough blur and enough tint that nothing
+   recognisable survived behind them, which is the failure this whole file keeps
+   returning to. A surface you cannot see through is not glass, it is a frosted
+   sheet, and every edge treatment added to compensate makes it worse rather
+   than better.
+
+   Less blur, less tint, and the darkening moved into the filter where it costs
+   nothing in clarity: `brightness` dims what is behind the panel without
+   smearing it, which is exactly the right tool for keeping text legible over
+   somebody's photograph. Tint does the same job by putting a sheet in the way. */
+html[data-backdrop="image"] #rail,
+html[data-backdrop="image"] .rail.detail,
+html[data-backdrop="image"] .middle,
+html[data-backdrop="image"] .bar,
+html[data-backdrop="image"] .status {
+  backdrop-filter: blur(18px) saturate(135%) brightness(.65);
+  -webkit-backdrop-filter: blur(18px) saturate(135%) brightness(.65);
+}
+html[data-backdrop="image"] .middle,
+html[data-backdrop="image"] #rail,
+html[data-backdrop="image"] .rail.detail {
+  background-color: rgba(10, 11, 14, .7) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22),
+              0 16px 40px rgba(0, 0, 0, .6) !important;
+}
+#rail, .rail.detail, .middle {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22),
+              0 4px 20px rgba(0, 0, 0, .5) !important;
+}
+
+/* Over a lighter panel the reading text goes to full white. The ladder below it
+   is unchanged — the point of four steps is that they are not equal, and
+   raising the top one widens the gap rather than closing it. */
+:root { --text: #ffffff; }
+.said, .plainly, .turn-said, .card-body, .notice-text, .cline, .v {
+  color: rgba(255, 255, 255, .95);
+}
+
+/* ══ Geist ══════════════════════════════════════════════════════════════════
+
+   Bundled rather than linked. The window's content security policy forbids
+   external assets, and rightly: a font from a CDN is a request this application
+   makes to somebody else's server every time it opens, and nothing about
+   Sightline should leave the machine. Served from the app's own origin it is
+   `self`, which the policy allows.
+
+   One variable file, 68 KB, covering every weight from 100 to 900. Nineteen
+   static cuts were the alternative and would have been about eight hundred.
+   Vercel's, under the SIL Open Font License; the licence is beside it in
+   GEIST-LICENSE.txt, because that is what the licence asks for. */
+@font-face {
+  font-family: "Geist";
+  src: url("Geist-Variable.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ══ the grid ═══════════════════════════════════════════════════════════════
+   Behind every panel and above the lens. Sized in device pixels by the script
+   so a one-pixel dot is one pixel and not a grey smudge. */
+#grid-canvas {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  width: 100%;
+  height: 100%;
+}
+/* The toggle sits with the other status-bar furniture and reads as furniture:
+   it is a preference, not a measurement. */
+#grid-flow {
+  cursor: pointer;
+  color: var(--quaternary);
+  background: none !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  padding: 0;
+  font: inherit;
+}
+#grid-flow:hover { color: var(--secondary); }
+#grid-flow b { font-weight: 500; color: var(--tertiary); }
+#grid-flow.is-on b { color: var(--text); }
+
+/* The panels need a stacking context of their own regardless of what is behind
+   them. They had one only when a wallpaper was set, so with the built-in
+   backdrop the grid — a fixed layer at z-index 1 — painted over the panels and
+   put a dot matrix across the middle of the prose. */
+#rail, .rail.detail, .middle, .bar, .status, .composer {
+  position: relative;
+  z-index: 2;
+}
+
+/* ══ alignment ══════════════════════════════════════════════════════════════
+
+   A pass of structural corrections. None of these are taste; each one is a
+   thing that was measurably out of line. */
+
+/* A long session name was being clipped hard against the age beside it, with no
+   gap to read the break as deliberate. The name column can shrink — it is the
+   only one that should — and it keeps eight pixels of air. */
+.agent .name {
+  min-width: 0;
+  flex-shrink: 1;
+  margin-right: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Status dots sat a pixel or two above the text they belong to, because the row
+   was aligned on the box rather than on the type. */
+.agent, .agent .where, .agent .job, .status, .bar { align-items: center; }
+.agent .dot, .pill { align-self: center; }
+
+/* The three top-right actions were three different heights: one had a border
+   the others did not, and padding did the rest. Given a height rather than
+   inferring one from their contents, they line up whatever is in them. */
+.bar .ghost, .bar .primary, .bar .icon {
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  box-sizing: border-box;
+}
+/* The placeholder sat high in the search field for the same reason. */
+.search {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  line-height: 32px;
+  box-sizing: border-box;
+}
+
+/* The divider between the session tabs and the fleet tabs stops being a line
+   and becomes space. The grouping it marks is real — those four are about the
+   machine, the rest are about the session — but a hairline in the middle of a
+   tab row reads as something that has gone wrong rather than as a boundary. */
+.tab-split {
+  border: 0 !important;
+  background: none !important;
+  width: 20px;
+}
+/* The expand control was flush against the panel's right edge. */
+.icon#focus { margin-right: 12px; }
+
+/* The conversation was hugging the glass. Text needs a margin from an edge it
+   can see, and this one is lit. */
+.pane { padding: 16px 24px; box-sizing: border-box; }
+
+/* The tool badges were sized inconsistently — a border on some of them was
+   being added to the width rather than counted inside it. */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips .chip {
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, .1) !important;
+}
+
+/* The context meter's fill was drawing past the rounded ends of its track. */
+.bar-line { overflow: hidden; }
+
+/* The composer's field and its three buttons were aligned on their boxes, which
+   are different heights, rather than on their centres. */
+.composer { display: flex; align-items: center; gap: 8px; }
+.composer input { height: 34px; box-sizing: border-box; }
+.composer .ghost, .composer .primary {
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+}
+
+/* And a hairline over the status bar, so it reads as a separate surface rather
+   than as the bottom of the one above it. */
+.status { border-top: 1px solid rgba(255, 255, 255, .06) !important; }
+
+/* ══ the grid, seen ═════════════════════════════════════════════════════════
+
+   Putting the grid behind the panels made it invisible, because the panels were
+   94% opaque — which is not glass, it is a wall with a rim. If there is
+   something behind a surface worth seeing, the surface has to be thin enough to
+   see it through; that is the same lesson this file has learned four times now
+   and it applies to a dot matrix exactly as it applied to a bloom.
+
+   So the panels come down to seven tenths, the dots come up, and the glow comes
+   back behind both. Three layers of light, all faint, none of them competing:
+   the glow is the largest and softest, the grid is the finest, and the panels
+   are the thing you look through at them. */
+#rail, .rail.detail, .middle {
+  background-color: rgba(6, 7, 9, .7) !important;
+}
+.ambient {
+  background-color: var(--base) !important;
+  background-image:
+    var(--user-wallpaper-url, none),
+    radial-gradient(105% 80% at 8% 104%, rgba(255, 255, 255, .055), transparent 60%),
+    radial-gradient(85% 65% at 95% -6%, rgba(190, 205, 255, .04), transparent 62%) !important;
+  background-size: cover, auto, auto !important;
+  background-position: center, center, center !important;
+}

@@ -2926,6 +2926,191 @@ async function paneTick() {
   setTimeout(paneTick, pane === "talk" ? 250 : 600);
 }
 
+
+// ── the grid ────────────────────────────────────────────────────────────────
+//
+// A dot every twenty pixels, behind everything, that gets out of the way of the
+// pointer and drifts back. It is the one piece of motion in this interface that
+// is not reporting anything, which is why it can be turned off and why the
+// toggle is in the status bar next to the other preferences rather than buried.
+//
+// Two things about it are performance decisions rather than visual ones, and
+// they matter here more than they would elsewhere: this window has a feed, a
+// transcript and a work pane repainting while an agent is working, and a
+// background animation that competes with those is worse than no background.
+//
+//   - The loop stops. When nothing is displaced and the pointer is not moving,
+//     the last frame stands and no further frames are asked for. A settled grid
+//     costs nothing at all, which is its state almost all of the time.
+//   - Every dot is one path, filled once. Five thousand separate fill calls a
+//     frame is a different order of cost from five thousand arcs in one.
+const GRID = {
+  spacing: 20,
+  // 1.35 rather than 1. A whole pixel larger is a different texture entirely at
+  // this spacing; a third of one is the same texture, slightly more present.
+  radius: 1.35,
+  reach: 120,
+  // How far a dot is pushed at the very centre of the pointer. The falloff is
+  // linear in distance, so this is the maximum.
+  most: 13,
+  ease: 0.1,
+  // Read through a panel at seven tenths, twelve percent white arrives as about
+  // three and a half. The dots are drawn stronger so what reaches the far side
+  // is the value that was asked for.
+  ink: "rgba(255, 255, 255, 0.3)",
+};
+
+const grid = (() => {
+  const canvas = el("grid-canvas");
+  if (!canvas) return { flowing: () => false, toggle: () => {} };
+  const ctx = canvas.getContext("2d", { alpha: true });
+
+  // Somebody who has asked their desktop for less motion has asked for this
+  // too. The grid still draws; it just stops chasing the pointer.
+  const stillness = window.matchMedia("(prefers-reduced-motion: reduce)");
+  let flow = localStorage.getItem("grid-flow") !== "off" && !stillness.matches;
+
+  let ax = new Float32Array(0);
+  let ay = new Float32Array(0);
+  let cx = new Float32Array(0);
+  let cy = new Float32Array(0);
+  let count = 0;
+  let mx = -1e4;
+  let my = -1e4;
+  let running = false;
+
+  function lay() {
+    const dpr = window.devicePixelRatio || 1;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const cols = Math.floor(w / GRID.spacing) + 1;
+    const rows = Math.floor(h / GRID.spacing) + 1;
+    // Centred, so the grid does not appear to hang off one edge when the
+    // window is resized to something that is not a multiple of the spacing.
+    const left = (w - (cols - 1) * GRID.spacing) / 2;
+    const top = (h - (rows - 1) * GRID.spacing) / 2;
+    count = cols * rows;
+    ax = new Float32Array(count);
+    ay = new Float32Array(count);
+    cx = new Float32Array(count);
+    cy = new Float32Array(count);
+    let i = 0;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++, i++) {
+        ax[i] = cx[i] = left + c * GRID.spacing;
+        ay[i] = cy[i] = top + r * GRID.spacing;
+      }
+    }
+    paint();
+  }
+
+  function paint() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = GRID.ink;
+    ctx.beginPath();
+    for (let i = 0; i < count; i++) {
+      // moveTo before each arc, or every dot is joined to the last one by a
+      // line and the grid draws as a single scribble.
+      ctx.moveTo(cx[i] + GRID.radius, cy[i]);
+      ctx.arc(cx[i], cy[i], GRID.radius, 0, Math.PI * 2);
+    }
+    ctx.fill();
+  }
+
+  function step() {
+    let moving = false;
+    const reach = GRID.reach;
+    const reach2 = reach * reach;
+    for (let i = 0; i < count; i++) {
+      let tx = ax[i];
+      let ty = ay[i];
+      if (flow) {
+        const dx = ax[i] - mx;
+        const dy = ay[i] - my;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < reach2 && d2 > 0.0001) {
+          const d = Math.sqrt(d2);
+          const push = (1 - d / reach) * GRID.most;
+          tx += (dx / d) * push;
+          ty += (dy / d) * push;
+        }
+      }
+      const nx = cx[i] + (tx - cx[i]) * GRID.ease;
+      const ny = cy[i] + (ty - cy[i]) * GRID.ease;
+      if (Math.abs(nx - tx) > 0.05 || Math.abs(ny - ty) > 0.05) moving = true;
+      cx[i] = nx;
+      cy[i] = ny;
+    }
+    paint();
+    // The whole point: when everything has arrived, stop asking for frames.
+    if (moving) requestAnimationFrame(step);
+    else running = false;
+  }
+
+  function wake() {
+    if (running) return;
+    running = true;
+    requestAnimationFrame(step);
+  }
+
+  window.addEventListener("resize", lay);
+  window.addEventListener(
+    "pointermove",
+    (e) => {
+      if (!flow) return;
+      mx = e.clientX;
+      my = e.clientY;
+      wake();
+    },
+    { passive: true },
+  );
+  // A pointer that leaves the window is not at its last position, and dots that
+  // stayed pushed aside around a cursor that is gone look like a rendering bug.
+  window.addEventListener("pointerleave", () => {
+    mx = my = -1e4;
+    wake();
+  });
+
+  lay();
+
+  return {
+    flowing: () => flow,
+    toggle: () => {
+      flow = !flow;
+      localStorage.setItem("grid-flow", flow ? "on" : "off");
+      if (!flow) {
+        mx = my = -1e4;
+      }
+      wake();
+      return flow;
+    },
+  };
+})();
+
+function drawGridToggle() {
+  const button = el("grid-flow");
+  if (!button) return;
+  const on = grid.flowing();
+  button.classList.toggle("is-on", on);
+  button.innerHTML = "";
+  button.append(document.createTextNode("Grid Flow: "));
+  button.append(make("b", null, on ? "On" : "Off"));
+}
+{
+  const button = el("grid-flow");
+  if (button) {
+    button.addEventListener("click", () => {
+      grid.toggle();
+      drawGridToggle();
+    });
+    drawGridToggle();
+  }
+}
+
 paintBackdrop();
 draw();
 startStream();
