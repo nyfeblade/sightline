@@ -2958,3 +2958,45 @@ html[data-platform="linux"] { background: #07080b; }
    enough that everything written on it still reads. */
 #rail, .rail.detail, .middle, .bar { background-color: rgba(14, 15, 20, .72) !important; }
 .status { background-color: rgba(14, 15, 20, .78) !important; }
+
+/* ══ the glass, over the app's own light ════════════════════════════════════
+   Now that the backdrop belongs to the program, the surfaces can be glass over
+   it — and this is the arrangement that finally does what all the edge work was
+   trying to fake. The shards are hard-edged and the panels blur them, so the
+   light arriving through the surface is soft while the surface itself stays
+   crisp. That difference is the whole read: you are looking *through* something.
+
+   Structure stays as Raycast has it — one surface, hairlines, no per-panel
+   radii — and only the material changes. */
+#rail, .rail.detail, .middle, .bar {
+  background-color: rgba(13, 14, 19, .62) !important;
+  backdrop-filter: blur(26px) saturate(185%);
+  -webkit-backdrop-filter: blur(26px) saturate(185%);
+}
+.status {
+  background-color: rgba(13, 14, 19, .70) !important;
+  backdrop-filter: blur(26px) saturate(185%);
+  -webkit-backdrop-filter: blur(26px) saturate(185%);
+}
+
+/* The shards have to be stronger than they were to survive being blurred: a
+   26px blur is most of a shard's width, and what came through before was a
+   suggestion. Sharper light, and more of it, so what reaches the far side of
+   the glass is still recognisably geometry. */
+.ambient {
+  background:
+    linear-gradient(114deg, transparent 11%, rgba(0, 122, 255, .20) 11%,
+      rgba(0, 122, 255, .20) 15%, transparent 15%),
+    linear-gradient(114deg, transparent 16.4%, rgba(120, 180, 255, .12) 16.4%,
+      rgba(120, 180, 255, .12) 17.8%, transparent 17.8%),
+    linear-gradient(114deg, transparent 60%, rgba(0, 122, 255, .15) 60%,
+      rgba(0, 122, 255, .15) 67%, transparent 67%),
+    linear-gradient(114deg, transparent 69.5%, rgba(130, 95, 240, .11) 69.5%,
+      rgba(130, 95, 240, .11) 71.4%, transparent 71.4%),
+    radial-gradient(120% 90% at 6% 110%, rgba(0, 92, 214, .30), transparent 56%),
+    radial-gradient(100% 80% at 97% -10%, rgba(96, 74, 200, .20), transparent 58%),
+    #090a0e;
+}
+
+/* The window's own rim, and nothing else drawn on the glass. */
+body::before { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .10); }
