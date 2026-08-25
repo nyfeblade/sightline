@@ -1241,8 +1241,95 @@ function drawStream() {
     row.append(said);
     if (ev.task) row.append(make("span", "tag", ev.task));
     out.append(row);
+    // A file an agent changed opens where it sits. The patch is fetched when
+    // asked for rather than carried on the event: a `fileChanged` is a path and
+    // two counts, and a patch is kilobytes that would be read once in twenty.
+    if (ev.kind.type === "fileChanged") out.append(diffBlock(ev));
   }
   if (follow) out.scrollTop = out.scrollHeight;
+}
+
+
+// ── what an agent changed ───────────────────────────────────────────────────
+//
+// Closed until asked. A feed of open diffs is a feed you cannot read, and the
+// counts on the line above already say whether this one is worth opening.
+function diffBlock(ev) {
+  const holder = make("div", "diff");
+  const head = make("div", "diff-head");
+  const toggle = make("button", "expand");
+  const counts = make("span", "diff-counts");
+  counts.append(make("span", "added", `+${ev.kind.added}`));
+  counts.append(make("span", "removed", `−${ev.kind.removed}`));
+
+  let shown = null;
+  const draw = async () => {
+    if (shown) {
+      shown.remove();
+      shown = null;
+      toggle.textContent = "show the change";
+      head.querySelector(".diff-acts")?.remove();
+      return;
+    }
+    toggle.textContent = "reading…";
+    let patch;
+    try {
+      patch = await invoke("diff", { id: ev.session, path: ev.kind.path });
+    } catch (e) {
+      toggle.textContent = "show the change";
+      return say(String(e));
+    }
+    toggle.textContent = "hide";
+    shown = make("div", "diff-body");
+    for (const line of patch.split("\n")) {
+      // Only the three kinds that carry meaning are marked. A patch where every
+      // line is coloured is a patch where none of them are.
+      const kind = line.startsWith("+++") || line.startsWith("---")
+        ? "meta"
+        : line.startsWith("@@")
+          ? "hunk"
+          : line.startsWith("+")
+            ? "add"
+            : line.startsWith("-")
+              ? "del"
+              : "same";
+      shown.append(make("div", `dl is-${kind}`, line || " "));
+    }
+    holder.append(shown);
+
+    // The one destructive action in this window, and it appears only once the
+    // change is on screen. Offering to undo something nobody has looked at is
+    // how a person reverts the wrong file.
+    const acts = make("span", "diff-acts");
+    const back = make("button", "ghost", "Put it back");
+    back.title = "git checkout — discards the uncommitted change in this file";
+    back.addEventListener("click", async () => {
+      if (!(await confirmed(`Discard the change to ${shortPath(ev.kind.path)}? It cannot be undone.`))) return;
+      try {
+        say(await invoke("revert", { id: ev.session, path: ev.kind.path }));
+        if (shown) {
+          shown.remove();
+          shown = null;
+          toggle.textContent = "show the change";
+        }
+        acts.remove();
+      } catch (e) {
+        say(String(e));
+      }
+    });
+    acts.append(back);
+    head.append(acts);
+    // There is deliberately no "accept". The change is already on disk, and a
+    // button that does nothing while implying it blessed something is worse
+    // than no button.
+  };
+
+  toggle.textContent = "show the change";
+  toggle.addEventListener("click", draw);
+  head.append(toggle);
+  head.append(counts);
+  holder.append(head);
+  return holder;
 }
 
 // ── what each session was asked to do ──────────────────────────────────────

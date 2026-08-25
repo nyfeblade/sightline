@@ -890,6 +890,71 @@ fn attach_image(name: String, data: String) -> Result<String, String> {
 /// which is accurate and is not how anyone thinks about the work: a person hands
 /// over a project, and what comes back should be the project with the sessions
 /// inside it.
+/// What an agent changed in one file, as a patch.
+///
+/// Fetched when asked for rather than carried on the event. A `fileChanged`
+/// says a path and two counts, which is what a feed line needs; a patch is
+/// kilobytes, arrives for every write, and would be read in perhaps one case in
+/// twenty. The event vocabulary stays cheap and this stays a question.
+#[tauri::command]
+fn diff(shared: State<Shared>, id: String, path: String) -> Result<String, String> {
+    shared.raw(|app| {
+        let session = app
+            .sessions
+            .iter()
+            .find(|s| s.id == id)
+            .ok_or_else(|| format!("no session {id}"))?;
+        let cwd = std::path::PathBuf::from(&session.cwd);
+        // Relative to the session's own directory, which is what the transcript
+        // records and what git wants.
+        let rel = std::path::Path::new(&path)
+            .strip_prefix(&cwd)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| path.clone());
+        sightline_core::git::diff(&cwd, &rel)
+            .ok_or_else(|| format!("nothing changed in {rel}, or it is not in a repository"))
+    })
+}
+
+/// Put a file back the way it was before an agent touched it.
+///
+/// The one destructive thing in this window, and it is here because the
+/// alternative is a person leaving Sightline to undo something Sightline showed
+/// them. It discards uncommitted work in that file and cannot be undone, so the
+/// front end asks first and the reason it asks is this comment.
+///
+/// There is deliberately no counterpart. "Accept" would do nothing: the change
+/// is already on disk, and a button that changes nothing while implying it
+/// blessed something is worse than no button.
+#[tauri::command]
+fn revert(shared: State<Shared>, id: String, path: String) -> Result<String, String> {
+    shared.raw(|app| {
+        let session = app
+            .sessions
+            .iter()
+            .find(|s| s.id == id)
+            .ok_or_else(|| format!("no session {id}"))?;
+        let cwd = std::path::PathBuf::from(&session.cwd);
+        let rel = std::path::Path::new(&path)
+            .strip_prefix(&cwd)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| path.clone());
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&cwd)
+            .args(["checkout", "--", &rel])
+            .output()
+            .map_err(|e| format!("git: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "could not put {rel} back: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+        Ok(format!("{rel} put back"))
+    })
+}
+
 #[tauri::command]
 fn mission(shared: State<Shared>, id: String) -> Result<serde_json::Value, String> {
     shared.raw(|app| {
@@ -1528,6 +1593,8 @@ fn main() {
             attach_image,
             attach_file,
             mission,
+            diff,
+            revert,
             clipboard_image,
             answer,
             interrupt,
