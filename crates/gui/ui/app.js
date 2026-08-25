@@ -1594,10 +1594,8 @@ async function drawTalk(id) {
   const grew = talkOn.id === id && out.firstChild && startIdx >= 0;
 
   const follow = keepingUp(out);
-  for (const sel of [".asking-card", ".live-card"]) {
-    const existing = out.querySelector(sel);
-    if (existing) existing.remove();
-  }
+  const stale = out.querySelector(".asking-card");
+  if (stale) stale.remove();
 
   if (!grew) {
     clear(out);
@@ -1643,7 +1641,18 @@ async function drawTalk(id) {
   // The turn in flight, at the bottom where the next thing will appear. It is
   // removed the moment the session goes idle, so it is never left claiming work
   // that has finished.
-  if (busy) out.append(liveCard(s, events));
+  // Updated in place rather than replaced. The elapsed time is part of what
+  // decides this pane has changed, so it changes every second — and rebuilding
+  // the row every second restarted its animation every second, which is why the
+  // mark never got through a single cycle and looked frozen.
+  const live = out.querySelector(".live-card");
+  if (!busy) {
+    if (live) live.remove();
+  } else if (live) {
+    fillLive(live, s, events);
+  } else {
+    out.append(liveCard(s, events));
+  }
   talkOn = {
     id,
     lastKey: events.length ? keyOf(events.at(-1)) : null,
@@ -1667,19 +1676,26 @@ async function drawTalk(id) {
 /// reply written, or a thread picked up.
 function liveCard(s, events) {
   const card = make("div", "live-card");
-
   const mark = make("span", "live-mark");
   mark.append(make("span", "live-seam"));
   mark.append(make("span", "live-spark"));
   card.append(mark);
+  card.append(make("span", "live-act"));
+  card.append(make("span", "live-tally"));
+  card.append(make("span", "live-since"));
+  fillLive(card, s, events);
+  return card;
+}
 
+/// The words, without touching the mark — so its animation is never restarted.
+function fillLive(card, s, events) {
   const last = events.at(-1);
   let act;
   if (s.tool) act = `Running ${s.tool}`;
   else if (!last || last.kind === "prompt") act = "Picking up the thread";
   else if (last.kind === "result") act = "Reading what came back";
   else act = "Writing a reply";
-  card.append(make("span", "live-act", act));
+  card.querySelector(".live-act").textContent = act;
 
   // What the turn has reached for, counted back to the last thing you said. A
   // turn that has run four tools is a different thing from one that has run
@@ -1690,18 +1706,16 @@ function liveCard(s, events) {
     if (e.kind === "prompt") break;
     if (e.kind === "tool" && e.tool) counts.set(e.tool, (counts.get(e.tool) ?? 0) + 1);
   }
-  if (counts.size) {
-    const tally = [...counts.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 3)
-      .map(([tool, n]) => `${tool} ${n}`)
-      .join(", ");
-    card.append(make("span", "live-tally", tally));
-  }
+  card.querySelector(".live-tally").textContent = counts.size
+    ? [...counts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([tool, n]) => `${tool} ${n}`)
+        .join(", ")
+    : "";
 
   const since = s.age_secs ?? 0;
-  if (since >= 1) card.append(make("span", "live-since", age(since)));
-  return card;
+  card.querySelector(".live-since").textContent = since >= 1 ? age(since) : "";
 }
 
 async function drawFiles(id) {
