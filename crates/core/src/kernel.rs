@@ -267,6 +267,14 @@ fn assign(asked_by: &str, args: &Value) -> Result<String, String> {
     let started = owned::start(agent.program(), &root, &spec, SETTLE)?;
     let mut store = crate::work::Store::load(crate::work::path_in(&crate::app::data_dir()));
     let id = store.assign(&started.name, task);
+    // How it was routed, at the only moment anybody knows.
+    store.attribute(
+        &id,
+        chosen.as_ref().map(|r| r.name.as_str()),
+        wanted,
+        spec.model.as_deref(),
+        spec.effort.as_deref(),
+    );
     // Who asked. Written here and nowhere else, because here is the only place
     // that knows: a worker's task records what it was told to do, and without
     // this it does not record that anybody told it. The fleet then has no tree

@@ -1040,6 +1040,60 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    // What each route has actually cost, and how much of its work survived.
+    //
+    // The reason for writing routes down was never the routing. It was to make
+    // this answerable: is the cheap model cheaper once you count what it had to
+    // redo, and is the expensive one earning it.
+    if args.first().map(String::as_str) == Some("routes") {
+        let mut app = App::new(
+            app::default_root(),
+            app::default_sessions_dir(),
+            Duration::from_secs(30 * 86_400),
+            false,
+        );
+        app.with_state();
+        let hours: u64 = args
+            .iter()
+            .position(|a| a == "--since")
+            .and_then(|i| args.get(i + 1))
+            .and_then(|h| h.trim_end_matches('h').parse().ok())
+            .unwrap_or(24 * 30);
+        let spend =
+            sightline_core::limits::spend_by_session(&app::data_dir().join("events.jsonl"), hours);
+        let all = sightline_core::routing::outcomes(&app.work, &spend);
+        if args.iter().any(|a| a == "--json") {
+            println!("{}", serde_json::to_string_pretty(&all)?);
+            return Ok(());
+        }
+        if all.is_empty() {
+            println!("nothing has been assigned yet, so no route has said anything about itself");
+            return Ok(());
+        }
+        println!(
+            "{:<16}{:>7}{:>10}{:>9}{:>12}{:>14}",
+            "ROUTE", "TASKS", "VERIFIED", "OPEN", "SPENT", "PER VERIFIED"
+        );
+        for o in &all {
+            println!(
+                "{:<16}{:>7}{:>10}{:>9}{:>12}{:>14}",
+                o.route,
+                o.tasks,
+                o.verified,
+                o.open,
+                short(o.billable()),
+                // Nothing finished means nothing to say, rather than zero —
+                // which would read as free — or a dash, which reads as broken.
+                o.per_verified().map(short).unwrap_or_else(|| "—".into()),
+            );
+        }
+        println!(
+            "\nSpent is output plus a tenth of context re-read, which is how it is billed.\n\
+             A route with nothing verified has not yet said anything about itself."
+        );
+        return Ok(());
+    }
+
     if args.first().map(String::as_str) == Some("connections") {
         let deep = !args.iter().any(|a| a == "--quick");
         let all = sightline_core::agent::connections(deep);
@@ -2219,5 +2273,16 @@ mod tests {
         assert!(!leaves_passthrough(KeyCode::Esc, false));
         assert!(!leaves_passthrough(KeyCode::Char('q'), false));
         assert!(!leaves_passthrough(KeyCode::Char('c'), true));
+    }
+}
+
+/// A token count short enough for a column.
+fn short(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{}k", n / 1_000)
+    } else {
+        n.to_string()
     }
 }

@@ -111,6 +111,20 @@ pub struct Task {
     /// watch it stand. Only then has anything been demonstrated.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub proven: Vec<String>,
+    /// How this work was routed, when it was.
+    ///
+    /// Recorded at the moment of assigning, because that is the only moment it
+    /// is known: afterwards there is a session and a cost and no memory of why
+    /// that model was chosen. Without it a routing policy is an opinion with no
+    /// way to ever become a measurement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     pub state: State,
     /// named suites that must pass; Phase 2 runs them
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -123,6 +137,10 @@ pub struct Task {
 impl Task {
     pub fn new(id: String, session: String, assignment: String) -> Self {
         Task {
+            route: None,
+            agent: None,
+            model: None,
+            effort: None,
             id,
             session,
             parent: None,
@@ -301,6 +319,28 @@ impl Store {
 
     /// The open task for a session, which is the one anything acting on that
     /// session cares about.
+    /// Say how a task was routed. Separate from `assign` because assigning is
+    /// what the kernel does and routing is what somebody decided beforehand —
+    /// and a task assigned by hand has no route, which is a fact worth keeping
+    /// rather than a gap to fill in.
+    pub fn attribute(
+        &mut self,
+        id: &str,
+        route: Option<&str>,
+        agent: &str,
+        model: Option<&str>,
+        effort: Option<&str>,
+    ) {
+        let Some(task) = self.tasks.iter_mut().find(|t| t.id == id) else {
+            return;
+        };
+        task.route = route.map(str::to_string);
+        task.agent = Some(agent.to_string());
+        task.model = model.map(str::to_string);
+        task.effort = effort.map(str::to_string);
+        self.dirty = true;
+    }
+
     pub fn task_for(&self, session: &str) -> Option<&Task> {
         self.tasks
             .iter()
