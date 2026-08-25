@@ -550,10 +550,15 @@ function drawAttached() {
   row.hidden = attached.length === 0;
   for (const item of attached) {
     const chip = make("span", "attachment");
-    const thumb = make("img", "attachment-thumb");
-    thumb.src = item.preview;
-    thumb.alt = "";
-    chip.append(thumb);
+    if (item.preview) {
+      const thumb = make("img", "attachment-thumb");
+      thumb.src = item.preview;
+      thumb.alt = "";
+      chip.append(thumb);
+    } else {
+      // Read from the host clipboard: the bytes are on disk, not in the page.
+      chip.append(make("span", "attachment-mark", "▣"));
+    }
     chip.append(make("span", "attachment-name", item.path.split("/").pop()));
     const drop = make("button", "attachment-drop", "×");
     drop.title = "Do not send this one";
@@ -1649,39 +1654,36 @@ async function drawTalk(id) {
   if (follow) out.scrollTop = out.scrollHeight;
 }
 
-/// The turn in progress, reported rather than announced.
+/// The turn in progress.
 ///
-/// "Thinking" is a word, not a measurement, and this program exists to measure
-/// what agents do. So the row says what act is under way, what the turn has
-/// reached for so far, and how long it has been going — the same three things
-/// every other view here answers, about the one moment they cannot.
+/// An animated mark and a sentence, rather than a word in a box. The mark is
+/// the one this program is named for: a seam with light travelling along it,
+/// the same figure as the icon. It moves because the turn is moving, and it is
+/// the only thing in the window that does.
 ///
-/// The act is inferred rather than guessed at: a tool that is running is the
-/// answer whenever there is one, and between calls the last thing that happened
-/// says what is going on now — a result just came back and is being read, a
-/// question was just asked and nothing has happened yet, or a reply is being
-/// written.
+/// The sentence says what act is under way, and it is inferred rather than
+/// guessed at: a running tool answers it whenever there is one, and between
+/// calls the last thing that happened says whether a result is being read, a
+/// reply written, or a thread picked up.
 function liveCard(s, events) {
   const card = make("div", "live-card");
-  card.append(make("span", "live-scan"));
+
+  const mark = make("span", "live-mark");
+  mark.append(make("span", "live-seam"));
+  mark.append(make("span", "live-spark"));
+  card.append(mark);
 
   const last = events.at(-1);
   let act;
-  if (s.tool) {
-    act = `running ${s.tool}`;
-  } else if (!last || last.kind === "prompt") {
-    act = "picking up the thread";
-  } else if (last.kind === "result") {
-    act = "reading what came back";
-  } else {
-    act = "writing a reply";
-  }
+  if (s.tool) act = `Running ${s.tool}`;
+  else if (!last || last.kind === "prompt") act = "Picking up the thread";
+  else if (last.kind === "result") act = "Reading what came back";
+  else act = "Writing a reply";
   card.append(make("span", "live-act", act));
 
-  // What this turn has reached for, counted back to the last thing you said.
-  // A turn that has run four tools is a different thing from one that has run
-  // forty, and the number is the only way to tell them apart while it is still
-  // going.
+  // What the turn has reached for, counted back to the last thing you said. A
+  // turn that has run four tools is a different thing from one that has run
+  // forty, and while it is still going this is the only way to tell them apart.
   const counts = new Map();
   for (let i = events.length - 1; i >= 0; i -= 1) {
     const e = events[i];
@@ -1691,14 +1693,14 @@ function liveCard(s, events) {
   if (counts.size) {
     const tally = [...counts.entries()]
       .sort((a, b) => b[1] - a[1])
-      .slice(0, 4)
-      .map(([tool, n]) => `${tool}\u00d7${n}`)
-      .join("  ");
+      .slice(0, 3)
+      .map(([tool, n]) => `${tool} ${n}`)
+      .join(", ");
     card.append(make("span", "live-tally", tally));
   }
 
   const since = s.age_secs ?? 0;
-  card.append(make("span", "live-since", since >= 1 ? age(since) : ""));
+  if (since >= 1) card.append(make("span", "live-since", age(since)));
   return card;
 }
 
@@ -2258,6 +2260,34 @@ on("cost", "click", () => {
   draw();
 });
 
+// Ctrl+V, read where the bytes actually are.
+//
+// WebKitGTK does not give the page image data on paste: the event fires, and
+// `clipboardData` has no image in it. So the web path below is tried first and
+// left in place for the platforms where it works, and if it produced nothing
+// the clipboard is read from the host instead.
+let webPasteAt = 0;
+document.addEventListener("keydown", async (e) => {
+  const combo = (e.ctrlKey || e.metaKey) && (e.key === "v" || e.key === "V");
+  if (!combo) return;
+  const before = Date.now();
+  // Let the paste event have its chance first.
+  setTimeout(async () => {
+    if (webPasteAt >= before) return;
+    try {
+      const path = await invoke("clipboard_image");
+      attached.push({ path, preview: null });
+      drawAttached();
+      say(`Image saved to ${shortPath(path)} — it goes with your next message.`);
+      el("message").focus();
+    } catch (err) {
+      // Not an error worth shouting about: most Ctrl+V presses are text.
+      const why = String(err);
+      if (!why.includes("no image on the clipboard")) say(why);
+    }
+  }, 120);
+});
+
 // Paste an image anywhere in the window and it goes with the next message.
 // Bound on the document rather than the input, because reaching for the field
 // first is a step nobody should have to think about.
@@ -2266,6 +2296,7 @@ document.addEventListener("paste", async (e) => {
   const images = items.filter((i) => i.type.startsWith("image/"));
   if (!images.length) return;
   e.preventDefault();
+  webPasteAt = Date.now();
   for (const item of images) {
     const file = item.getAsFile();
     if (!file) continue;

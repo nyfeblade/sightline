@@ -2440,49 +2440,60 @@ html[data-mood="needs"] .ambient::before {
 }
 .attachment-drop:hover { color: var(--failed); }
 
-/* ── the turn in progress ───────────────────────────────────────────────────
-   Reported, not announced. The act on the left, what the turn has reached for
-   in the middle, how long it has been going on the right — the same shape as
-   every other row in this window, about the one moment the others cannot show.
 
-   The marker is the icon's own seam: a line of light that travels, rather than
-   a dot that pulses. A pulsing dot is what every interface uses to mean "wait";
-   this is the mark this program is called after, moving. */
+
+/* ── the turn in progress ───────────────────────────────────────────────────
+   An animated mark and a sentence, not a word in a box.
+
+   The mark is the figure this program is named for and the one on its icon: a
+   seam, with light travelling along it. It moves because the turn is moving,
+   and it is the only thing in the window that moves at all — which is what
+   makes it readable out of the corner of your eye. */
 .live-card {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 16px 0 6px;
-  padding: 10px 14px;
-  border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, .045);
-  border: 1px solid rgba(255, 255, 255, .09);
-  box-shadow: var(--inner-glow);
-  font-family: var(--code);
-  font-size: 11.5px;
+  align-items: baseline;
+  gap: 10px;
+  margin: 18px 0 6px;
+  padding: 0 2px;
+  font-family: var(--ui);
+  font-size: 13px;
   color: var(--secondary);
-  overflow: hidden;
+}
+.live-mark {
   position: relative;
+  align-self: center;
+  width: 3px;
+  height: 20px;
+  flex: none;
 }
-/* The seam: a narrow bright line that sweeps the width of the row and fades at
-   both ends, so it reads as something passing rather than something blinking. */
-.live-scan {
+.live-seam {
   position: absolute;
-  inset: 0 auto 0 0;
-  width: 34%;
-  pointer-events: none;
-  background: linear-gradient(90deg,
-    transparent 0%,
-    rgba(255, 255, 255, .055) 45%,
-    rgba(255, 255, 255, .10) 50%,
-    rgba(255, 255, 255, .055) 55%,
-    transparent 100%);
-  animation: sweep 2.4s cubic-bezier(.45, 0, .55, 1) infinite;
+  inset: 0;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, .13);
 }
-@keyframes sweep {
-  from { transform: translateX(-120%); }
-  to { transform: translateX(420%); }
+/* The light: a short bright segment that runs the length of the seam, brightest
+   in the middle of its travel and gone at the ends — the same falloff the icon
+   uses, moving. */
+.live-spark {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 7px;
+  border-radius: 2px;
+  background: linear-gradient(180deg,
+    rgba(255, 255, 255, 0),
+    rgba(255, 255, 255, .95) 50%,
+    rgba(255, 255, 255, 0));
+  box-shadow: 0 0 7px rgba(190, 214, 255, .55);
+  animation: seam 1.9s cubic-bezier(.5, 0, .5, 1) infinite;
 }
-.live-act { color: var(--text); position: relative; }
-.live-tally { color: var(--tertiary); position: relative; letter-spacing: .02em; }
-.live-since { margin-left: auto; color: var(--quaternary); position: relative; }
+@keyframes seam {
+  0%   { top: -7px; opacity: 0; }
+  22%  { opacity: 1; }
+  78%  { opacity: 1; }
+  100% { top: 20px; opacity: 0; }
+}
+.live-act { color: var(--text); font-weight: 500; }
+.live-tally { color: var(--tertiary); font-size: 12px; }
+.live-since { margin-left: auto; color: var(--quaternary); font-size: 12px; }

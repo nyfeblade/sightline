@@ -698,6 +698,87 @@ fn send(shared: State<Shared>, id: String, text: String) -> Result<(), String> {
         .unwrap_or_else(|| Err("no such session".into()))
 }
 
+/// Take an image off the system clipboard, without going through the webview.
+///
+/// WebKitGTK does not hand image data to the page: a paste fires an event whose
+/// `clipboardData` carries no image item, so the obvious implementation looks
+/// correct, runs, and finds nothing. Every part of it works except the part
+/// that would have had the bytes.
+///
+/// So the clipboard is read where it can actually be read. `wl-paste` on
+/// Wayland, `xclip` on X11 — the app is a client of whichever is running, so it
+/// inherits the environment either needs.
+#[tauri::command]
+fn clipboard_image() -> Result<String, String> {
+    use std::process::Command;
+
+    // What the clipboard is offering. Asking for a type it does not have gets
+    // an empty read and no explanation, so the offer is checked first.
+    let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
+    let (list, read): (Vec<&str>, Vec<&str>) = if wayland {
+        (vec!["wl-paste", "--list-types"], vec!["wl-paste", "--type"])
+    } else {
+        (
+            vec!["xclip", "-selection", "clipboard", "-t", "TARGETS", "-o"],
+            vec!["xclip", "-selection", "clipboard", "-o", "-t"],
+        )
+    };
+
+    let offered = Command::new(list[0])
+        .args(&list[1..])
+        .output()
+        .map_err(|e| format!("could not read the clipboard ({}): {e}", list[0]))?;
+    let offered = String::from_utf8_lossy(&offered.stdout);
+    let kind = offered
+        .lines()
+        .map(str::trim)
+        .find(|t| t.starts_with("image/"))
+        .ok_or("there is no image on the clipboard")?;
+
+    let out = Command::new(read[0])
+        .args(&read[1..])
+        .arg(kind)
+        .output()
+        .map_err(|e| format!("could not read the clipboard: {e}"))?;
+    if out.stdout.is_empty() {
+        return Err(format!("the clipboard offered {kind} and then gave nothing"));
+    }
+    let ext = kind.rsplit('/').next().unwrap_or("png");
+    let ext = match ext {
+        "jpeg" => "jpg",
+        "svg+xml" => "svg",
+        other => other,
+    };
+    write_pasted(&out.stdout, ext)
+}
+
+/// Write image bytes where a session can read them, and say where.
+fn write_pasted(bytes: &[u8], ext: &str) -> Result<String, String> {
+    if bytes.is_empty() {
+        return Err("that image was empty".into());
+    }
+    if bytes.len() > 32 * 1024 * 1024 {
+        return Err(format!(
+            "that image is {} MB, which is more than 32",
+            bytes.len() / 1_048_576
+        ));
+    }
+    let dir = core_app::data_dir().join("pasted");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let ext = if ext.len() <= 5 && ext.chars().all(|c| c.is_ascii_alphanumeric()) {
+        ext
+    } else {
+        "png"
+    };
+    let path = dir.join(format!("{stamp}.{ext}"));
+    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
 /// Put a pasted image somewhere a session can read it, and say where.
 ///
 /// Sending the bytes themselves would only work for the sessions Sightline holds
@@ -718,23 +799,11 @@ fn attach_image(name: String, data: String) -> Result<String, String> {
     if bytes.len() > 32 * 1024 * 1024 {
         return Err(format!("that image is {} MB, which is more than 32", bytes.len() / 1_048_576));
     }
-    let dir = core_app::data_dir().join("pasted");
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-
-    // Named by when it arrived, so two pastes in a row do not collide and the
-    // directory sorts the way somebody would expect.
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
     let ext = std::path::Path::new(&name)
         .extension()
         .and_then(|e| e.to_str())
-        .filter(|e| e.len() <= 5 && e.chars().all(|c| c.is_ascii_alphanumeric()))
         .unwrap_or("png");
-    let path = dir.join(format!("{stamp}.{ext}"));
-    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
-    Ok(path.to_string_lossy().into_owned())
+    write_pasted(&bytes, ext)
 }
 
 #[tauri::command]
@@ -1299,6 +1368,7 @@ fn main() {
             screen,
             send,
             attach_image,
+            clipboard_image,
             answer,
             interrupt,
             start,
