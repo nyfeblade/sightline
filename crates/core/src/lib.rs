@@ -6,6 +6,7 @@
 
 pub mod agent;
 pub mod app;
+pub mod backdrop;
 pub mod bootstrap;
 pub mod brief;
 pub mod bus;

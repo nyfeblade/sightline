@@ -8,7 +8,19 @@
 <body>
   <!-- The field the glass is over. Without something behind it, a blurred
        surface has nothing to blur and reads as flat grey. -->
-  <div class="ambient" aria-hidden="true"></div>
+  <!-- The light behind everything. `ambient` is the wallpaper — the bloom that
+       ships, or a picture somebody chose — and `lens` is the layer that makes an
+       arbitrary picture safe to put text on top of. -->
+  <div class="ambient" id="app-root-canvas" aria-hidden="true"></div>
+  <div class="glass-lens-overlay" aria-hidden="true"></div>
+  <!-- The backdrop chooser. A real file input rather than a path typed into a
+       prompt: WebKitGTK opens the desktop's own file chooser for one, so this
+       is the native picker without the app taking a dialog dependency. -->
+  <!-- What the window tells you. Over the interface, not inside the status bar:
+       a refusal from the trust gate can name a dozen commands, and that does not
+       fit on a line. -->
+  <div id="notices" aria-live="polite"></div>
+  <input type="file" id="wallpaper-file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif" hidden>
   <!-- Three columns and two bars. What is running, what it is doing, what it
        is — and across the bottom, the one thing that cannot make progress
        without you. -->

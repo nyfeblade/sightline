@@ -942,6 +942,35 @@ fn main() -> Result<()> {
     // They are written here rather than edited by hand because the file lives
     // outside every worktree on purpose, and a person who has to go looking for
     // it will not set one.
+    // The light behind the glass. Here as well as in the window because both
+    // front ends are meant to reach the same engine, and because setting it
+    // from a shell is how somebody scripts a machine's appearance.
+    if args.first().map(String::as_str) == Some("backdrop") {
+        use sightline_core::backdrop::{self, Choice};
+        match args.get(1).map(String::as_str) {
+            None => {
+                println!(
+                    "{}",
+                    match backdrop::load() {
+                        Choice::Bloom => "bloom".to_string(),
+                        Choice::None => "none".to_string(),
+                        Choice::Image(p) => p.display().to_string(),
+                    }
+                );
+            }
+            Some(choice) => {
+                let choice = match choice {
+                    "bloom" => Choice::Bloom,
+                    "none" => Choice::None,
+                    path => Choice::Image(std::path::PathBuf::from(app::expand(path))),
+                };
+                backdrop::save(&choice).map_err(|e| anyhow::anyhow!(e))?;
+                println!("backdrop set — the window picks it up when it next opens");
+            }
+        }
+        return Ok(());
+    }
+
     if args.first().map(String::as_str) == Some("limits") {
         let opt = |name: &str| {
             args.iter()

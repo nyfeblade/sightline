@@ -708,6 +708,70 @@ fn send(shared: State<Shared>, id: String, text: String) -> Result<(), String> {
 /// So the clipboard is read where it can actually be read. `wl-paste` on
 /// Wayland, `xclip` on X11 — the app is a client of whichever is running, so it
 /// inherits the environment either needs.
+/// What the window should paint behind everything, ready for the page.
+///
+/// The reading and the size limit live in core, because both front ends need
+/// the same answer and because a file the person named is a decision with rules
+/// attached. This hands over a kind and, for a picture, a data URI — the
+/// content security policy permits `data:` and no other source, so a path on
+/// disk is not something the page could load even if it were given one.
+#[tauri::command]
+fn backdrop() -> (String, Option<String>) {
+    sightline_core::backdrop::painted()
+}
+
+/// Take a picture the person picked in the file chooser, and keep a copy.
+///
+/// A copy rather than a reference, and that is the interesting decision. The
+/// file chooser in a webview hands over bytes and a name; it deliberately does
+/// not hand over a path, so there is nothing to point at even if pointing were
+/// wanted. It turns out to be the better arrangement anyway: a backdrop chosen
+/// from a downloads folder that is later tidied up would otherwise vanish, and
+/// the window would open one day looking wrong for a reason nobody could see.
+#[tauri::command]
+fn set_backdrop_image(name: String, data: String) -> Result<(String, Option<String>), String> {
+    use base64::Engine;
+    let payload = data.rsplit(',').next().unwrap_or_default();
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(payload)
+        .map_err(|e| format!("that picture did not arrive intact: {e}"))?;
+    if bytes.len() as u64 > sightline_core::backdrop::LARGEST {
+        return Err(format!(
+            "that image is {:.1} MB, and a backdrop may be at most {} MB.",
+            bytes.len() as f64 / 1_048_576.0,
+            sightline_core::backdrop::LARGEST / 1_048_576,
+        ));
+    }
+    let ext = std::path::Path::new(&name)
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_else(|| "png".into());
+    let kept = sightline_core::app::data_dir().join(format!("backdrop.{ext}"));
+    std::fs::write(&kept, &bytes).map_err(|e| format!("{}: {e}", kept.display()))?;
+    sightline_core::backdrop::save(&sightline_core::backdrop::Choice::Image(kept))?;
+    Ok(sightline_core::backdrop::painted())
+}
+
+/// Choose it. `bloom`, `none`, or a path to a picture.
+///
+/// Validated before it is remembered: a file that is missing, too large, or of
+/// a kind the webview cannot decode is refused here, while somebody is looking
+/// at the thing they just chose — rather than saved and then found to be broken
+/// every time the window opens.
+#[tauri::command]
+fn set_backdrop(choice: String) -> Result<(String, Option<String>), String> {
+    use sightline_core::backdrop::Choice;
+    let choice = match choice.as_str() {
+        "bloom" => Choice::Bloom,
+        "none" => Choice::None,
+        path => Choice::Image(std::path::PathBuf::from(sightline_core::app::expand(
+            path.trim(),
+        ))),
+    };
+    sightline_core::backdrop::save(&choice)?;
+    Ok(sightline_core::backdrop::painted())
+}
+
 #[tauri::command]
 fn clipboard_image() -> Result<String, String> {
     use std::process::Command;
@@ -1397,6 +1461,9 @@ fn main() {
             stream,
             tasks,
             assign,
+            backdrop,
+            set_backdrop,
+            set_backdrop_image,
             note,
             brief,
             workflow,

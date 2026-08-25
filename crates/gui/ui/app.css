@@ -1869,11 +1869,12 @@ kbd { background: rgba(255, 255, 255, .10); border-color: rgba(255, 255, 255, .1
                                         rgba(180, 214, 255, .075) 42%,
                                         transparent 74%),
     radial-gradient(40% 34% at 12% 92%, rgba(255, 255, 255, .085), transparent 70%),
-    radial-gradient(34% 30% at 92% 8%, rgba(190, 205, 255, .06), transparent 72%),
-    linear-gradient(114deg, transparent 27%, rgba(255, 255, 255, .028) 27%,
-      rgba(255, 255, 255, .028) 31%, transparent 31%),
-    linear-gradient(114deg, transparent 63%, rgba(255, 255, 255, .022) 63%,
-      rgba(255, 255, 255, .022) 68%, transparent 68%);
+    radial-gradient(34% 30% at 92% 8%, rgba(190, 205, 255, .06), transparent 72%);
+  /* The hard-edged rakes that used to be here are gone. A gradient makes a soft
+     bloom convincingly and cannot make geometry: the edges come out
+     mathematically clean in a way light is not, and the result read as a
+     pattern laid over the window rather than as something behind it. Geometry
+     is a picture now, and the person chooses it. */
 
   /* The cyan bleed, for the few things that outrank everything around them. */
   --bleed: radial-gradient(circle at 80% 50%, rgba(0, 163, 255, .15) 0%,
@@ -2072,3 +2073,262 @@ dialog h2 { color: var(--text); }
 /* Concentricity, applied. A pill inside a control inside a panel: 12 → 6 → 4. */
 .pill, .tag, .cue, .chip { border-radius: var(--r-chip) !important; }
 kbd, .key { border-radius: var(--r-control) !important; }
+
+/* ══ a backdrop somebody chose ══════════════════════════════════════════════
+
+   The surfaces are translucent, so what is behind them is most of what they
+   look like — which makes the backdrop the one piece of this interface worth
+   handing over. Three layers, and the middle one is the reason an arbitrary
+   photograph is safe to put an interface on top of.
+
+     0   #app-root-canvas   the wallpaper: the bloom that ships, or a picture
+     1   .glass-lens-overlay  one fixed dim-and-blur over the whole viewport
+     2   the panels         glass, reading the normalised light through it
+
+   The lens is a single viewport-sized layer rather than a blur on each panel,
+   and that is a performance decision as much as a visual one. This application
+   has a feed, a transcript and a work pane that repaint while an agent is
+   working; a backdrop-filter on each of those is paid every frame, on every
+   one. Paid once, on a layer that never scrolls and never repaints, it is
+   free by comparison. */
+
+#app-root-canvas {
+  background-image: var(--user-wallpaper-url, none);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+/* No wallpaper chosen: the canvas paints the bloom itself, and the lens has
+   nothing to normalise, so it stays out of the way entirely. */
+html:not([data-backdrop="image"]) .glass-lens-overlay { display: none; }
+html[data-backdrop="none"] .ambient { background: var(--base) !important; }
+
+.glass-lens-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  /* Softer than the specified 55% black, 50px and brightness .7. Those numbers
+     were tried first and measured: they leave about three tenths of the picture
+     before the panels blur it again, and a designed backdrop arrives at the
+     glass as near-black. The lens exists so an arbitrary photograph cannot make
+     text unreadable — not so that no backdrop can be seen. These values keep
+     body text above 12:1 over the worst part of a deliberately busy wallpaper,
+     which is the constraint the aggressive ones were protecting. */
+  background: rgba(0, 0, 0, .3);
+  backdrop-filter: blur(22px) saturate(150%) brightness(.92);
+  -webkit-backdrop-filter: blur(22px) saturate(150%) brightness(.92);
+}
+
+/* With a picture behind them the panels read its light rather than their own,
+   so the built-in field is dropped and the sheet goes a little brighter — there
+   is more behind it to catch. */
+html[data-backdrop="image"] #rail,
+html[data-backdrop="image"] .rail.detail,
+html[data-backdrop="image"] .middle {
+  position: relative;
+  z-index: 2;
+  background-color: transparent !important;
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, .05) 0%,
+                                            rgba(255, 255, 255, .01) 100%) !important;
+  border: 1px solid rgba(255, 255, 255, .12) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .18),
+              0 16px 40px rgba(0, 0, 0, .6) !important;
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+}
+html[data-backdrop="image"] .bar,
+html[data-backdrop="image"] .status {
+  position: relative;
+  z-index: 2;
+  background-color: rgba(0, 0, 0, .35) !important;
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+}
+
+/* Where you type goes darker still. A pattern in somebody's wallpaper bleeding
+   up through the text they are composing is the one place this feature could
+   make the application worse to use, so the groove takes the extra alpha. */
+html[data-backdrop="image"] .composer input,
+html[data-backdrop="image"] .search,
+html[data-backdrop="image"] pre,
+html[data-backdrop="image"] code {
+  background: rgba(0, 0, 0, .75) !important;
+  border: 1px solid rgba(255, 255, 255, .08) !important;
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, .8) !important;
+}
+
+/* ══ Geist ══════════════════════════════════════════════════════════════════
+
+   Vercel's typeface, and the right one for this: it was drawn for interfaces
+   that are mostly data, so its figures are even-width and its lowercase stays
+   distinct at eleven pixels, which is the size most of this window is set in.
+
+   Named first and followed by the stack that was already here, so nothing turns
+   into a fallback serif on a machine that does not have it. `GeistMono NFM` is
+   installed on this one; Geist Sans is not, and until it is bundled with the
+   app this line is a preference rather than a guarantee. It is a preference
+   worth stating: the day the font is there, the window uses it. */
+:root {
+  --ui: "Geist", "Geist Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text",
+        "SF Pro Display", "Inter", system-ui, "Segoe UI", sans-serif;
+  --code: "Geist Mono", "GeistMono NFM", "GeistMono Nerd Font Mono", "SF Mono",
+          "JetBrains Mono", "JetBrainsMono NFM", ui-monospace, Consolas, monospace;
+  --mono: var(--code);
+}
+
+/* ══ micro-lighting ═════════════════════════════════════════════════════════
+
+   Four refinements, all of them about where light comes from rather than how
+   much of it there is. */
+
+/* The window's own edge, top-weighted rather than uniform. A border of one
+   even value describes an outline; a bright top and a heavy drop describes an
+   object under a light that is above it. */
+body {
+  border: 1px solid rgba(255, 255, 255, .06);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, .18),
+              0 24px 60px rgba(0, 0, 0, .8),
+              0 0 50px rgba(255, 255, 255, .03);
+}
+
+/* The grooves, with a proper lip: a dark line along the top edge where the
+   surface drops away and a light one along the bottom where it comes back up.
+   That pair is the whole difference between a dark box and a channel cut into
+   something. */
+.search, .composer input {
+  background: rgba(0, 0, 0, .7) !important;
+  border: 1px solid rgba(255, 255, 255, .06) !important;
+  border-top: 1px solid rgba(0, 0, 0, .9) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, .08) !important;
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, .8) !important;
+}
+
+/* Every elevated control gets the internal specular line. It is one pixel and
+   it is the reason these read as lit rather than as filled. */
+.ghost, .primary, .chip, .menu-grid button, .answer, kbd {
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, .12) 0%,
+                                            rgba(255, 255, 255, .03) 100%) !important;
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, .25),
+              0 2px 8px rgba(0, 0, 0, .5) !important;
+}
+
+/* The tab you are on emits a little light. This is the one glow in the
+   interface, and it is here rather than anywhere else because it marks the
+   single piece of state you look for most often — which pane you are reading. */
+.tab.is-on {
+  border-bottom-color: rgba(255, 255, 255, .85) !important;
+  box-shadow: 0 0 10px rgba(255, 255, 255, .35);
+}
+
+/* ══ no glow ════════════════════════════════════════════════════════════════
+
+   Every emitted light in the interface comes out here. The built-in blooms, the
+   halo on the window edge, the light on the active tab: all of them were the
+   interface making its own light, and with a picture behind the glass that is
+   two light sources fighting. One source, and it is the one you chose.
+
+   What is kept is reflected light — the specular rim along a top edge, the
+   shadow under a panel. That is not glow; that is a surface responding to light
+   that exists. */
+.ambient {
+  background: var(--base) !important;
+  background-image: var(--user-wallpaper-url, none) !important;
+  background-size: cover !important;
+  background-position: center !important;
+}
+#rail, .rail.detail, .middle {
+  background-image: var(--glass-panel) !important;
+}
+html[data-backdrop="image"] #rail,
+html[data-backdrop="image"] .rail.detail,
+html[data-backdrop="image"] .middle {
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, .05) 0%,
+                                            rgba(255, 255, 255, .01) 100%) !important;
+}
+body {
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, .18),
+              0 24px 60px rgba(0, 0, 0, .8);
+}
+.tab.is-on {
+  border-bottom-color: rgba(255, 255, 255, .85) !important;
+  box-shadow: none !important;
+}
+
+/* ══ notices ════════════════════════════════════════════════════════════════
+
+   Over the interface rather than in the status bar. The bar is a line, and a
+   line holds a word: "noted", "sent to 4 sessions". It does not hold a refusal
+   from the trust gate, which names every command it would have run — that one
+   ran off the end of the bar, across the composer, and out of the window.
+
+   Glass, because it floats over content, which is the one condition under which
+   a blur in this application is doing work rather than costing frames. */
+#notices {
+  position: fixed;
+  right: 16px;
+  bottom: 52px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+  pointer-events: none;
+}
+.notice {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  max-width: min(440px, 42vw);
+  padding: 10px 10px 10px 13px;
+  border-radius: var(--r-card);
+  background: rgba(11, 12, 14, .88);
+  border: 1px solid rgba(255, 255, 255, .12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .18), 0 16px 40px rgba(0, 0, 0, .7);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  animation: notice-in .18s cubic-bezier(.2, .8, .2, 1) both;
+}
+.notice.is-going { animation: notice-out .18s ease both; }
+@keyframes notice-in {
+  from { opacity: 0; transform: translateY(8px) scale(.98); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes notice-out {
+  from { opacity: 1; }
+  to { opacity: 0; transform: translateY(4px); }
+}
+.notice-text {
+  color: var(--secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  /* A very long refusal scrolls inside the card rather than growing one that
+     covers the window. */
+  max-height: 40vh;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+.notice-close {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  line-height: 1;
+  border: 0 !important;
+  background: none !important;
+  box-shadow: none !important;
+  color: var(--quaternary) !important;
+  cursor: pointer;
+}
+.notice-close:hover { color: var(--text) !important; }
+
+/* The status bar keeps its span for the one-word cases and for any window that
+   somehow has no stack, and it is now told not to grow. */
+#note {
+  max-width: 38vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

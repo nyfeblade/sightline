@@ -499,8 +499,53 @@ function condition(s) {
   return ["ended", "ended"];
 }
 
+// What the window tells you, and where.
+//
+// This used to be a span in the status bar. A one-word confirmation fits there
+// and most of these are not one word: a refusal from the trust gate names every
+// command it would have run, and that message ran off the end of the bar, over
+// the composer, and out of the window. A status line is for state, not for
+// prose.
+//
+// So: a card, over the interface rather than inside it, wrapping, dismissable,
+// and gone on its own. Several stack. Time to read scales with how much there
+// is to read, because a message that names fifteen shell commands and vanishes
+// in three seconds may as well not have been shown.
 const say = (text) => {
-  el("note").textContent = text;
+  const body = String(text).trim();
+  if (!body) return;
+  const stack = el("notices");
+  if (!stack) {
+    el("note").textContent = body;
+    return;
+  }
+  // The same thing twice in a row is one thing. Polling redraws can repeat a
+  // failure every few seconds, and a column of identical cards is noise.
+  const last = stack.lastElementChild;
+  if (last && last.dataset.body === body) return;
+
+  const card = make("div", "notice");
+  card.dataset.body = body;
+  card.append(make("div", "notice-text", body));
+  const close = make("button", "notice-close", "×");
+  close.setAttribute("aria-label", "dismiss");
+  card.append(close);
+
+  const drop = () => {
+    if (!card.isConnected) return;
+    card.classList.add("is-going");
+    setTimeout(() => card.remove(), 180);
+  };
+  close.addEventListener("click", drop);
+  stack.append(card);
+
+  // Four seconds, plus a second for every twenty words, capped — long enough to
+  // read a refusal, short enough that a confirmation does not sit there.
+  const words = body.split(/\s+/).length;
+  setTimeout(drop, Math.min(4000 + (words / 20) * 1000, 16000));
+
+  // Never more than a handful on screen.
+  while (stack.children.length > 4) stack.firstElementChild.remove();
 };
 
 // A window that fails silently is a window that lies. Anything thrown lands in
@@ -2667,6 +2712,49 @@ function drawSwatches() {
   }
 }
 
+
+// ── the light behind everything ─────────────────────────────────────────────
+// Core decides what the backdrop is and hands over a data URI for a picture,
+// because the content security policy permits `data:` and no other source — a
+// path on disk is not something this page could load.
+async function paintBackdrop(painted) {
+  const [kind, url] = painted || (await invoke("backdrop"));
+  document.documentElement.dataset.backdrop = kind;
+  document.documentElement.style.setProperty(
+    "--user-wallpaper-url",
+    url ? `url("${url}")` : "none",
+  );
+}
+
+
+// The file chooser. WebKitGTK opens the desktop's own for a file input, so this
+// is the native picker and the app takes no dialog dependency to get it. The
+// input hands over bytes rather than a path — deliberately, for security — so
+// the picture is copied into Sightline's directory and kept there.
+function chooseBackdrop() {
+  const input = el("wallpaper-file");
+  input.value = "";
+  input.onchange = async () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    try {
+      const data = await new Promise((done, fail) => {
+        const reader = new FileReader();
+        reader.onload = () => done(reader.result);
+        reader.onerror = () => fail(reader.error);
+        reader.readAsDataURL(file);
+      });
+      await paintBackdrop(
+        await invoke("set_backdrop_image", { name: file.name, data }),
+      );
+      say(`backdrop set from ${file.name}`);
+    } catch (e) {
+      say(String(e));
+    }
+  };
+  input.click();
+}
+
 let notifyOn = true;
 async function drawMenu() {
   const grid = el("menu-grid");
@@ -2682,6 +2770,11 @@ async function drawMenu() {
     });
     grid.append(button);
   };
+  item("Backdrop…", "choose the light behind the glass", () => chooseBackdrop());
+  item("Clear the backdrop", "back to flat black", async () => {
+    await paintBackdrop(await invoke("set_backdrop", { choice: "none" }));
+    say("backdrop cleared");
+  });
   item("Broadcast…", "say one thing to every session", async () => {
     const text = await ask("Send to every session Sightline can reach:");
     if (text) say(`sent to ${await invoke("broadcast", { text })} sessions`);
@@ -2833,6 +2926,7 @@ async function paneTick() {
   setTimeout(paneTick, pane === "talk" ? 250 : 600);
 }
 
+paintBackdrop();
 draw();
 startStream();
 paneTick();
