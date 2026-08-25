@@ -61,7 +61,7 @@
   --accent: #007aff;
   --accent-text: #0a84ff;
   --accent-wash: rgba(0, 122, 255, .16);
-  --focus-ring: 0 0 0 2px rgba(0, 122, 255, .5);
+  --focus-ring: 0 0 0 2px rgba(255, 255, 255, .45);
 
   /* Native status colours. */
   --running: #30d158;
@@ -2252,3 +2252,43 @@ html[data-platform="linux"] body, html[data-platform="linux"] body::before { bor
 .detail .actions button:active, .tab:active {
   transform: translateY(.5px);
 }
+
+/* ── neutral again ──────────────────────────────────────────────────────────
+   No blue in the chrome. The tactile treatment stays exactly as it is — rim
+   along the top, cast underneath, compression on press — because none of that
+   depended on the hue; it is the light that made those controls feel like
+   objects, not the colour.
+
+   What it buys back is the rule this palette keeps arriving at: with nothing in
+   the interface coloured, any colour on the screen means something is
+   happening. Green is running, amber wants a person, red was refused, and
+   nothing competes with them. */
+.primary {
+  background-color: rgba(255, 255, 255, .14) !important;
+  color: var(--text);
+  border: 1px solid rgba(255, 255, 255, .22);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, .22),
+    0 4px 12px rgba(0, 0, 0, .45);
+}
+.primary:hover {
+  background-color: rgba(255, 255, 255, .20) !important;
+  border-color: rgba(255, 255, 255, .32);
+  color: #fff;
+}
+.primary:active {
+  background-color: rgba(0, 0, 0, .3) !important;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, .6);
+  transform: translateY(.5px);
+}
+
+/* The focus ring belongs to the same family: light, not hue. It still has to be
+   unmistakable — a keyboard user has nothing else telling them where they are —
+   so it is brighter than anything around it rather than a different colour. */
+.composer:focus-within {
+  border-color: rgba(255, 255, 255, .24);
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, .6),
+    0 0 0 2px rgba(255, 255, 255, .14);
+}
+:focus-visible { box-shadow: 0 0 0 2px rgba(255, 255, 255, .45); }
