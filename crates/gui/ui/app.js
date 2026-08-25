@@ -1034,6 +1034,12 @@ function pushEvent(ev, live = true) {
 /// second later when the window next thinks to ask.
 function applyEvent(ev) {
   const s = sessions.find((x) => x.id === ev.session);
+  // By ear. The kinds chosen are the ones you would want to know about from
+  // another window: something wants you, something broke, something finished.
+  const kind = ev.kind?.type;
+  if (kind === "permissionAsked" || kind === "askedYou") sound.play("asking");
+  else if (kind === "toolFailed" || kind === "checksFailed" || kind === "error") sound.play("failed");
+  else if (kind === "turnEnded" || kind === "idle") sound.play("done");
   const k = ev.kind;
   if (!s) {
     // Something Sightline has not told us about yet. Only a new session is
@@ -1266,6 +1272,362 @@ function show(id) {
   soon(0);
 }
 
+
+
+// ── the fleet, by ear ───────────────────────────────────────────────────────
+//
+// Four cues, so a fleet can be monitored from another window. They are
+// synthesised rather than played from files: the window's policy forbids
+// external assets, and a bundled sample would be three sounds' worth of bytes
+// for something an oscillator and an envelope do exactly.
+//
+// Off until asked for. An application that starts making noise on its own is
+// hostile no matter how good the noise is — the toggle is in the status bar and
+// in the palette.
+//
+// The envelopes matter more than the pitches. Every one of these is under 400ms
+// and ends in silence rather than a cut, because a sound that stops abruptly is
+// heard as a click and gets tiring in a way a decay never does.
+const sound = (() => {
+  let ctx = null;
+  let on = localStorage.getItem("sound") === "on";
+
+  // Built on first use, not on load: a browser will not start an audio context
+  // before somebody has interacted with the page, and one created too early is
+  // suspended forever.
+  const audio = () => {
+    if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (ctx.state === "suspended") ctx.resume();
+    return ctx;
+  };
+
+  /// A short burst of filtered noise. This is a physical sound — a key, a
+  /// switch — and physical sounds are noise shaped by a resonance, never a tone.
+  function clack(gain = 0.05) {
+    const c = audio();
+    const frames = Math.floor(c.sampleRate * 0.05);
+    const buffer = c.createBuffer(1, frames, c.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < frames; i++) {
+      // Decaying noise. The exponent is what makes it a clack rather than a
+      // hiss: nearly all of the energy is in the first few milliseconds.
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / frames, 12);
+    }
+    const src = c.createBufferSource();
+    src.buffer = buffer;
+    const band = c.createBiquadFilter();
+    band.type = "bandpass";
+    band.frequency.value = 1800;
+    band.Q.value = 1.2;
+    const out = c.createGain();
+    out.gain.value = gain;
+    src.connect(band).connect(out).connect(c.destination);
+    src.start();
+  }
+
+  /// Two partials a fifth apart, struck and left to ring. A single sine is a
+  /// test tone; the second partial is what makes it an object.
+  function chime(root = 880, gain = 0.045) {
+    const c = audio();
+    const now = c.currentTime;
+    for (const [ratio, level, secs] of [[1, 1, 1.1], [1.5, 0.4, 0.85], [2.02, 0.18, 0.6]]) {
+      const osc = c.createOscillator();
+      osc.type = "sine";
+      osc.frequency.value = root * ratio;
+      const env = c.createGain();
+      env.gain.setValueAtTime(0.0001, now);
+      env.gain.exponentialRampToValueAtTime(gain * level, now + 0.008);
+      env.gain.exponentialRampToValueAtTime(0.0001, now + secs);
+      osc.connect(env).connect(c.destination);
+      osc.start(now);
+      osc.stop(now + secs + 0.05);
+    }
+  }
+
+  /// Low, slow, and felt rather than heard. Used for the two things that want a
+  /// person: a session asking permission, and a failure.
+  function pulse(hz = 96, secs = 0.5, gain = 0.09) {
+    const c = audio();
+    const now = c.currentTime;
+    const osc = c.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(hz, now);
+    osc.frequency.exponentialRampToValueAtTime(hz * 0.72, now + secs);
+    const env = c.createGain();
+    env.gain.setValueAtTime(0.0001, now);
+    env.gain.exponentialRampToValueAtTime(gain, now + 0.05);
+    env.gain.exponentialRampToValueAtTime(0.0001, now + secs);
+    osc.connect(env).connect(c.destination);
+    osc.start(now);
+    osc.stop(now + secs + 0.05);
+  }
+
+  const cues = {
+    // You sent something.
+    dispatch: () => clack(),
+    // A turn finished.
+    done: () => chime(880),
+    // A whole project finished.
+    finished: () => chime(660, 0.05),
+    // Somebody is waiting on you. Twice, because once is missable and this is
+    // the one cue that must not be.
+    asking: () => {
+      pulse(120, 0.45);
+      setTimeout(() => on && pulse(120, 0.45), 240);
+    },
+    // Something is wrong. Lower and longer than asking, so the two are told
+    // apart from another room without being looked at.
+    failed: () => pulse(72, 0.75, 0.1),
+  };
+
+  return {
+    on: () => on,
+    toggle: () => {
+      on = !on;
+      localStorage.setItem("sound", on ? "on" : "off");
+      // Say what was turned on by making the sound. A toggle for something you
+      // cannot see should demonstrate itself.
+      if (on) cues.done();
+      say(on ? "sound on" : "sound off");
+      drawGridToggle();
+      return on;
+    },
+    play: (name) => {
+      if (!on || !cues[name]) return;
+      try {
+        cues[name]();
+      } catch {
+        // An audio context that will not start is not worth a message on every
+        // event. The toggle still reads as on, and turning it off and on again
+        // is the fix.
+      }
+    },
+  };
+})();
+
+// ── the palette ─────────────────────────────────────────────────────────────
+//
+// Everything reachable from the keyboard, in one place. Ctrl+K, type, return.
+//
+// It is a `dialog` rather than a floating div, which is worth a line: the
+// platform then owns focus, Escape, and making everything behind it inert. A
+// hand-rolled overlay gets two of those three right and the third is the one
+// that traps somebody in a modal they cannot leave.
+//
+// What it offers is assembled per keystroke rather than kept in a list, because
+// half of it depends on what is selected — you cannot stop a session that is not
+// there, and "tell this worker" means nothing without a worker.
+
+let paletteOn = false;
+
+function paletteActions(query) {
+  const q = query.trim().toLowerCase();
+  const out = [];
+  const add = (group, label, note, run, weight = 0) => {
+    const hay = `${label} ${note}`.toLowerCase();
+    if (q && !hay.includes(q)) return;
+    out.push({ group, label, note, run, weight });
+  };
+
+  // Sessions first: the commonest reason to open this is to go somewhere.
+  for (const s of sessions) {
+    const [kind, label] = condition(s);
+    add(
+      "Go to",
+      s.name,
+      `${label} · ${shortPath(s.cwd)}`,
+      () => show(s.id),
+      kind === "needs" ? 3 : kind === "working" ? 2 : 1,
+    );
+  }
+
+  // Panes, so the tab strip is reachable without the mouse.
+  const panes = [
+    ["Talk", "talk"], ["Feed", "feed"], ["Files", "files"], ["Tree", "tree"],
+    ["Plan", "plan"], ["Subagents", "agents"], ["Stats", "stats"],
+    ["Errors", "errors"], ["Boundary", "boundary"], ["Work", "work"],
+    ["Fleet", "fleet"], ["Stream", "stream"],
+  ];
+  for (const [label, id] of panes) {
+    add("View", label, "switch pane", () => {
+      pane = id;
+      for (const tab of document.querySelectorAll(".tab")) {
+        tab.classList.toggle("is-on", tab.dataset.pane === id);
+      }
+      draw();
+      soon(0);
+    });
+  }
+  if (current()?.task?.assignment?.startsWith("supervise:")) {
+    add("View", "Mission", "how this project is distributed", () => {
+      pane = "mission";
+      for (const tab of document.querySelectorAll(".tab")) {
+        tab.classList.toggle("is-on", tab.dataset.pane === "mission");
+      }
+      draw();
+      soon(0);
+    }, 2);
+  }
+
+  const s = current();
+  if (s) {
+    add("This session", "Interrupt", s.name, async () => {
+      try {
+        await invoke("interrupt", { id: s.id });
+        say("interrupted");
+      } catch (e) {
+        say(String(e));
+      }
+    });
+    // Stopping ends a process. It asks first, here as everywhere else.
+    add("This session", "Stop", `end ${s.name}`, async () => {
+      if (!(await confirmed(`Stop ${s.name}? Its work in progress is lost.`))) return;
+      try {
+        await invoke("stop", { id: s.id });
+        say(`stopped ${s.name}`);
+        draw();
+      } catch (e) {
+        say(String(e));
+      }
+    });
+    add("This session", "Rename…", s.name, async () => {
+      const name = await ask("Call it:", s.name);
+      if (name) {
+        await invoke("rename", { id: s.id, name });
+        draw();
+      }
+    });
+  }
+
+  add("Fleet", "Hand work to a chief…", "start a supervised project", async () => {
+    const intent = await ask("What do you want done? In your words:");
+    if (!intent) return;
+    try {
+      say(`${await invoke("start_chief", { intent })} is supervising`);
+      draw();
+    } catch (e) {
+      say(String(e));
+    }
+  }, 2);
+  add("Fleet", "Broadcast…", "say one thing to every session", async () => {
+    const text = await ask("Send to every session Sightline can reach:");
+    if (text) say(`sent to ${await invoke("broadcast", { text })} sessions`);
+  });
+  add("Fleet", "New session…", "start one here", () => el("starter").showModal());
+
+  add("Window", "Backdrop…", "the light behind the glass", () => chooseBackdrop());
+  add("Window", `Grid Flow: ${grid.flowing() ? "on" : "off"}`, "dots react to the pointer", () => {
+    grid.toggle();
+    drawGridToggle();
+  });
+  add("Window", `Sound: ${sound.on() ? "on" : "off"}`, "hear the fleet working", () => {
+    sound.toggle();
+  });
+
+  // Best matches first, and a stable order inside a weight so the list does not
+  // reshuffle under a finger that is already moving toward something.
+  return out.sort((a, b) => b.weight - a.weight).slice(0, 40);
+}
+
+let paletteAt = 0;
+let paletteShown = [];
+
+function drawPalette() {
+  const list = el("palette-list");
+  clear(list);
+  paletteShown = paletteActions(el("palette-input").value);
+  if (!paletteShown.length) {
+    return list.append(empty("nothing matches"));
+  }
+  paletteAt = Math.max(0, Math.min(paletteAt, paletteShown.length - 1));
+  let group = null;
+  paletteShown.forEach((item, i) => {
+    if (item.group !== group) {
+      group = item.group;
+      list.append(make("div", "group", group.toUpperCase()));
+    }
+    const row = make("div", `palette-row${i === paletteAt ? " is-on" : ""}`);
+    row.append(make("span", "palette-label", item.label));
+    row.append(make("span", "palette-note", item.note));
+    row.addEventListener("click", () => runPalette(i));
+    row.addEventListener("mousemove", () => {
+      if (paletteAt === i) return;
+      paletteAt = i;
+      drawPalette();
+    });
+    list.append(row);
+  });
+  const on = list.querySelector(".palette-row.is-on");
+  if (on) on.scrollIntoView({ block: "nearest" });
+}
+
+async function runPalette(i) {
+  const item = paletteShown[i];
+  if (!item) return;
+  closePalette();
+  try {
+    await item.run();
+  } catch (e) {
+    say(String(e));
+  }
+}
+
+function openPalette() {
+  if (paletteOn) return;
+  paletteOn = true;
+  paletteAt = 0;
+  const box = el("palette");
+  el("palette-input").value = "";
+  box.showModal();
+  drawPalette();
+  el("palette-input").focus();
+}
+
+function closePalette() {
+  if (!paletteOn) return;
+  paletteOn = false;
+  el("palette").close();
+}
+
+{
+  const box = el("palette");
+  const input = el("palette-input");
+  if (box && input) {
+    input.addEventListener("input", () => {
+      paletteAt = 0;
+      drawPalette();
+    });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowDown" || (e.ctrlKey && e.key === "n")) {
+        e.preventDefault();
+        paletteAt += 1;
+        drawPalette();
+      } else if (e.key === "ArrowUp" || (e.ctrlKey && e.key === "p")) {
+        e.preventDefault();
+        paletteAt -= 1;
+        drawPalette();
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        runPalette(paletteAt);
+      }
+    });
+    box.addEventListener("close", () => {
+      paletteOn = false;
+    });
+    // Clicking the backdrop closes it, the way every launcher of this shape
+    // does. A dialog's own backdrop is the element itself.
+    box.addEventListener("click", (e) => {
+      if (e.target === box) closePalette();
+    });
+  }
+  window.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
+      e.preventDefault();
+      paletteOn ? closePalette() : openPalette();
+    }
+  });
+}
+
 // ── the mission ─────────────────────────────────────────────────────────────
 //
 // One project, in one place. A chief and the workers it started are separate
@@ -1327,14 +1689,31 @@ function missionChart(chart) {
     const y1 = start.y + NODE.h;
     const x2 = x + NODE.w / 2;
     const mid = y1 + NODE.gapY / 2;
-    // An elbow rather than a curve: this is a hierarchy, and a right angle says
-    // "reports to" in a way a bezier does not.
-    svg.append(
-      el2("path", {
-        d: `M ${x1} ${y1} V ${mid} H ${x2} V ${y}`,
-        class: `wire${node.open ? "" : " is-done"}`,
-      }),
-    );
+    // A cubic with vertical handles: it leaves the parent going down and
+    // arrives at the child going down, so the curve reads as flow rather than
+    // as a line that happens to connect two boxes.
+    const d = `M ${x1} ${y1} C ${x1} ${mid}, ${x2} ${mid}, ${x2} ${y}`;
+    const wire = el2("path", { d, class: `wire${node.open ? "" : " is-done"}` });
+    svg.append(wire);
+
+    // Work in flight is shown as work in flight: a packet running the wire from
+    // the chief to the worker. Only on open branches — a finished one is a
+    // record, and a record that still pulses is reporting something that is no
+    // longer happening.
+    if (node.open) {
+      const packet = el2("circle", { r: 2.4, class: "packet" });
+      const along = el2("animateMotion", {
+        dur: "2.6s",
+        repeatCount: "indefinite",
+        path: d,
+        // Staggered by depth and position, or every packet on the diagram
+        // marches in step and the whole thing reads as one animation rather
+        // than several independent things happening.
+        begin: `${((node.depth * 0.7 + x2 * 0.004) % 2.6).toFixed(2)}s`,
+      });
+      packet.append(along);
+      svg.append(packet);
+    }
   }
 
   for (const { x, y, node } of at.values()) {
@@ -1360,10 +1739,64 @@ function missionChart(chart) {
           : "nothing refutes this yet";
     g.append(mark);
     g.addEventListener("click", () => show(node.session));
+    g.addEventListener("mouseenter", () => lensOver(g, node));
+    g.addEventListener("mouseleave", () => lensAway());
     g.style.cursor = "pointer";
     svg.append(g);
   }
   return svg;
+}
+
+
+/// What a node is doing, without leaving the diagram.
+///
+/// A small pane that follows the pointer and shows the last few things that
+/// session actually did. Read from the stream already in the window rather than
+/// fetched: hovering a diagram should not put a request on the wire, and
+/// everything needed is here.
+let lensTimer = null;
+function lensOver(node, item) {
+  clearTimeout(lensTimer);
+  // A short delay, so sweeping the pointer across a diagram does not flash six
+  // of these on the way past.
+  lensTimer = setTimeout(() => {
+    const box = el("node-lens");
+    if (!box) return;
+    clear(box);
+    box.append(make("div", "lens-who", item.session));
+    box.append(make("div", "lens-state", `${item.state} · ${item.notes} note${item.notes === 1 ? "" : "s"}`));
+    const recent = streamEvents
+      .filter((e) => e.session === item.session)
+      .slice(-6)
+      .reverse();
+    if (!recent.length) {
+      box.append(make("div", "lens-line", "nothing on the stream yet"));
+    } else {
+      for (const e of recent) {
+        const line = make("div", `lens-line is-${e.kind.type}`);
+        line.append(make("span", "at", clock(e.at)));
+        line.append(make("span", null, streamText(e.kind)));
+        box.append(line);
+      }
+    }
+    const at = node.getBoundingClientRect();
+    box.hidden = false;
+    // Placed against the node, and flipped when it would leave the window.
+    const width = box.offsetWidth;
+    const left = Math.min(at.left, window.innerWidth - width - 16);
+    box.style.left = `${Math.max(12, left)}px`;
+    const below = at.bottom + 10;
+    box.style.top =
+      below + box.offsetHeight > window.innerHeight
+        ? `${Math.max(12, at.top - box.offsetHeight - 10)}px`
+        : `${below}px`;
+  }, 180);
+}
+
+function lensAway() {
+  clearTimeout(lensTimer);
+  const box = el("node-lens");
+  if (box) box.hidden = true;
 }
 
 async function drawMission(s) {
@@ -2708,6 +3141,7 @@ on("composer", "submit", async (e) => {
   // appeared and an error explaining why.
   const showing = selected;
   showEcho(showing, text);
+  sound.play("dispatch");
   try {
     await invoke("send", { id: selected, text: withAttachments(text) });
     box.value = "";
@@ -2906,6 +3340,16 @@ document.addEventListener("keydown", (e) => {
 
 // A question with a text answer. `prompt()` is blocked in a webview, and a
 // dialog can look like the rest of this instead of like 1998.
+/// Yes or no, on the same dialog as everything else.
+///
+/// Typed rather than clicked: the field asks for the word, which is heavier than
+/// a button and is meant to be. Everything routed through this ends a process or
+/// discards work.
+async function confirmed(question, word = "yes") {
+  const said = await ask(`${question}\n\nType ${word} to confirm:`);
+  return said !== null && said.trim().toLowerCase() === word;
+}
+
 function ask(title, value = "") {
   return new Promise((resolve) => {
     el("asking-title").textContent = title;
@@ -3437,12 +3881,21 @@ const grid = (() => {
 
 function drawGridToggle() {
   const button = el("grid-flow");
-  if (!button) return;
-  const on = grid.flowing();
-  button.classList.toggle("is-on", on);
-  button.innerHTML = "";
-  button.append(document.createTextNode("Grid Flow: "));
-  button.append(make("b", null, on ? "On" : "Off"));
+  if (button) {
+    const on = grid.flowing();
+    button.classList.toggle("is-on", on);
+    button.innerHTML = "";
+    button.append(document.createTextNode("Grid Flow: "));
+    button.append(make("b", null, on ? "On" : "Off"));
+  }
+  const speaker = el("sound-toggle");
+  if (speaker) {
+    const on = sound.on();
+    speaker.classList.toggle("is-on", on);
+    speaker.innerHTML = "";
+    speaker.append(document.createTextNode("Sound: "));
+    speaker.append(make("b", null, on ? "On" : "Off"));
+  }
 }
 {
   const button = el("grid-flow");
@@ -3451,6 +3904,12 @@ function drawGridToggle() {
       grid.toggle();
       drawGridToggle();
     });
+  }
+  const speaker = el("sound-toggle");
+  if (speaker) {
+    speaker.addEventListener("click", () => sound.toggle());
+  }
+  {
     drawGridToggle();
   }
 }

@@ -23,6 +23,8 @@
        dots stay crisp: a fixed layer with a 22px backdrop blur sits between the
        wallpaper and the interface, and anything painted under it is smeared. -->
   <canvas id="grid-canvas" aria-hidden="true"></canvas>
+  <!-- What a node in the mission diagram is doing, on hover. -->
+  <div id="node-lens" hidden aria-hidden="true"></div>
   <div id="notices" aria-live="polite"></div>
   <input type="file" id="wallpaper-file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif" hidden>
   <!-- Three columns and two bars. What is running, what it is doing, what it
@@ -120,8 +122,22 @@
       <span id="spend"></span>
     </button>
     <button id="grid-flow" title="Whether the grid reacts to the pointer">Grid Flow: <b>On</b></button>
+    <button id="sound-toggle" title="Hear the fleet: a click when you send, a chime when a turn ends, a low pulse when something wants you">Sound: <b>Off</b></button>
     <span class="hint" id="hint"></span>
   </footer>
+
+  <!-- The palette. A dialog rather than a floating div so the platform handles
+       focus, Escape, and the inertness of everything behind it. -->
+  <dialog id="palette">
+    <input id="palette-input" spellcheck="false" autocomplete="off"
+           placeholder="Search sessions, or type a command…" />
+    <div id="palette-list" role="listbox"></div>
+    <div class="palette-foot">
+      <span><kbd>↑</kbd><kbd>↓</kbd> move</span>
+      <span><kbd>↵</kbd> run</span>
+      <span><kbd>esc</kbd> close</span>
+    </div>
+  </dialog>
 
   <dialog id="starter">
     <form method="dialog" id="start-form">
