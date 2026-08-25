@@ -61,6 +61,7 @@ fn main() {
         policy: Some(policy),
         // This example is about the boundary, not about reach.
         reach: Vec::new(),
+        effort: None,
         kernel_tools: false,
     };
 

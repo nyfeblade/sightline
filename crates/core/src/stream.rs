@@ -309,6 +309,12 @@ impl Watcher {
             out.push(Kind::CostSpent {
                 output: snap.output - cursor.output,
                 estimate: (snap.cost - cursor.cost).max(0.0),
+                // A watched session's transcript carries these per message and
+                // this differ works on totals, so they are left to the owned
+                // path, which sees each turn's usage as it arrives. Zero here
+                // means "not measured", not "none".
+                cached: 0,
+                written: 0,
             });
             cursor.output = snap.output;
             cursor.cost = snap.cost;
@@ -514,7 +520,9 @@ mod tests {
         f.cost = 0.03;
         let out = w.poll(t, &[f.snap()]);
         match &out[0].kind {
-            Kind::CostSpent { output, estimate } => {
+            Kind::CostSpent {
+                output, estimate, ..
+            } => {
                 assert_eq!(*output, 150, "the second report is what was spent since");
                 assert!((estimate - 0.02).abs() < 1e-9);
             }

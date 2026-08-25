@@ -218,17 +218,42 @@ impl Parser {
             }
             // A turn finished: what it cost, and back to waiting on the person.
             Some("result") => {
-                let output = msg
-                    .get("usage")
-                    .and_then(|u| u.get("output_tokens"))
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0);
+                let usage = msg.get("usage");
+                let num = |key: &str| {
+                    usage
+                        .and_then(|u| u.get(key))
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0)
+                };
+                let output = num("output_tokens");
+                // What the turn actually cost to send. `cache_read` is the whole
+                // conversation so far, re-read: it is the term that grows with
+                // the session and it is sixty-odd times the output on a real
+                // project. Recording only the output was measuring the smallest
+                // number in the transaction.
+                let cached = num("cache_read_input_tokens");
+                let written = match usage.and_then(|u| u.get("cache_creation")) {
+                    Some(c) => {
+                        c.get("ephemeral_5m_input_tokens")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0)
+                            + c.get("ephemeral_1h_input_tokens")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(0)
+                    }
+                    None => num("cache_creation_input_tokens"),
+                };
                 let estimate = msg
                     .get("total_cost_usd")
                     .and_then(Value::as_f64)
                     .unwrap_or(0.0);
-                if output > 0 || estimate > 0.0 {
-                    out.push(ev(Kind::CostSpent { output, estimate }));
+                if output > 0 || estimate > 0.0 || cached > 0 {
+                    out.push(ev(Kind::CostSpent {
+                        output,
+                        estimate,
+                        cached,
+                        written,
+                    }));
                 }
                 out.push(ev(Kind::SessionWaiting));
             }
@@ -347,6 +372,10 @@ pub fn argv(spec: &Spec) -> Vec<String> {
     if let Some(m) = &spec.model {
         v.push("--model".into());
         v.push(m.clone());
+    }
+    if let Some(e) = &spec.effort {
+        v.push("--effort".into());
+        v.push(e.clone());
     }
     // Nothing can be asked mid-run in this mode, so a session that is going to
     // need to edit files has to be started knowing that — otherwise every such
@@ -482,6 +511,15 @@ pub struct Spec {
     /// listing permitted directories, or a sandbox — and a supervisor that
     /// works here and is mute on someone else's machine is worse than one
     /// carrying a flag that is sometimes a no-op.
+    /// How hard the model thinks, per Claude Code's `--effort`.
+    ///
+    /// The cheapest lever there is on a fleet, and the least used. Reasoning
+    /// tokens are output tokens, and output tokens become context, and context
+    /// is re-read on every subsequent request — so effort does not cost once, it
+    /// compounds. A worker applying a change somebody else already decided does
+    /// not need to think as hard as the session that decided it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     ///
     /// Not serialised when empty, and that is a compatibility decision rather
     /// than tidiness. `Spec` is `deny_unknown_fields` on purpose — a daemon that
@@ -1503,7 +1541,9 @@ mod tests {
     #[test]
     fn spend_is_read_from_the_result() {
         let spent = all_events().into_iter().find_map(|e| match e.kind {
-            Kind::CostSpent { output, estimate } => Some((output, estimate)),
+            Kind::CostSpent {
+                output, estimate, ..
+            } => Some((output, estimate)),
             _ => None,
         });
         let (output, estimate) = spent.expect("the result carries usage");
@@ -2173,6 +2213,109 @@ mod tests {
         assert!(
             v.windows(2)
                 .any(|w| w[0] == "--model" && w[1] == "claude-opus-5")
+        );
+    }
+}
+
+#[cfg(test)]
+mod usage_tests {
+    use super::*;
+    use crate::bus::Kind;
+
+    /// The turn's own accounting, as Claude Code reports it.
+    fn a_result(output: u64, cached: u64, wrote_5m: u64, wrote_1h: u64) -> serde_json::Value {
+        serde_json::json!({
+            "type": "result",
+            "total_cost_usd": 0.25,
+            "usage": {
+                "output_tokens": output,
+                "input_tokens": 12,
+                "cache_read_input_tokens": cached,
+                "cache_creation": {
+                    "ephemeral_5m_input_tokens": wrote_5m,
+                    "ephemeral_1h_input_tokens": wrote_1h,
+                },
+            }
+        })
+    }
+
+    #[test]
+    fn a_turn_records_what_it_actually_cost_to_send() {
+        // The defect this was written for: only `output_tokens` and the cost
+        // estimate were kept, and on a real supervised project those were 924k
+        // against 61.5M cache reads — a ratio of sixty-seven to one. Every cost
+        // view in this program was built on the smallest number in the
+        // transaction and reported it as the whole.
+        let mut parser = Parser::new();
+        let events = parser.feed(
+            &a_result(1_000, 90_000, 4_000, 1_000).to_string(),
+            "s1",
+            "claude",
+        );
+        let cost = events
+            .iter()
+            .find_map(|e| match &e.kind {
+                Kind::CostSpent {
+                    output,
+                    cached,
+                    written,
+                    ..
+                } => Some((*output, *cached, *written)),
+                _ => None,
+            })
+            .expect("a finished turn publishes what it spent");
+        assert_eq!(cost.0, 1_000);
+        assert_eq!(cost.1, 90_000, "the context re-read is the term that grows");
+        assert_eq!(cost.2, 5_000, "both cache lifetimes count as written");
+    }
+
+    #[test]
+    fn a_turn_that_only_re_read_context_is_still_a_turn_that_spent() {
+        // Output can be nearly nothing while the send was enormous — a session
+        // deep in a long conversation answering "yes". Publishing only when
+        // output moved would drop exactly the turns this is meant to expose.
+        let mut parser = Parser::new();
+        let events = parser.feed(
+            &serde_json::json!({
+                "type": "result",
+                "total_cost_usd": 0.0,
+                "usage": { "output_tokens": 0, "cache_read_input_tokens": 150_000 }
+            })
+            .to_string(),
+            "s1",
+            "claude",
+        );
+        assert!(
+            events.iter().any(|e| matches!(
+                e.kind,
+                Kind::CostSpent {
+                    cached: 150_000,
+                    ..
+                }
+            )),
+            "a turn that spent 150k re-reading and produced nothing still spent"
+        );
+    }
+
+    #[test]
+    fn the_older_shape_of_the_field_is_still_read() {
+        // Claude Code has reported cache creation both as a flat number and as
+        // a map of lifetimes. Pinning both, because this is somebody else's
+        // format and the compatibility suite is where that gets noticed.
+        let mut parser = Parser::new();
+        let events = parser.feed(
+            &serde_json::json!({
+                "type": "result",
+                "usage": { "output_tokens": 5, "cache_creation_input_tokens": 7_777 }
+            })
+            .to_string(),
+            "s1",
+            "claude",
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e.kind, Kind::CostSpent { written: 7_777, .. }))
         );
     }
 }

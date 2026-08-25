@@ -229,6 +229,48 @@ pub fn refuse(limits: &Limits, running: usize, spent: f64) -> Option<String> {
 /// The journal rather than the session list, deliberately. Spend counted from
 /// the sessions currently open is spend you can reset by closing them, which is
 /// not a ceiling — it is a speed bump. The journal is what actually happened.
+/// What each session has spent, in the terms that actually dominate.
+///
+/// `estimate` alone was the whole of Sightline's cost reporting and it is a
+/// tenth of the story: a supervised project measured 924k output tokens against
+/// 61.5M re-read from cache. The re-read figure is the one that grows with a
+/// session's length, so it is the one a supervisor needs in order to notice that
+/// a task should have been split.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Spend {
+    pub turns: u64,
+    pub output: u64,
+    /// Context re-read on the way in. Grows with the session.
+    pub cached: u64,
+    pub written: u64,
+    pub estimate: f64,
+}
+
+pub fn spend_by_session(journal: &Path, hours: u64) -> std::collections::HashMap<String, Spend> {
+    let cutoff = chrono::Utc::now() - chrono::Duration::hours(hours as i64);
+    let mut out: std::collections::HashMap<String, Spend> = Default::default();
+    for e in crate::bus::replay(journal, 0) {
+        if e.at < cutoff {
+            continue;
+        }
+        if let crate::bus::Kind::CostSpent {
+            output,
+            estimate,
+            cached,
+            written,
+        } = &e.kind
+        {
+            let s = out.entry(e.session.clone()).or_default();
+            s.turns += 1;
+            s.output += output;
+            s.cached += cached;
+            s.written += written;
+            s.estimate += estimate;
+        }
+    }
+    out
+}
+
 pub fn spent_since(journal: &Path, hours: u64) -> f64 {
     let cutoff = chrono::Utc::now() - chrono::Duration::hours(hours as i64);
     let total: f64 = crate::bus::replay(journal, 0)
@@ -404,6 +446,8 @@ mod tests {
                     Kind::CostSpent {
                         output: 10,
                         estimate: 1.5,
+                        cached: 0,
+                        written: 0,
                     },
                 ));
             }

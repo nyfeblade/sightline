@@ -81,6 +81,12 @@ pub fn spec(model: Option<&str>, opening: &str, project: &std::path::Path) -> cr
     policy.ceilings = true;
     crate::owned::Spec {
         model: model.map(str::to_string),
+        // A chief thinks and does not type. Its whole output is decisions —
+        // which work, in what order, split how — and those are the decisions
+        // every worker's cost then follows from. This is the one session in a
+        // fleet where effort pays for itself many times over, so it is left at
+        // whatever the account's default is rather than cheapened.
+        effort: None,
         // Nothing pre-approved: every call is a question, and the kernel
         // answers it.
         mode: None,
@@ -202,8 +208,39 @@ pub fn brief(
          \x20 stopped. One you started yourself would be none of those things, so\n\
          \x20 there is no way to start one and no reason to look for one.\n\
          \n\
-         \x20 A worker cannot start workers. Whatever you assign is done by the\n\
-         \x20 session you assigned it to, so assign work that one session can finish.\n\
+         \x20 A worker cannot start workers, but it is a Claude Code session and its\n\
+         \x20 own Agent tool is not restricted — it can launch subagents freely, and\n\
+         \x20 those do not count against the ceiling. So say in the assignment when\n\
+         \x20 work parallelises: a sweep of the same question across many files, or\n\
+         \x20 several independent checks of one claim. Not when it is sequential.\n\
+         \n\
+         \x20 WHAT A FLEET COSTS, BECAUSE IT IS NOT WHAT ANYONE EXPECTS\n\
+         \x20 Every turn re-sends the whole conversation so far. So a session costs\n\
+         \x20 roughly its number of turns times its average context — it grows with\n\
+         \x20 the SQUARE of how long the session runs, not with how much it writes.\n\
+         \x20 Measured on one real supervised project: 924,000 tokens written against\n\
+         \x20 61,500,000 re-read. Sixty-seven to one.\n\
+         \n\
+         \x20 Three things follow, and they are the whole of running a fleet cheaply:\n\
+         \n\
+         \x20 One long session is far more expensive than two short ones doing the\n\
+         \x20 same work. Splitting a hundred-turn task in half costs about half as\n\
+         \x20 much. Size an assignment to something finishable in forty turns or so.\n\
+         \n\
+         \x20 What a worker has to discover, it then carries for the rest of its life.\n\
+         \x20 If you have already read the thing it needs, quote it into the\n\
+         \x20 assignment. A paragraph you paste costs a few hundred tokens once; the\n\
+         \x20 same paragraph found by a worker reading a large file costs thousands,\n\
+         \x20 on every turn it takes afterwards.\n\
+         \n\
+         \x20 Set effort deliberately. `assign` takes it. Applying a change somebody\n\
+         \x20 has already decided is low; working out what the change should be is\n\
+         \x20 high. Reasoning tokens become context, and context is re-read, so effort\n\
+         \x20 compounds rather than costing once.\n\
+         \n\
+         \x20 fleet() tells you what each worker has spent and how fast its context is\n\
+         \x20 growing. A worker past about 120k with a long way to go should be told\n\
+         \x20 to finish and hand over rather than left to run.\n\
          \n\
          \x20 An assignment is a sentence a stranger could act on. \"Fix the tests\" is\n\
          \x20 not one. Say what is to be true afterwards. The worker sees the task and\n\

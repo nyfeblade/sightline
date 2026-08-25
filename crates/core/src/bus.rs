@@ -135,6 +135,21 @@ pub enum Kind {
     CostSpent {
         output: u64,
         estimate: f64,
+        /// Context re-read on this turn, and context newly cached by it.
+        ///
+        /// Added because the two numbers above were most of a lie by omission.
+        /// Measured over one real supervised project: 924k output tokens against
+        /// 61.5M cache reads — sixty-seven to one. A cost view built on output
+        /// alone reports about a tenth of what a fleet actually spends, and
+        /// reports it as the whole.
+        ///
+        /// They are here rather than derived because only the turn knows them.
+        /// Fields are added to this vocabulary, never removed or repurposed, so
+        /// a journal written before these existed still reads.
+        #[serde(default)]
+        cached: u64,
+        #[serde(default)]
+        written: u64,
     },
 }
 
@@ -237,8 +252,21 @@ impl Event {
             Kind::ChecksFailed { suite, first } => format!("{suite} failed · {first}"),
             Kind::SessionStalled { quiet_for, .. } => format!("stalled · quiet for {quiet_for}s"),
             Kind::SessionEnded { reason } => format!("ended ({reason:?})"),
-            Kind::CostSpent { output, estimate } => {
-                format!("{output} output tokens · ${estimate:.4}")
+            Kind::CostSpent {
+                output,
+                estimate,
+                cached,
+                ..
+            } => {
+                // The cache figure is said out loud rather than folded into the
+                // estimate, because it is the one that grows with the session
+                // and the one nobody expects. On a real project it ran sixty-odd
+                // times the output.
+                if *cached > 0 {
+                    format!("{output} out · {cached} re-read · ${estimate:.4}")
+                } else {
+                    format!("{output} output tokens · ${estimate:.4}")
+                }
             }
         };
         format!("{when} {:>4} {who} {what}", self.seq)

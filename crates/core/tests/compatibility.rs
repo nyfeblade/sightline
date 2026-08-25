@@ -246,7 +246,9 @@ fn the_stream_still_carries_what_a_transcript_says() {
     let spent = events
         .iter()
         .find_map(|e| match &e.kind {
-            Kind::CostSpent { output, estimate } => Some((*output, *estimate)),
+            Kind::CostSpent {
+                output, estimate, ..
+            } => Some((*output, *estimate)),
             _ => None,
         })
         .expect("spend is in the stream");

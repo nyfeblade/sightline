@@ -38,6 +38,16 @@ pub fn schemas() -> Vec<Value> {
                              "description": "the directory the worker owns and may write in"},
                     "task": {"type": "string",
                              "description": "what it is to do, in full — it sees nothing else"},
+                    "effort": {"type": "string",
+                               "enum": ["low", "medium", "high", "xhigh", "max"],
+                               "description": "How hard this worker should think. \
+                                    Applying a change somebody has already decided is \
+                                    `low`; working out what the change should be is \
+                                    `high`. This is the cheapest lever you have — \
+                                    reasoning tokens become context, and context is \
+                                    re-read on every later request, so effort compounds. \
+                                    Default is the account's, which is expensive for \
+                                    mechanical work."},
                     "model": {"type": "string",
                               "description": "optional; the kernel picks a sensible default"},
                 },
@@ -151,6 +161,18 @@ fn assign(asked_by: &str, args: &Value) -> Result<String, String> {
             .get("model")
             .and_then(Value::as_str)
             .map(str::to_string),
+        // Chosen by whoever wrote the assignment, because only they know
+        // whether this is thinking or typing.
+        //
+        // It is the cheapest lever on a fleet and the least used. Reasoning
+        // tokens are output tokens, output becomes context, and context is
+        // re-read on every later request — so effort compounds rather than
+        // costing once. Measured on one real project: 924k output against 61.5M
+        // cache reads, which is 67 to one.
+        effort: args
+            .get("effort")
+            .and_then(Value::as_str)
+            .map(str::to_string),
         mode: None,
         allow: Vec::new(),
         deny: Vec::new(),
@@ -202,9 +224,20 @@ fn fleet() -> String {
         return "nothing is running".into();
     }
     let mut out = String::new();
+    // What each one is doing, and what it is costing to keep doing it.
+    //
+    // The second half is new and is the more useful of the two. A session's
+    // cost is roughly its turn count times its average context, because every
+    // turn re-reads everything said so far — so it grows with the square of how
+    // long the session runs. Measured on one real project: 924k output tokens
+    // against 61.5M re-read. A supervisor that cannot see a session's context
+    // growing cannot know that splitting the work would have been cheaper, and
+    // by the time the bill arrives the session is over.
+    let spent = crate::limits::spend_by_session(&crate::app::data_dir().join("events.jsonl"), 24);
     for o in all {
+        let cost = spent.get(&o.name).copied().unwrap_or_default();
         out.push_str(&format!(
-            "{} · {} · {} · {}\n",
+            "{} · {} · {} · {}",
             o.name,
             if o.alive { "running" } else { "ended" },
             if o.busy {
@@ -218,6 +251,16 @@ fn fleet() -> String {
             },
             o.cwd,
         ));
+        if cost.turns > 0 {
+            out.push_str(&format!(
+                " · {} turns, {} out, {} re-read (~{}k per turn and rising)",
+                cost.turns,
+                thousands(cost.output),
+                thousands(cost.cached),
+                cost.cached / cost.turns.max(1) / 1000,
+            ));
+        }
+        out.push('\n');
     }
     out
 }
@@ -388,5 +431,16 @@ mod tests {
                 "{name} is offered but not implemented"
             );
         }
+    }
+}
+
+/// A token count, short enough to read in a line.
+fn thousands(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{}k", n / 1_000)
+    } else {
+        n.to_string()
     }
 }
