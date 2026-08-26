@@ -35,6 +35,7 @@
 
 use crate::bus::{Event, Kind};
 use serde_json::Value;
+use std::io::BufRead;
 
 /// One line of the output stream, parsed into the events it means.
 ///
@@ -651,6 +652,14 @@ pub struct Owned {
     pub cwd: String,
     /// The model it was asked for; empty means the agent's own default.
     pub model: String,
+    /// Which agent this is. Empty means Claude Code, so a session recorded
+    /// before other vendors existed still reads correctly.
+    ///
+    /// Kept because how you speak to a session depends on it: Claude Code holds
+    /// a pipe open and takes another message down it, and Cursor does not exist
+    /// between turns.
+    #[serde(default)]
+    pub agent: String,
     /// The permission mode it was started under. Fixed for the life of the
     /// session: nothing can be asked once it is running.
     pub mode: String,
@@ -968,6 +977,7 @@ impl OwnedSession {
             name: session.to_string(),
             cwd: cwd.to_string_lossy().into_owned(),
             model: spec.model.clone().unwrap_or_default(),
+            agent: spec.agent.clone(),
             mode: spec.mode.clone().unwrap_or_default(),
             session_id: String::new(),
             pid: child.id(),
@@ -1423,22 +1433,98 @@ fn find_key(fleet: &Fleet, who: &str) -> Option<String> {
 /// long as the turn takes — with the fleet held, that would stall every other
 /// session and every window asking what the fleet is doing.
 pub fn say(who: &str, text: &str) -> Result<(), String> {
-    let (key, session) = {
+    let (key, session, pending) = {
         let fleet = locked();
         let key = find_key(&fleet, who).ok_or_else(|| format!("no owned session called {who}"))?;
         let held = fleet.get(&key).expect("just found");
         if !held.state().alive {
             return Err(format!("{key} has ended"));
         }
-        (key.clone(), held.session.clone())
+        (key.clone(), held.session.clone(), held.pending.clone())
     };
     // Checked again with the session in hand: it may have exited between the
     // two, and writing to a dead pipe is a broken-pipe error rather than a
     // sentence saying what happened.
-    if !session.state().alive {
+    let held = session.state();
+    if !held.alive {
         return Err(format!("{key} has ended"));
     }
+    if held.agent == "cursor" {
+        return resume(&held, text, pending);
+    }
     session.send(text).map_err(|e| e.to_string())
+}
+
+/// Say something to a Cursor session, which is not listening.
+///
+/// Claude Code in this mode holds a pipe open across turns, so another message
+/// is a write. Cursor does not exist between turns: `--print` reads its prompt,
+/// runs once and exits, and a second message written to that pipe is read as
+/// more of the first prompt — which was the first thing tried here, and it
+/// produced one turn answering both.
+///
+/// What it keeps instead is the chat. `--resume <id>` reopens it with everything
+/// already said still in place, so the same conversation continues in a new
+/// process. The session is therefore a chat id plus a series of runs rather than
+/// a process, and this is the whole of that difference.
+///
+/// The reply is streamed back through the same reader as the original turn, so
+/// the transcript, the feed, the boundary and the cost ledger see it exactly as
+/// they see anything else. A worker spoken to twice looks like one worker.
+fn resume(held: &Owned, text: &str, pending: Pending) -> Result<(), String> {
+    if held.session_id.is_empty() {
+        return Err(format!(
+            "{} has not named its chat yet — it is still on its first turn, and there \
+             is nothing to resume until that finishes",
+            held.name
+        ));
+    }
+    let spec = Spec {
+        agent: "cursor".into(),
+        model: (!held.model.is_empty()).then(|| held.model.clone()),
+        ..Default::default()
+    };
+    let mut argv = argv(&spec);
+    argv.push("--resume".into());
+    argv.push(held.session_id.clone());
+    argv.push(text.to_string());
+
+    let child = std::process::Command::new("cursor-agent")
+        .args(&argv)
+        .current_dir(&held.cwd)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("could not reach {}: {e}", held.name))?;
+
+    let name = held.name.clone();
+    let stdout = child.stdout;
+    std::thread::Builder::new()
+        .name(format!("resume-{name}"))
+        .spawn(move || {
+            let Some(stdout) = stdout else { return };
+            let mut parser = Parser::new();
+            for line in std::io::BufReader::new(stdout)
+                .lines()
+                .map_while(Result::ok)
+            {
+                let Some(rewritten) = crate::agent::cursor::normalise(&line) else {
+                    continue;
+                };
+                for event in parser.feed(&rewritten, &name, "cursor") {
+                    // The same buffer the original turn filled, so a front end
+                    // draining this session sees one conversation rather than
+                    // two — which is the whole point of resuming rather than
+                    // starting something new.
+                    if let Ok(mut buffer) = pending.lock() {
+                        buffer.0.push_back(event);
+                    }
+                }
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// End one, and forget it.
@@ -2395,5 +2481,55 @@ mod usage_tests {
                 .iter()
                 .any(|e| matches!(e.kind, Kind::CostSpent { written: 7_777, .. }))
         );
+    }
+}
+
+#[cfg(test)]
+mod resume_tests {
+    use super::*;
+
+    fn held(agent: &str, session_id: &str) -> Owned {
+        Owned {
+            name: "owned-3".into(),
+            cwd: std::env::temp_dir().to_string_lossy().into_owned(),
+            model: String::new(),
+            agent: agent.into(),
+            mode: String::new(),
+            session_id: session_id.into(),
+            pid: 1,
+            alive: true,
+            busy: false,
+            tool: String::new(),
+            started: 0,
+            last: 0,
+        }
+    }
+
+    #[test]
+    fn a_cursor_session_is_reached_by_resuming_its_chat() {
+        // The command that carries a second message. Claude Code takes one down
+        // a pipe it is still holding; Cursor has exited, and the chat is the
+        // only thing that survived the turn.
+        let spec = Spec {
+            agent: "cursor".into(),
+            ..Default::default()
+        };
+        let argv = argv(&spec);
+        assert!(argv.iter().any(|a| a == "--print"));
+        assert!(argv.iter().any(|a| a == "stream-json"));
+        // Sent on to the same reader, so a resumed turn is read exactly like the
+        // first one — same events, same cost, same boundary.
+        assert!(argv.iter().any(|a| a == "--force"));
+    }
+
+    #[test]
+    fn a_cursor_session_that_has_not_named_its_chat_says_so() {
+        // The window between starting and the first `system/init` line. There is
+        // nothing to resume, and the honest answer names why rather than failing
+        // to spawn something.
+        let pending: Pending = Default::default();
+        let why =
+            resume(&held("cursor", ""), "anything", pending).expect_err("there is no chat yet");
+        assert!(why.contains("first turn"), "{why}");
     }
 }

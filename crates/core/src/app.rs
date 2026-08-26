@@ -3976,6 +3976,7 @@ mod tests {
             name: name.into(),
             cwd: "/tmp/work".into(),
             model: String::new(),
+            agent: "claude".into(),
             mode: String::new(),
             session_id: session_id.into(),
             pid: 4242,
