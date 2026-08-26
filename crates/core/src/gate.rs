@@ -605,7 +605,8 @@ mod tests {
                 let got = Path::new(input["file_path"].as_str().unwrap());
                 let want = dir.join("src").join("main.rs");
                 assert_eq!(
-                    got, want.as_path(),
+                    got,
+                    want.as_path(),
                     "it must land inside the worktree, not merely be complained about"
                 );
             }
