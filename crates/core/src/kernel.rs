@@ -374,13 +374,36 @@ fn assign(asked_by: &str, args: &Value) -> Result<String, String> {
     })?;
     // Only now.
     owned::say(&started.name, task)?;
-    Ok(format!(
-        "started {} in {} on task {id}. It is confined to that directory and \
-         cannot start workers of its own. Watch it with the fleet tool; speak to \
-         it with tell.",
-        started.name,
-        root.display()
-    ))
+    // What is true of this worker, rather than of the usual one.
+    //
+    // The single sentence said "confined to that directory" for every agent,
+    // and for a connected one that is a lie in the direction that matters:
+    // Grok Bot runs on its own cloud computer, the directory is a mirror, and
+    // nothing about the boundary reaches it. A supervisor deciding what to
+    // trust reads this line, so it has to be about the worker it just got.
+    Ok(if agent.governance() == crate::agent::Governance::None {
+        format!(
+            "{} has {} on task {id}, in {}. It runs where Sightline cannot reach \
+             it: nothing it does stops at the boundary, and its own account of \
+             what it did is the only account there is. Check its work rather \
+             than its word. Speak to it with tell; it collects with inbox.",
+            started.name,
+            if agent.spawnable() {
+                "started"
+            } else {
+                "been given it"
+            },
+            root.display()
+        )
+    } else {
+        format!(
+            "started {} in {} on task {id}. It is confined to that directory and \
+             cannot start workers of its own. Watch it with the fleet tool; speak \
+             to it with tell.",
+            started.name,
+            root.display()
+        )
+    })
 }
 
 fn fleet() -> String {

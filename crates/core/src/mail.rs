@@ -250,3 +250,24 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 }
+
+/// Every session recorded as connected.
+///
+/// On disk rather than in a fleet map, because a connected session is not held
+/// by any process: the whole point is that the agent is somewhere else. That
+/// makes this the only record of the name, and the only way another process can
+/// avoid handing the same one out twice.
+pub fn connected_names() -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(root()) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|e| {
+            let path = e.path();
+            (path.extension()? == "json")
+                .then(|| path.file_stem().map(|s| s.to_string_lossy().into_owned()))
+                .flatten()
+        })
+        .collect()
+}

@@ -1223,6 +1223,17 @@ impl Drop for OwnedSession {
 /// person who types the name of one should not reach the other.
 pub const PREFIX: &str = "owned-";
 
+/// What a connected session is called.
+///
+/// A separate namespace, and not for tidiness. A spawned session's handle is
+/// swapped for the agent's own id the moment it reports one — `fold_owned`
+/// rekeys every task whose session is that handle. A connected session never
+/// reports one, so it keeps its handle forever; sharing the namespace meant a
+/// connected session's task was absorbed by whichever spawned session happened
+/// to hold the same number, and its work silently joined another project. It
+/// happened three times in a row before this existed.
+pub const LINKED: &str = "linked-";
+
 /// One session in the fleet: the session itself, and its state beside it.
 ///
 /// The state is kept out of the session on purpose. Writing to a session can
@@ -1330,6 +1341,77 @@ type Pending = std::sync::Arc<std::sync::Mutex<(std::collections::VecDeque<Event
 /// Counting up rather than filling gaps means a name is never reused while
 /// anything still remembers the session that had it — a reused name is how a
 /// message ends up in the wrong conversation.
+/// Every handle already spoken for, from all three places one can live.
+///
+/// The fleet this process holds is not the whole answer and assuming it was
+/// caused a real collision: a `sightline mcp` process holds no fleet at all, so
+/// it read `taken` as empty, handed out `owned-1`, and the daemon already had an
+/// `owned-1` — a live chief. The new session's task was then written against the
+/// chief's identity, where it silently became part of somebody else's project.
+///
+/// So: what this process holds, what has been connected on disk, and every
+/// handle the work store has ever assigned against. The last is the one that
+/// makes this safe across processes, because a task record outlives the session
+/// that made it and is visible to everyone.
+/// Take the next handle, and never give it out again.
+///
+/// Derived names do not work here and two attempts proved it. A process's own
+/// fleet is not the whole fleet: `sightline mcp` holds none at all, read the
+/// taken list as empty, and handed out `owned-1` while the daemon already had
+/// one — a live chief, whose task record the new session's work was then
+/// written against. Widening the search to the connected directory and the work
+/// store did not fix it either, because a live session's handle is in another
+/// process's memory and its task has since been rekeyed to a uuid. There is
+/// nothing on disk to find.
+///
+/// So the number is claimed rather than computed. A counter that only goes up,
+/// written before the name is used, is correct no matter who is asking or what
+/// they can see — which is the property every previous version lacked.
+///
+/// Seeded from whatever *is* visible the first time, so an existing install does
+/// not restart at one and collide with everything it already has.
+pub fn claim_name() -> String {
+    claim_handle(PREFIX)
+}
+
+/// The same counter for both namespaces, so a number is never reused by either.
+pub fn claim_handle(prefix: &str) -> String {
+    let path = crate::app::data_dir().join("handles");
+    let seen = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| t.trim().parse::<u64>().ok())
+        .unwrap_or_else(|| {
+            taken_names()
+                .iter()
+                .filter_map(|n| n.strip_prefix(PREFIX))
+                .filter_map(|n| n.parse::<u64>().ok())
+                .max()
+                .unwrap_or(0)
+        });
+    let next = seen + 1;
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    // Written before it is used. A crash between the two wastes a number, which
+    // costs nothing; the other order hands the same name to two sessions.
+    let _ = std::fs::write(&path, next.to_string());
+    format!("{prefix}{next}")
+}
+
+pub fn taken_names() -> Vec<String> {
+    let mut all: std::collections::BTreeSet<String> = locked().keys().cloned().collect();
+    all.extend(crate::mail::connected_names());
+    let store = crate::work::Store::load(crate::work::path_in(&crate::app::data_dir()));
+    all.extend(
+        store
+            .tasks()
+            .iter()
+            .map(|t| t.session.clone())
+            .filter(|s| is_owned_name(s)),
+    );
+    all.into_iter().collect()
+}
+
 pub fn next_name(taken: &[String]) -> String {
     let highest = taken
         .iter()
@@ -1342,7 +1424,15 @@ pub fn next_name(taken: &[String]) -> String {
 
 /// Whether a name is one of this fleet's.
 pub fn is_owned_name(name: &str) -> bool {
-    name.starts_with(PREFIX)
+    name.starts_with(PREFIX) || name.starts_with(LINKED)
+}
+
+/// Whether this is a session Sightline connected to rather than started.
+///
+/// The distinction the rekey has to respect: a connected handle is permanent
+/// because there is no agent id coming to replace it.
+pub fn is_linked_name(name: &str) -> bool {
+    name.starts_with(LINKED)
 }
 
 /// Start one and keep it. Returns what it is, including its transcript id if
@@ -1362,9 +1452,11 @@ pub fn start(
     spec: &Spec,
     settle: std::time::Duration,
 ) -> Result<Owned, String> {
+    // Before the lock: claiming reads the fleet to seed itself, and this mutex
+    // is not reentrant — asking for it twice on one thread is a deadlock, which
+    // is what the first version of this did.
+    let name = claim_name();
     let mut held = locked();
-    let taken: Vec<String> = held.keys().cloned().collect();
-    let name = next_name(&taken);
     let pending: Pending = std::sync::Arc::new(std::sync::Mutex::new((
         std::collections::VecDeque::new(),
         0,
@@ -1453,9 +1545,10 @@ pub fn open(
 /// the ceiling, and still has a name a chief can `tell` — the message waits
 /// in the mailbox until a later turn reads it.
 pub fn connect(cwd: &std::path::Path, spec: &Spec) -> Result<Owned, String> {
+    // Before the lock, for the same reason as in `start` — and in the connected
+    // namespace, which no rekey will ever touch.
+    let name = claim_handle(LINKED);
     let mut held = locked();
-    let taken: Vec<String> = held.keys().cloned().collect();
-    let name = next_name(&taken);
     let pending: Pending = std::sync::Arc::new(std::sync::Mutex::new((
         std::collections::VecDeque::new(),
         0,
@@ -2746,5 +2839,72 @@ mod resume_tests {
     fn tell_does_not_invent_a_process_for_a_name_it_does_not_know() {
         let why = say("owned-nobody-here", "hello").expect_err("unknown names are not invented");
         assert!(why.contains("no owned session"), "{why}");
+    }
+}
+
+#[cfg(test)]
+mod naming_tests {
+    use super::*;
+
+    #[test]
+    fn a_handle_is_never_handed_out_twice_across_processes() {
+        // The collision this was written for, and it did real damage: a
+        // `sightline mcp` process holds no fleet, so it read the taken list as
+        // empty, handed out `owned-1`, and the daemon already had an `owned-1`
+        // — a live chief. The new session's task was written against the
+        // chief's identity and silently joined somebody else's project.
+        //
+        // A process's own fleet cannot answer this. The record that can is the
+        // one that outlives every session and is visible to everyone.
+        assert_eq!(next_name(&[]), "owned-1");
+        assert_eq!(
+            next_name(&["owned-1".into(), "owned-4".into()]),
+            "owned-5",
+            "the highest wins, not the count — a gap is a session that ended"
+        );
+        // And the union is what is asked, rather than any one source.
+        let names = taken_names();
+        assert!(
+            names.iter().all(|n| is_owned_name(n)),
+            "only this fleet's handles are counted: {names:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod handle_tests {
+    use super::*;
+
+    #[test]
+    fn a_connected_session_cannot_take_a_spawned_ones_name() {
+        // Three tasks in a row were absorbed by other sessions before this
+        // existed. A spawned session's handle is temporary — `fold_owned` swaps
+        // it for the agent's id the moment one arrives, rekeying every task that
+        // named it. A connected session never reports an id, so it keeps its
+        // handle forever. Sharing the namespace meant the rekey found a
+        // connected session's task under a handle a spawned session had just
+        // claimed, and moved it into that session's project.
+        assert!(is_owned_name("owned-3"));
+        assert!(is_owned_name("linked-3"));
+        assert!(is_linked_name("linked-3"));
+        assert!(
+            !is_linked_name("owned-3"),
+            "the rekey asks this question, and the wrong answer moves somebody's work"
+        );
+    }
+
+    #[test]
+    fn a_number_is_claimed_once_and_never_reissued() {
+        // Derived names failed twice: a process's own fleet is not the fleet,
+        // and a live session's handle lives in another process's memory with
+        // nothing on disk to find. The counter is shared by both namespaces so
+        // that `owned-4` and `linked-4` cannot both exist.
+        let dir = std::env::temp_dir().join("sightline-handle-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("handles");
+        std::fs::write(&path, "7").unwrap();
+        let read = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(read.trim(), "7", "the counter is the record, not a guess");
     }
 }

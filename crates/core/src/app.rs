@@ -1033,7 +1033,11 @@ impl App {
             // of the application had stopped using. `task_for` missed it,
             // `sightline check` could not find it, and a project's workers were
             // invisible to anything that looked them up by session.
-            if !o.session_id.is_empty() {
+            // Never a connected session: its handle is permanent, because no
+            // agent id is coming to replace it. Rekeying one moved its task onto
+            // whichever spawned session shared the number, and the work silently
+            // joined another project.
+            if !o.session_id.is_empty() && !owned::is_linked_name(&o.name) {
                 self.work.rekey(&o.name, &o.session_id);
             }
             if !self.sessions.iter().any(|s| s.id == id) {
