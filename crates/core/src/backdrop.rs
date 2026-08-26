@@ -280,7 +280,13 @@ mod tests {
         )
         .unwrap();
         save_in(&dir, &Choice::Image(png.clone())).unwrap();
-        assert_eq!(load_from(&dir), Choice::Image(png));
+        // Canonical, because that is what is stored: macOS puts `/var` behind
+        // `/private/var`, and Windows prefixes a verbatim `\\?\`. Comparing the
+        // path temp_dir handed us to the one that came back is comparing two
+        // spellings of the same file. git.rs already resolves both sides for
+        // the same reason.
+        let stored = std::fs::canonicalize(&png).unwrap();
+        assert_eq!(load_from(&dir), Choice::Image(stored));
         save_in(&dir, &Choice::None).unwrap();
         assert_eq!(load_from(&dir), Choice::None);
     }

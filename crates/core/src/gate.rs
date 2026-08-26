@@ -356,8 +356,16 @@ fn trust(a: &Asking) -> Option<Decision> {
 
     if let Some((_, raw)) = written(a.input).filter(|_| WRITES.contains(&a.tool)) {
         let path = normalize(&root, raw);
-        let text = path.to_string_lossy();
-        if let Some(what) = GOVERNING.iter().find(|g| text.contains(*g)) {
+        // Components, not a substring. Windows writes `.sightline\checks.toml`,
+        // and searching the display string for a forward slash misses it — the
+        // file would then be editable, which is the thing this kernel exists
+        // to stop. `Path::ends_with` compares names, so the slash used to write
+        // the path is not a way around it.
+        if let Some(what) = GOVERNING
+            .iter()
+            .copied()
+            .find(|g| path.ends_with(Path::new(g)))
+        {
             return Some(Decision::Deny {
                 why: format!(
                     "{what} is part of what decides whether your work is any good. \
@@ -593,11 +601,14 @@ mod tests {
         );
         assert_eq!(by, "scope");
         match d {
-            Decision::Rewrite { input, .. } => assert_eq!(
-                input["file_path"].as_str().unwrap(),
-                dir.join("src/main.rs").to_string_lossy(),
-                "it must land inside the worktree, not merely be complained about"
-            ),
+            Decision::Rewrite { input, .. } => {
+                let got = Path::new(input["file_path"].as_str().unwrap());
+                let want = dir.join("src").join("main.rs");
+                assert_eq!(
+                    got, want.as_path(),
+                    "it must land inside the worktree, not merely be complained about"
+                );
+            }
             other => panic!("expected a redirect, got {other:?}"),
         }
     }
@@ -751,7 +762,7 @@ mod tests {
         // and the next session is refused for a call that never happened.
         let dir = tempdir();
         let policy = bare(&dir);
-        let forbidden = dir.join(".sightline/checks.toml");
+        let forbidden = dir.join(".sightline").join("checks.toml");
         std::fs::create_dir_all(dir.join(".sightline")).unwrap();
         let call = json!({"file_path": forbidden.to_string_lossy()});
 
@@ -771,15 +782,21 @@ mod tests {
     fn the_rules_a_session_is_judged_by_are_not_its_to_edit() {
         let dir = tempdir();
         std::fs::create_dir_all(dir.join(".sightline")).unwrap();
-        for target in [".sightline/checks.toml", ".sightline/constitution.md"] {
+        // Built with join so each name is a component, the way Windows writes
+        // a path. A substring search for `.sightline/checks.toml` misses the
+        // backslash form and the file becomes editable.
+        for target in [
+            dir.join(".sightline").join("checks.toml"),
+            dir.join(".sightline").join("constitution.md"),
+        ] {
             let (d, by) = decide(
                 &bare(&dir),
                 "owned-1",
                 "Edit",
-                &json!({"file_path": dir.join(target).to_string_lossy()}),
+                &json!({"file_path": target.to_string_lossy()}),
             );
-            assert_eq!(by, "trust", "{target}");
-            assert!(d.denied(), "{target} was editable: {d:?}");
+            assert_eq!(by, "trust", "{}", target.display());
+            assert!(d.denied(), "{} was editable: {d:?}", target.display());
         }
     }
 

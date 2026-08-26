@@ -547,10 +547,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = install(&dir).expect("it installs into a fresh fork");
-        assert!(path.ends_with("SKILL.md"));
         assert!(
-            path.to_string_lossy()
-                .contains(".claude/skills/sightline-glue"),
+            path.ends_with(std::path::Path::new(
+                ".claude/skills/sightline-glue/SKILL.md"
+            )),
             "where Claude Code looks for a skill: {}",
             path.display()
         );

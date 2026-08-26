@@ -627,6 +627,13 @@ fn thousands(n: u64) -> String {
 mod vendor_tests {
     use super::*;
 
+    /// A directory that exists on this machine. `/tmp` is not one, on Windows,
+    /// and `assign` checks that before it looks the agent up — so a test that
+    /// used it never reached the refusal it was written for.
+    fn a_directory() -> String {
+        std::env::temp_dir().to_string_lossy().into_owned()
+    }
+
     #[test]
     fn the_kernel_does_not_special_case_a_vendor_when_assigning() {
         // The defect a third vendor would have reintroduced: `if wanted ==
@@ -669,7 +676,7 @@ mod vendor_tests {
         );
         let why = assign(
             "chief",
-            &json!({"path": "/tmp", "task": "x", "agent": "aider"}),
+            &json!({"path": a_directory(), "task": "x", "agent": "aider"}),
         )
         .expect_err("an ungoverned agent is still not a worker this kernel starts");
         assert!(why.contains("cannot be governed"), "{why}");
@@ -710,7 +717,7 @@ mod vendor_tests {
     fn an_agent_nobody_has_heard_of_is_refused_by_name() {
         let why = assign(
             "chief",
-            &json!({"path": "/tmp", "task": "x", "agent": "nonesuch"}),
+            &json!({"path": a_directory(), "task": "x", "agent": "nonesuch"}),
         )
         .expect_err("unknown agents are not invented");
         assert!(why.contains("nonesuch"), "{why}");
