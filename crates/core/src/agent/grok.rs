@@ -91,18 +91,44 @@ impl Adapter for GrokBot {
     }
 
     fn governance(&self) -> Governance {
-        Governance::Partial
+        // None, and this was `Partial` until it was tested.
+        //
+        // The claim was that Grok Bot is Cursor's desktop assistant, so
+        // `.cursor/hooks.json` in a prepared workspace is the permission door it
+        // actually has. It was reasonable and it is wrong, and one prompt showed
+        // why: asked to write `/tmp/escaped.txt` in a workspace whose hook file
+        // refuses exactly that, it answered "Wrote /tmp/escaped.txt with the
+        // word ESCAPED". No such file exists on this machine, and the hook was
+        // never invoked — the probe log is empty.
+        //
+        // It ran on a cloud computer. Grok Bot has its own machine, with its own
+        // filesystem, terminal and browser; the workspace Sightline prepares is
+        // here and the agent is not. A hook file the agent never reads is not a
+        // boundary, and the local checkout it appears to be working in is a
+        // mirror of a repository rather than the disk it writes to.
+        //
+        // So there is no door. That is not a gap to be closed later by better
+        // plumbing — a boundary works by standing between a process and the
+        // operating system, and this process is on somebody else's.
+        Governance::None
     }
 
     fn governance_note(&self) -> &'static str {
-        "partly governed — kernel tools and Cursor desktop hooks stop at the boundary \
-         when this workspace is prepared; this assistant is not a process Sightline \
-         holds, so it cannot prove every native tool call stops here"
+        "not governed — this agent runs on its own cloud computer, so its tool calls \
+         never reach this machine's boundary. It can be coordinated with: it takes \
+         assignments, leaves notes and claims work through the kernel. It cannot be \
+         refused."
     }
 
     fn prepare(&self, root: &Path, sightline: &Path) -> Result<(), String> {
-        // The same files Cursor CLI gets, because this *is* Cursor's desktop
-        // assistant: hooks.json is the permission door it actually has.
+        // Still written, and it is worth saying what it does and does not do.
+        //
+        // `mcp.json` is the half that works: the kernel tools are reached over a
+        // URL-addressable door, and a cloud agent can call `inbox`, `note` and
+        // `claim` through it. `hooks.json` is written for the case where this
+        // assistant is driven locally rather than on its own machine — but
+        // nothing here verifies which it is, so nothing may claim the boundary
+        // on the strength of the file existing.
         crate::agent::cursor::put_boundary(root, sightline)
     }
 
@@ -132,10 +158,21 @@ mod tests {
     #[test]
     fn it_does_not_claim_a_boundary_it_does_not_hold() {
         let g = GrokBot;
-        assert_eq!(g.governance(), Governance::Partial);
+        // Was `Partial`, on the reasoning that Grok Bot is Cursor's desktop
+        // assistant and so reads `.cursor/hooks.json`. One prompt disproved it:
+        // asked to write `/tmp/escaped.txt` in a workspace whose hook refuses
+        // exactly that, it reported writing the file, no such file exists here,
+        // and the probe log is empty. It ran on its own cloud computer.
+        assert_eq!(g.governance(), Governance::None);
         assert!(
             !g.governance_note().contains("every call"),
             "Full's sentence must not be borrowed: {}",
+            g.governance_note()
+        );
+        assert!(
+            g.governance_note().contains("cannot be refused")
+                || g.governance_note().contains("never reach"),
+            "the note has to say the boundary does not reach it: {}",
             g.governance_note()
         );
     }

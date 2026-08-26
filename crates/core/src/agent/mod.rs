@@ -485,7 +485,9 @@ mod tests {
         let grok = find("grok").unwrap();
         assert!(!grok.spawnable());
         assert_eq!(grok.delivery(), Delivery::Mailbox);
-        assert_eq!(grok.governance(), Governance::Partial);
+        // Ungoverned, and assignable anyway: nothing is spawned here, so there
+        // is no local process for a boundary to stand in front of.
+        assert_eq!(grok.governance(), Governance::None);
         assert_eq!(find("cursor").unwrap().delivery(), Delivery::Resume);
         assert_eq!(find("claude").unwrap().delivery(), Delivery::Pipe);
     }
@@ -499,9 +501,9 @@ mod tests {
             all.iter().map(|c| c.id.as_str()).collect::<Vec<_>>()
         );
         let grok = all.iter().find(|c| c.id == "grok").unwrap();
-        assert_eq!(grok.governance, Governance::Partial);
+        assert_eq!(grok.governance, Governance::None);
         assert!(
-            grok.governance_note.contains("cannot prove"),
+            grok.governance_note.contains("cloud computer"),
             "the note has to be this vendor's gap, not Cursor CLI's: {}",
             grok.governance_note
         );

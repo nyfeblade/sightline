@@ -267,7 +267,21 @@ fn assign(asked_by: &str, args: &Value) -> Result<String, String> {
     let wanted = wanted_owned.as_str();
     let agent =
         crate::agent::find(wanted).ok_or_else(|| format!("there is no agent called {wanted}"))?;
-    if agent.governance() == crate::agent::Governance::None {
+    // Spawning is the line, not governance on its own.
+    //
+    // If Sightline starts a process on this machine it must be one the boundary
+    // reaches, or Sightline is the thing that created an unrestricted agent
+    // here. If it merely coordinates with something already running elsewhere,
+    // governance is impossible by construction — Grok Bot has its own cloud
+    // computer — and refusing does not make anybody safer, it only means the
+    // work is handed over outside Sightline instead of through it, where at
+    // least it is recorded.
+    //
+    // So: an ungoverned agent may be coordinated with and may not be spawned.
+    // What that costs is a fleet with two kinds of participant in it, and the
+    // price of that is paid in labelling — every surface that shows this work
+    // says the boundary does not reach it.
+    if agent.spawnable() && agent.governance() == crate::agent::Governance::None {
         return Err(format!(
             "{} cannot be governed, so the kernel will not start one. It can be run \
              and watched — `sightline new {} --agent {}` — but a worker the boundary \
@@ -664,15 +678,17 @@ mod vendor_tests {
 
     #[test]
     fn grok_is_a_worker_the_kernel_will_hand_you() {
-        // Partial, not Full, and still assignable: the boundary reaches the
-        // door this vendor actually has. Aider is None and is still refused.
-        assert_eq!(
-            crate::agent::find("grok").unwrap().governance(),
-            crate::agent::Governance::Partial
-        );
+        // Ungoverned and still assignable, because Sightline does not start it:
+        // Grok Bot runs on its own cloud computer, and coordinating with
+        // something already running elsewhere creates no process here to
+        // restrain. Aider is ungoverned *and* spawnable — Sightline would be the
+        // thing putting an unrestricted agent on this machine — so it is
+        // refused. The line is spawning, not governance alone.
+        let grok = crate::agent::find("grok").unwrap();
+        assert_eq!(grok.governance(), crate::agent::Governance::None);
         assert!(
-            crate::agent::find("grok").unwrap().governance() != crate::agent::Governance::None,
-            "None is the refusal; Partial has to pass"
+            !grok.spawnable(),
+            "nothing is started here, so nothing is refused"
         );
         let why = assign(
             "chief",
