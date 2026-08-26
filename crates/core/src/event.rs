@@ -2,6 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
+use std::path::Path;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
@@ -121,12 +122,19 @@ pub fn clip(s: &str, n: usize) -> String {
 }
 
 pub fn short_path(p: &str) -> String {
-    // USERPROFILE as well as HOME: Windows sets only the former.
-    let home = crate::app::home().to_string_lossy().to_string();
-    if home.len() > 1 && p.starts_with(&home) {
-        return format!("~{}", &p[home.len()..]);
+    short_path_from(p, &crate::app::home())
+}
+
+/// Home, shortened by path components rather than by a string of slashes.
+/// Windows writes `C:\Users\luker\work` and sometimes `C:/Users/luker/work`;
+/// a prefix match on the string HOME happens to be would miss the second.
+fn short_path_from(p: &str, home: &Path) -> String {
+    let path = Path::new(p);
+    match path.strip_prefix(home) {
+        Ok(rest) if rest.as_os_str().is_empty() => "~".into(),
+        Ok(rest) => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()),
+        Err(_) => p.to_string(),
     }
-    p.to_string()
 }
 
 fn bytes(n: usize) -> String {
@@ -383,4 +391,35 @@ pub fn result_body(tur: Option<&Value>, fallback: &str) -> String {
         }
     }
     serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn a_home_path_is_shortened_by_components_not_by_slash_shape() {
+        let home = PathBuf::from(if cfg!(windows) {
+            r"C:\Users\luker"
+        } else {
+            "/home/luker"
+        });
+        let inside = home.join("work").join("repo");
+        let short = short_path_from(&inside.to_string_lossy(), &home);
+        assert!(short.starts_with('~'), "{short}");
+        assert!(short.contains("work"), "{short}");
+        assert!(short.contains("repo"), "{short}");
+
+        if cfg!(windows) {
+            // Same location, the other slash. A string prefix of `C:\Users\luker`
+            // would miss `C:/Users/luker/work` and print the whole thing.
+            let mixed = r"C:/Users/luker/work/repo";
+            let short = short_path_from(mixed, &home);
+            assert!(
+                short.contains("work"),
+                "slash shape hid the home prefix: {short}"
+            );
+        }
+    }
 }

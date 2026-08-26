@@ -60,15 +60,34 @@ Clicking it opens the window; any argument goes to the commands, so
 `scripts/desktop-entry.sh` puts it in your application menu instead. The app
 needs webkit2gtk, which a normal desktop already has.
 
-On Windows:
+On Windows the app is an MSI — WiX 3, because that is what Tauri 2 actually
+builds, not an NSIS stub labelled as one. Grab `Sightline_*_x64_en-US.msi`
+from [releases](https://github.com/nyfeblade/sightline/releases) once a tagged
+build has produced it, or from the `sightline-windows-msi` CI artifact. It is
+not in the CLI zip, and `sightline-gui` is not a command that zip ever
+contained (v0.4.1 shipped `ironsight-v0.4.1-x86_64-pc-windows-msvc.zip`, CLI
+only).
+
+To build the MSI yourself, on Windows, with [WiX Toolset v3](https://wixtoolset.org/)
+on PATH (`light.exe` — WiX 4 will not do):
+
+```powershell
+cd crates/gui
+cargo tauri build --features custom-protocol --bundles msi
+```
+
+The commands are a separate zip. `install.ps1` finds whatever prefix the
+latest release actually used (`sightline`, `ironsight`, or `scope`) and
+installs `sightline.exe`:
 
 ```powershell
 irm https://raw.githubusercontent.com/nyfeblade/sightline/master/install.ps1 | iex
 ```
 
-Then `sightline-gui` for the window, or `sightline` for the commands. Linux,
-macOS and Windows; tmux is optional on the first two, and only for steering
-sessions rather than watching them.
+Linux, macOS and Windows; tmux is optional on the first two, and only for
+steering sessions rather than watching them. Windows has never been run on
+Windows: it compiles, CI builds the MSI, and the pty backend is unit-tested
+— which is not the same thing.
 
 ## Two kinds of session, and the difference matters
 
@@ -248,7 +267,8 @@ marked as a claim.
 - The **single prompt** — one place to say what you want and be asked about the
   rest — is designed and not built. Today that is the window and the commands.
 - **Windows has never been run on Windows**, and the macOS app has never been run
-  on macOS. Both compile and cross-check clean, which is not the same thing.
+  on macOS. Both compile and cross-check clean, and CI builds a WiX 3 MSI, which
+  is not the same thing as a session started there.
 - **Escalation** currently means the kernels abstain and allow. Holding a call
   open while a person decides is the next piece.
 - The chief has run **well, and briefly**. Evidence that it starts and orients;

@@ -123,7 +123,8 @@ what would actually be worth the effort:
 
 - Windows has never been *run* on Windows; the macOS app has never been *run* on
   macOS. Both compile, cross-check clean, and are unit-tested — not the same as
-  working there. Needs a real Windows box and a Mac. Note that owned sessions
+  working there. CI now builds a WiX 3 MSI for the window; that is an installer,
+  not a run. Needs a real Windows box and a Mac. Note that owned sessions
   fall back to being held in-process there, because the daemon needs a Unix
   socket, so they end with the window.
 - The daemon has not been lived with for a week.

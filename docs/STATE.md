@@ -154,8 +154,11 @@ that total again from zero.
 ## Known rough edges
 
 Windows has never been run on Windows. It compiles, its logic is unit-tested,
-and the pty backend's own test runs on Unix — but nobody has started a session
-there.
+CI builds a WiX 3 MSI for the window, and the pty backend's own test runs on
+Unix — but nobody has started a session there. The MSI is the installer; the
+CLI zip is not, and it has never contained `sightline-gui`. v0.4.1 published
+`ironsight-*` assets (not `sightline-*`); the installers now look at what the
+release actually attached rather than constructing a name that 404s.
 
 The desktop app has never been run on macOS. It compiles and can be bundled.
 
@@ -513,12 +516,21 @@ to answer when one first needs to act.
 
 ## Immediate loose ends
 
-The v0.4.0 release published artifacts named `scope-*`, built before the rename,
-which the installers no longer match. v0.4.1 exists to correct that; check its
-assets are named `sightline-*` before pointing anyone at the install line.
+The v0.4.0 release published artifacts named `scope-*`. v0.4.1 published
+`ironsight-*` — the rename to Sightline landed after that tag, so its assets
+are not named `sightline-*` either. The installers now pick the zip/tarball
+by target suffix rather than constructing `sightline-$tag-*`, which 404s
+against both of those releases.
 
 The default branch is `master`, and the installers fetch from it. If the branch
 is ever renamed to `main`, both installers and the README need the same change.
+
+The Windows app is an MSI from `cargo tauri build --features custom-protocol
+--bundles msi` in `crates/gui`, which needs WiX Toolset v3 (`light.exe`). WiX 4
+is a different product and will not produce one. CI on `windows-latest` uploads
+the `.msi` as `sightline-windows-msi`; a tagged release attaches it too. Until
+someone has actually launched that MSI on a Windows box, "Windows support" is
+still compile-plus-CI, not a run.
 
 ## Next
 

@@ -40,8 +40,16 @@
       "appimage",
       "deb",
       "app",
-      "dmg"
+      "dmg",
+      "msi",
+      "nsis"
     ],
+    "publisher": "nyfeblade",
+    "windows": {
+      "wix": {
+        "language": "en-US"
+      }
+    },
     "category": "Development",
     "shortDescription": "A control plane for coding agents",
     "longDescription": "Sightline is a control plane for coding agents: it decides what they may do, at the moment they ask. It shows every Claude Code session on the machine, puts the one waiting on you in front of you, and answers every tool call its own sessions make before the call happens.",

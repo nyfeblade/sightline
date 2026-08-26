@@ -1708,7 +1708,7 @@ fn main() {
             rescan
         ])
         .build(tauri::generate_context!())
-        .expect("scope failed to start")
+        .expect("Sightline failed to start")
         .run(move |_app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
                 control::drop_way_back(way_back);

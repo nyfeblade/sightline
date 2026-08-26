@@ -498,23 +498,40 @@ pub fn stop_all() -> Vec<String> {
 /// End a Claude Code process Sightline does not host — the original window, after
 /// its conversation has been reopened here.
 pub fn end_process(pid: i64) -> bool {
-    std::process::Command::new("taskkill")
-        .args(["/PID", &pid.to_string(), "/T", "/F"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    // `taskkill` is the Windows answer; this module also runs on Unix when
+    // someone asked for the hosted backend, and there `taskkill` is not a
+    // command. The hosted Unix path used to call it anyway and then report
+    // that nothing had been ended.
+    #[cfg(windows)]
+    {
+        std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+    #[cfg(not(windows))]
+    {
+        std::process::Command::new("kill")
+            .args(["-INT", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
 }
 
 /// There is no window to hand a hosted session to: Sightline is its terminal.
 /// The mirror shows it full-screen instead, which is what `a` does here.
 pub fn attach(_session: &str) -> Result<bool, String> {
-    Err("scope is this session's terminal — press m to type into it".into())
+    Err("Sightline is this session's terminal — press m to type into it".into())
 }
 
 pub fn open_window(_session: &str) -> Result<String, String> {
-    Err("scope hosts this session itself, so it has no window of its own".into())
+    Err("Sightline hosts this session itself, so it has no window of its own".into())
 }
 
 /// Sessions are held by this process, so they end with it. The one-shot
@@ -546,7 +563,7 @@ pub fn steer_hint(name: &str) -> String {
 
 /// Sightline can always host a session, so this is never the reason.
 pub fn unavailable_hint() -> &'static str {
-    "scope cannot start a session here"
+    "Sightline cannot start a session here"
 }
 
 /// Where a session Sightline can steer is running, for the session card.
@@ -740,5 +757,20 @@ mod tests {
             "a stopped session should not be listed"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_rename_reached_the_hosted_backend() {
+        // These strings are what a person reads when the window cannot attach
+        // to a hosted session. Leaving "scope" here made the Windows backend
+        // look like a leftover after every other rename had landed.
+        assert!(
+            !unavailable_hint().contains("scope"),
+            "{}",
+            unavailable_hint()
+        );
+        let err = attach("x").unwrap_err();
+        assert!(err.starts_with("Sightline"), "{err}");
+        assert!(!err.contains("scope"), "{err}");
     }
 }
