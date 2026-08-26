@@ -28,11 +28,20 @@
 //! what   = "a claim worth checking with a model that did not make it"
 //! agent  = "cursor"
 //! model  = "gpt-5.3-codex-high"
+//!
+//! [[route]]
+//! name   = "desktop"
+//! what   = "work the Cursor desktop assistant is already in the middle of"
+//! agent  = "grok"
 //! ```
 //!
 //! `what` is the whole of how a chief chooses. It is prose on purpose: the thing
 //! being matched is a description of work, and the only reader that can match a
 //! description of work to an assignment is the one writing the assignment.
+//!
+//! `agent` is an adapter id: `claude`, `cursor`, or `grok`. Grok Bot is the
+//! Cursor desktop assistant, not a CLI — assigning to `grok` connects that
+//! chat rather than spawning a process.
 
 use std::path::{Path, PathBuf};
 
@@ -138,6 +147,11 @@ name   = "second-opinion"
 what   = "a claim worth checking with a model that did not make it"
 agent  = "cursor"
 model  = "gpt-5.3-codex-high"
+
+[[route]]
+name   = "desktop"
+what   = "work the Cursor desktop assistant is already in the middle of"
+agent  = "grok"
 "#;
 
     #[test]
@@ -147,6 +161,7 @@ model  = "gpt-5.3-codex-high"
         assert_eq!(r.agent, "claude");
         assert_eq!(r.model, "sonnet");
         assert_eq!(r.effort, "low");
+        assert_eq!(routes.find("desktop").expect("by name").agent, "grok");
     }
 
     #[test]

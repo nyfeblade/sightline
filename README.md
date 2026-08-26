@@ -77,9 +77,12 @@ transcripts from outside: what they are running, what they touched, what they
 are blocked on. It is not in the loop, so none of the kernels above apply. This
 is what Sightline did before, and it still does it.
 
-**Owned** — the ones Sightline starts. It holds both pipes, answers every
-permission request, and serves them tools of its own. Everything on this page
-about deciding applies here and only here.
+**Owned** — the ones Sightline holds. Claude Code over pipes; Cursor CLI as a
+chat plus `--resume`; Grok Bot as a connected Cursor desktop assistant, not a
+CLI, whose messages wait in a mailbox a later turn reads with `inbox`. It
+answers permission requests at whatever door that vendor actually has, and
+serves them the same kernel tools. Everything on this page about deciding
+applies here and only here.
 
 Nothing about the first kind changed. If you want an agent governed, Sightline
 has to be the one holding it.
@@ -94,6 +97,7 @@ assign(path, task)   start a worker on one assignment
 fleet()              every worker, whether it is busy, what it is doing
 tell(who, text)      say something to a worker you started
 claim(summary)       say your work is finished, and find out what the checks said
+inbox()              pending tell/assignment, for a worker that is not holding a pipe
 ```
 
 That is not a formality. A worker Sightline starts is confined to its directory,
@@ -187,8 +191,9 @@ The monitoring half did not go anywhere, and it is what you will look at most.
   `sightline events --json` for anything else that wants to watch.
 - **Isolated sessions** on their own branch and checkout, merged back when you
   say so.
-- **Other agents**: Aider has a real adapter; Codex and Gemini are read from the
-  screen.
+- **Other agents**: Cursor (`cursor-agent`) and Grok Bot (the Cursor desktop
+  assistant, `agent = "grok"`) are first-class vendors next to Claude Code.
+  Aider has a real adapter; Codex and Gemini are read from the screen.
 - **Glue** — `sightline glue <version>` reconciles a fork onto a newer upstream
   release by teaching your own agent upstream's architecture, seams and
   invariants, then having it write the adapters in a worktree of its own.

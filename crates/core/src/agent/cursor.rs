@@ -31,8 +31,8 @@
 //! the forbid kernel; a session asked to write outside its worktree with its own
 //! edit tool was refused by the scope kernel, and the file is not on disk.
 
-use super::{Adapter, Found, Naming, Options, Record};
-use std::path::PathBuf;
+use super::{Adapter, Delivery, Found, Naming, Options, Record};
+use std::path::{Path, PathBuf};
 
 pub struct Cursor;
 
@@ -79,8 +79,20 @@ impl Adapter for Cursor {
         Some(vec!["--resume".into(), id.to_string()])
     }
 
+    fn delivery(&self) -> Delivery {
+        Delivery::Resume
+    }
+
     fn naming(&self) -> Naming {
         Naming::Kept
+    }
+
+    fn prepare(&self, root: &Path, sightline: &Path) -> Result<(), String> {
+        put_boundary(root, sightline)
+    }
+
+    fn offer_kernel(&self, root: &Path, session: &str, sightline: &Path) -> Result<(), String> {
+        put_kernel(root, session, sightline)
     }
 
     fn record(&self) -> Record {
@@ -126,6 +138,27 @@ impl Adapter for Cursor {
         // is not claimed to be.
         super::Governance::Full
     }
+}
+
+/// Put Cursor's permission door in a worktree.
+///
+/// Written before the session starts. Doing it after would leave the first
+/// few tool calls ungoverned, which is the window that matters. Shared with
+/// Grok Bot, because that assistant is Cursor's desktop product and reads
+/// the same files.
+pub fn put_boundary(root: &Path, sightline: &Path) -> Result<(), String> {
+    let dir = root.join(".cursor");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    std::fs::write(dir.join("hooks.json"), crate::hook::config(sightline))
+        .map_err(|e| format!("could not put the boundary in place: {e}"))
+}
+
+/// Bind this session's kernel tools, now that it has a name to be attributed by.
+pub fn put_kernel(root: &Path, session: &str, sightline: &Path) -> Result<(), String> {
+    let dir = root.join(".cursor");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    std::fs::write(dir.join("mcp.json"), crate::mcp::config(sightline, session))
+        .map_err(|e| format!("could not offer the kernel tools: {e}"))
 }
 
 /// Cursor's stream, rewritten into the shape Sightline already reads.

@@ -1239,7 +1239,8 @@ pub const PREFIX: &str = "owned-";
 const HELD_EVENTS: usize = 2048;
 
 struct Held {
-    session: std::sync::Arc<OwnedSession>,
+    /// None for a connected session: there is no process to hold.
+    session: Option<std::sync::Arc<OwnedSession>>,
     state: std::sync::Arc<std::sync::Mutex<Owned>>,
     /// What the session has said since it was last drained, and how much was
     /// dropped because nobody drained in time.
@@ -1256,7 +1257,43 @@ type Fleet = std::collections::HashMap<String, Held>;
 
 fn fleet() -> &'static std::sync::Mutex<Fleet> {
     static FLEET: std::sync::OnceLock<std::sync::Mutex<Fleet>> = std::sync::OnceLock::new();
-    FLEET.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+    FLEET.get_or_init(|| {
+        let mut map = std::collections::HashMap::new();
+        restore(&mut map);
+        note_size(&map);
+        std::sync::Mutex::new(map)
+    })
+}
+
+/// Connected sessions outlive the process that assigned them — that is the
+/// point of not spawning. A daemon restart, or an MCP door in another
+/// process, still has to see them, so they are read back from disk here
+/// rather than invented empty.
+fn restore(fleet: &mut Fleet) {
+    for meta in crate::mail::list() {
+        if fleet.contains_key(&meta.name) {
+            continue;
+        }
+        let pending: Pending = std::sync::Arc::new(std::sync::Mutex::new((
+            std::collections::VecDeque::new(),
+            0,
+        )));
+        let state = Owned {
+            name: meta.name.clone(),
+            cwd: meta.cwd,
+            model: meta.model,
+            agent: meta.agent,
+            mode: String::new(),
+            session_id: String::new(),
+            pid: 0,
+            alive: true,
+            busy: false,
+            tool: String::new(),
+            started: meta.started,
+            last: meta.started,
+        };
+        fleet.insert(meta.name.clone(), hold_connected(state, pending));
+    }
 }
 
 fn locked() -> std::sync::MutexGuard<'static, Fleet> {
@@ -1271,8 +1308,16 @@ fn locked() -> std::sync::MutexGuard<'static, Fleet> {
 fn hold(session: OwnedSession, pending: Pending) -> Held {
     let state = session.shared_state();
     Held {
-        session: std::sync::Arc::new(session),
+        session: Some(std::sync::Arc::new(session)),
         state,
+        pending,
+    }
+}
+
+fn hold_connected(state: Owned, pending: Pending) -> Held {
+    Held {
+        session: None,
+        state: std::sync::Arc::new(std::sync::Mutex::new(state)),
         pending,
     }
 }
@@ -1324,12 +1369,17 @@ pub fn start(
         std::collections::VecDeque::new(),
         0,
     )));
+    let agent_id = if spec.agent.is_empty() {
+        "claude"
+    } else {
+        spec.agent.as_str()
+    };
     let session = OwnedSession::start_with(
         program,
         cwd,
         spec,
         &name,
-        "claude",
+        agent_id,
         // Many of these may run at once under a daemon with no terminal;
         // their diagnostics must not scatter across whatever it inherited.
         Stderr::Quiet,
@@ -1369,6 +1419,87 @@ pub fn start(
     }
     let state = session.state();
     held.insert(name, hold(session, pending));
+    note_size(&held);
+    Ok(state)
+}
+
+/// Start one, or connect one, according to the agent.
+///
+/// The kernel calls this rather than `start`, so an agent that cannot be
+/// spawned is not asked to be. Vendor differences stay on the adapter.
+pub fn open(
+    program: &str,
+    cwd: &std::path::Path,
+    spec: &Spec,
+    settle: std::time::Duration,
+) -> Result<Owned, String> {
+    let id = if spec.agent.is_empty() {
+        "claude"
+    } else {
+        spec.agent.as_str()
+    };
+    if crate::agent::find(id).is_some_and(|a| !a.spawnable()) {
+        connect(cwd, spec)
+    } else {
+        start(program, cwd, spec, settle)
+    }
+}
+
+/// Register a worker that already exists, rather than starting one.
+///
+/// Grok Bot is the case this was written for: the assistant is a long-lived
+/// Cursor desktop chat, and inventing a process for it would be lying about
+/// how it runs. The session still appears in the fleet, still counts against
+/// the ceiling, and still has a name a chief can `tell` — the message waits
+/// in the mailbox until a later turn reads it.
+pub fn connect(cwd: &std::path::Path, spec: &Spec) -> Result<Owned, String> {
+    let mut held = locked();
+    let taken: Vec<String> = held.keys().cloned().collect();
+    let name = next_name(&taken);
+    let pending: Pending = std::sync::Arc::new(std::sync::Mutex::new((
+        std::collections::VecDeque::new(),
+        0,
+    )));
+    let started = now_secs();
+    let state = Owned {
+        name: name.clone(),
+        cwd: cwd.to_string_lossy().into_owned(),
+        model: spec.model.clone().unwrap_or_default(),
+        agent: if spec.agent.is_empty() {
+            "grok".into()
+        } else {
+            spec.agent.clone()
+        },
+        mode: spec.mode.clone().unwrap_or_default(),
+        session_id: String::new(),
+        pid: 0,
+        alive: true,
+        busy: false,
+        tool: String::new(),
+        started,
+        last: started,
+    };
+    crate::mail::remember(&crate::mail::Connected {
+        name: name.clone(),
+        cwd: state.cwd.clone(),
+        agent: state.agent.clone(),
+        model: state.model.clone(),
+        started,
+    })?;
+    // Visible the way a spawned session is, from the moment it exists: a
+    // connected worker that never announced itself would be a row the Hub
+    // could not explain.
+    if let Ok(mut buffer) = pending.lock() {
+        buffer.0.push_back(Event::new(
+            &name,
+            &state.agent,
+            Kind::SessionStarted {
+                cwd: state.cwd.clone(),
+                branch: String::new(),
+            },
+        ));
+    }
+    held.insert(name, hold_connected(state.clone(), pending));
     note_size(&held);
     Ok(state)
 }
@@ -1433,26 +1564,52 @@ fn find_key(fleet: &Fleet, who: &str) -> Option<String> {
 /// long as the turn takes — with the fleet held, that would stall every other
 /// session and every window asking what the fleet is doing.
 pub fn say(who: &str, text: &str) -> Result<(), String> {
-    let (key, session, pending) = {
+    let (key, session, pending, snapshot) = {
         let fleet = locked();
-        let key = find_key(&fleet, who).ok_or_else(|| format!("no owned session called {who}"))?;
-        let held = fleet.get(&key).expect("just found");
-        if !held.state().alive {
-            return Err(format!("{key} has ended"));
+        match find_key(&fleet, who) {
+            Some(key) => {
+                let held = fleet.get(&key).expect("just found");
+                if !held.state().alive {
+                    return Err(format!("{key} has ended"));
+                }
+                (
+                    key.clone(),
+                    held.session.clone(),
+                    held.pending.clone(),
+                    held.state(),
+                )
+            }
+            None => {
+                // A connected session the fleet in *this* process has not
+                // restored yet — the MCP door, a test, a tell from a process
+                // that is not holding anyone. The mailbox is the session.
+                drop(fleet);
+                if crate::mail::exists(who) {
+                    return crate::mail::push(who, text);
+                }
+                return Err(format!("no owned session called {who}"));
+            }
         }
-        (key.clone(), held.session.clone(), held.pending.clone())
     };
     // Checked again with the session in hand: it may have exited between the
     // two, and writing to a dead pipe is a broken-pipe error rather than a
     // sentence saying what happened.
-    let held = session.state();
-    if !held.alive {
-        return Err(format!("{key} has ended"));
+    if let Some(session) = &session {
+        let held = session.state();
+        if !held.alive {
+            return Err(format!("{key} has ended"));
+        }
     }
-    if held.agent == "cursor" {
-        return resume(&held, text, pending);
+    match crate::agent::find(&snapshot.agent).map(|a| a.delivery()) {
+        Some(crate::agent::Delivery::Resume) => resume(&snapshot, text, pending),
+        Some(crate::agent::Delivery::Mailbox) => crate::mail::push(&key, text),
+        _ => {
+            let session = session.ok_or_else(|| {
+                format!("{key} is not listening — there is no process to write to")
+            })?;
+            session.send(text).map_err(|e| e.to_string())
+        }
     }
-    session.send(text).map_err(|e| e.to_string())
 }
 
 /// Say something to a Cursor session, which is not listening.
@@ -1548,8 +1705,12 @@ pub fn stop(who: &str) -> Result<(), String> {
 fn end(held: &Held) {
     // Before the process: a file held against something that is no longer
     // running is a file nobody else can work on.
-    crate::gate::release(held.session.session());
-    held.session.stop();
+    let name = held.state().name;
+    crate::gate::release(&name);
+    if let Some(session) = &held.session {
+        session.stop();
+    }
+    crate::mail::forget(&name);
 }
 
 /// Forget the ones that have exited, and say which. What a person means by
@@ -2531,5 +2692,59 @@ mod resume_tests {
         let why =
             resume(&held("cursor", ""), "anything", pending).expect_err("there is no chat yet");
         assert!(why.contains("first turn"), "{why}");
+    }
+
+    #[test]
+    fn a_grok_worker_is_listed_told_and_reads_the_message_on_a_later_turn() {
+        // The Cursor lesson, for an agent that cannot even be resumed: tell
+        // writes a file, the worker is in the fleet without a process, and
+        // inbox is how a later turn actually sees the message.
+        let dir = std::env::temp_dir().join(format!(
+            "sightline-grok-connect-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let started = connect(
+            &dir,
+            &Spec {
+                agent: "grok".into(),
+                ..Default::default()
+            },
+        )
+        .expect("a connected session does not need a binary");
+        assert_eq!(started.agent, "grok");
+        assert_eq!(started.pid, 0, "there is no process");
+        assert!(
+            list().iter().any(|o| o.name == started.name && o.alive),
+            "the Hub lists it like any other worker"
+        );
+        say(&started.name, "fix the flaky test").expect("tell lands in the mailbox");
+        assert!(
+            crate::mail::waiting(&started.name)
+                .iter()
+                .any(|m| m.contains("flaky")),
+            "the message is still there before a later turn reads it"
+        );
+        let got = crate::kernel::call(&started.name, "inbox", &serde_json::json!({}))
+            .expect("inbox is a kernel tool");
+        assert!(got.contains("flaky"), "{got}");
+        let empty = crate::kernel::call(&started.name, "inbox", &serde_json::json!({}))
+            .expect("an empty mailbox is not a failure");
+        assert!(
+            empty.contains("nothing waiting"),
+            "taking is how the same assignment is not done twice: {empty}"
+        );
+        let _ = stop(&started.name);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn tell_does_not_invent_a_process_for_a_name_it_does_not_know() {
+        let why = say("owned-nobody-here", "hello").expect_err("unknown names are not invented");
+        assert!(why.contains("no owned session"), "{why}");
     }
 }

@@ -863,6 +863,14 @@ mod tests {
             elsewhere.assign("worker", "something asked for while Sightline was running");
             elsewhere.save().unwrap();
         }
+        // Filesystems that round mtime to a second (overlayfs is one) make two
+        // writes in the same second look like no change, and the store is never
+        // picked up. The comparison is on mtime, so the mtime has to move.
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(2);
+        let _ = std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .and_then(|f| f.set_modified(later));
 
         watching.reload_if_stale();
         assert_eq!(
