@@ -63,7 +63,7 @@ pub fn assess(p: &Probes) -> Vec<Check> {
             detail: "not on PATH — Sightline watches and steers it, so there is \
                      nothing to do without it"
                 .into(),
-            fix: Some("curl -fsSL https://claude.ai/install.sh | bash".into()),
+            fix: Some(claude_install_line(cfg!(windows))),
         },
     });
 
@@ -141,6 +141,17 @@ fn install_line(manager: Option<&'static str>, package: &str) -> String {
         Some("zypper") => format!("sudo zypper install {package}"),
         Some(other) => format!("{other} install {package}"),
         None => format!("install {package} with your package manager"),
+    }
+}
+
+/// How to get Claude Code on this kind of machine. The Unix curl line is not
+/// a command Windows can run; suggesting it there is how `doctor` looks
+/// finished and then does nothing.
+fn claude_install_line(windows: bool) -> String {
+    if windows {
+        "irm https://claude.ai/install.ps1 | iex".into()
+    } else {
+        "curl -fsSL https://claude.ai/install.sh | bash".into()
     }
 }
 
@@ -283,7 +294,21 @@ mod tests {
         assert!(!ready(&checks));
         let c = checks.iter().find(|c| c.name == "Claude Code").unwrap();
         assert_eq!(c.weight, Weight::Required);
-        assert!(c.fix.as_deref().unwrap().contains("install.sh"));
+        let fix = c.fix.as_deref().unwrap();
+        assert!(
+            fix.contains("install.sh") || fix.contains("install.ps1"),
+            "say how to get it, in a command this machine can run: {fix}"
+        );
+    }
+
+    #[test]
+    fn windows_is_not_told_to_pipe_curl_into_bash() {
+        assert!(claude_install_line(false).contains("install.sh"));
+        assert!(claude_install_line(true).contains("install.ps1"));
+        assert!(
+            !claude_install_line(true).contains("bash"),
+            "that is not a Windows install line"
+        );
     }
 
     #[test]

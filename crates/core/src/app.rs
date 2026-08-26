@@ -172,12 +172,7 @@ The shape of it, and what must not change.
 
 /// A path, shortened the way the interface shortens them.
 fn short_path(path: &str) -> String {
-    let home = dirs_home().to_string_lossy().into_owned();
-    match path.strip_prefix(&home) {
-        Some(rest) if rest.is_empty() => "~".into(),
-        Some(rest) => format!("~{rest}"),
-        None => path.to_string(),
-    }
+    crate::event::short_path(path)
 }
 
 /// What a project has written down, for the Hub to say so.
@@ -212,33 +207,77 @@ impl ProjectState {
 /// corrupts your working state, and because a supervisor running its own fleet
 /// may want a directory of its own.
 pub fn data_dir() -> PathBuf {
-    // The old name is still honoured: a shell, a script or a systemd unit
-    // written before the rename should not silently point at a different
-    // directory and lose the fleet.
-    if let Ok(dir) =
-        std::env::var("SIGHTLINE_DATA_DIR").or_else(|_| std::env::var("IRONSIGHT_DATA_DIR"))
-    {
-        if !dir.is_empty() {
-            return PathBuf::from(dir);
-        }
-    }
-    let base = std::env::var("XDG_DATA_HOME")
+    // An override is an override: do not then go looking for a former name
+    // beside it and rename that onto the path someone asked for.
+    if let Some(dir) = std::env::var("SIGHTLINE_DATA_DIR")
         .ok()
         .filter(|d| !d.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home().join(".local").join("share"));
-    let dir = base.join("sightline");
-    // Two former names now, and the same rule for both: move it once, in place,
-    // rather than asking anyone to. Newest first, so a machine that has both
-    // keeps the one that was actually being used.
-    for former in ["ironsight", "nyfe-scope"] {
-        let former = base.join(former);
-        if !dir.exists() && former.is_dir() {
-            let _ = std::fs::rename(&former, &dir);
-            break;
+        .or_else(|| {
+            std::env::var("IRONSIGHT_DATA_DIR")
+                .ok()
+                .filter(|d| !d.is_empty())
+        })
+    {
+        return PathBuf::from(dir);
+    }
+    let dir = data_dir_from(
+        None,
+        None,
+        std::env::var("XDG_DATA_HOME").ok().as_deref(),
+        std::env::var("LOCALAPPDATA").ok().as_deref(),
+        &home(),
+        cfg!(windows),
+    );
+    // Unix only: two former names, moved once in place rather than asking
+    // anyone to. Windows has never used the XDG layout here — nothing to
+    // migrate, and LOCALAPPDATA\Sightline is where an MSI-installed app's
+    // per-user state belongs.
+    if !cfg!(windows) {
+        if let Some(base) = dir.parent() {
+            for former in ["ironsight", "nyfe-scope"] {
+                let former = base.join(former);
+                if !dir.exists() && former.is_dir() {
+                    let _ = std::fs::rename(&former, &dir);
+                    break;
+                }
+            }
         }
     }
     dir
+}
+
+/// Where state lives, given what the environment said. Separated from reading
+/// the environment so the Windows layout can be checked on a Unix machine.
+///
+/// An override always wins. Otherwise Windows uses `%LOCALAPPDATA%\Sightline`
+/// and Unix uses `$XDG_DATA_HOME/sightline` or `~/.local/share/sightline`.
+/// Putting Windows state under `.local/share` would compile and then hide the
+/// journal where Explorer never looks.
+fn data_dir_from(
+    sightline: Option<&str>,
+    ironsight: Option<&str>,
+    xdg: Option<&str>,
+    local_app_data: Option<&str>,
+    home: &Path,
+    windows: bool,
+) -> PathBuf {
+    for v in [sightline, ironsight] {
+        if let Some(dir) = v.filter(|d| !d.is_empty()) {
+            return PathBuf::from(dir);
+        }
+    }
+    if windows {
+        let base = local_app_data
+            .filter(|d| !d.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join("AppData").join("Local"));
+        return base.join("Sightline");
+    }
+    let base = xdg
+        .filter(|d| !d.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".local").join("share"));
+    base.join("sightline")
 }
 
 fn order_path() -> PathBuf {
@@ -335,12 +374,23 @@ fn write_title(path: &std::path::Path, id: &str, name: &str) -> Result<(), Strin
 /// `~` means home, as it does everywhere else a path is typed. Nothing here
 /// goes through a shell, so if Sightline does not expand it nothing will — the
 /// fleet file has always documented `~/api` and it never worked.
+///
+/// Windows types a backslash. Treating only `~/` as home would leave `~\api`
+/// unexpanded on the platform that actually writes it that way.
 pub fn expand(path: &str) -> String {
-    match path.strip_prefix("~/") {
-        Some(rest) => dirs_home().join(rest).to_string_lossy().into_owned(),
-        None if path == "~" => dirs_home().to_string_lossy().into_owned(),
-        None => path.to_string(),
+    expand_from(path, &home()).to_string_lossy().into_owned()
+}
+
+fn expand_from(path: &str, home: &Path) -> PathBuf {
+    if path == "~" {
+        return home.to_path_buf();
     }
+    for prefix in ["~/", "~\\"] {
+        if let Some(rest) = path.strip_prefix(prefix) {
+            return home.join(rest);
+        }
+    }
+    PathBuf::from(path)
 }
 
 pub fn parse_new(text: &str) -> NewSpec {
@@ -3906,10 +3956,11 @@ pub fn fleet_path() -> PathBuf {
 }
 
 /// Home, or the current directory when there is no home to speak of.
+///
+/// This used to read only `HOME`, which Windows does not set. `home()` already
+/// tries `USERPROFILE` as well; one function, both callers.
 fn dirs_home() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
+    home()
 }
 
 pub fn default_root() -> PathBuf {
@@ -4637,5 +4688,40 @@ mod tests {
         assert_eq!(expand("relative/path"), "relative/path");
         // Not a home reference, so it is left alone.
         assert_eq!(expand("~notauser/x"), "~notauser/x");
+        // Windows types a backslash. A string prefix of `~/` would leave this
+        // unexpanded on the platform that actually writes it that way.
+        let home = PathBuf::from(if cfg!(windows) {
+            r"C:\Users\luker"
+        } else {
+            "/home/luker"
+        });
+        assert_eq!(expand_from(r"~\api", &home), home.join("api"));
+        assert_eq!(expand_from("~/api", &home), home.join("api"));
+    }
+
+    #[test]
+    fn windows_state_lives_where_an_msi_app_puts_it() {
+        let home = PathBuf::from(r"C:\Users\luker");
+        let local = PathBuf::from(r"C:\Users\luker\AppData\Local");
+        assert_eq!(
+            data_dir_from(None, None, None, Some(local.to_str().unwrap()), &home, true),
+            local.join("Sightline"),
+            "Explorer will not look in .local/share"
+        );
+        assert_eq!(
+            data_dir_from(None, None, None, None, &home, true),
+            home.join("AppData").join("Local").join("Sightline"),
+            "LOCALAPPDATA missing still must not invent an XDG path"
+        );
+        assert_eq!(
+            data_dir_from(Some(r"D:\fleet"), None, None, None, &home, true),
+            PathBuf::from(r"D:\fleet"),
+            "an override is an override on every platform"
+        );
+        let unix = PathBuf::from("/home/luker");
+        assert_eq!(
+            data_dir_from(None, None, None, None, &unix, false),
+            unix.join(".local").join("share").join("sightline")
+        );
     }
 }
