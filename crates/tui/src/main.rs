@@ -1140,8 +1140,10 @@ fn main() -> Result<()> {
                 "not installed".to_string()
             } else {
                 match c.signed_in {
+                    Some(true) if c.version.is_empty() => "ready".into(),
                     Some(true) => format!("ready · {}", c.version),
                     Some(false) => "installed, not signed in".into(),
+                    None if c.version.is_empty() => "installed".into(),
                     None => format!("installed · {}", c.version),
                 }
             };
