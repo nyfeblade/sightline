@@ -118,6 +118,7 @@ mod tests {
             .collect();
         assert!(names.contains(&"claim".to_string()), "{names:?}");
         assert!(names.contains(&"note".to_string()), "{names:?}");
+        assert!(names.contains(&"inbox".to_string()), "{names:?}");
         // The whole reason the split exists: a worker that could assign would
         // start workers of its own, and a ceiling counting only the sessions it
         // knows about is not a ceiling.
@@ -141,6 +142,10 @@ mod tests {
         assert!(
             !names.contains(&"claim".to_string()),
             "a chief is never assigned anything, so it has nothing to claim: {names:?}"
+        );
+        assert!(
+            !names.contains(&"inbox".to_string()),
+            "inbox is how a worker reads tell, and a chief is listening: {names:?}"
         );
     }
 

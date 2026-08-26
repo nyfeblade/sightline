@@ -47,7 +47,7 @@ impl Role {
     fn allows(self, tool: &str) -> bool {
         match self {
             Role::Chief => matches!(tool, "assign" | "fleet" | "tell"),
-            Role::Worker => matches!(tool, "claim" | "note"),
+            Role::Worker => matches!(tool, "claim" | "note" | "inbox"),
         }
     }
 }
@@ -89,12 +89,15 @@ pub fn schemas() -> Vec<Value> {
                                    how the two drift apart. Anything you name explicitly \
                                    overrides the route."},
                     "agent": {"type": "string",
-                              "description": "Which agent does this work: `claude` or \
-                                   `cursor`. Cursor reaches models Claude Code cannot — \
-                                   GPT-5.x, Codex, Grok, Composer — and draws on a \
-                                   separate quota, so it is a second pool as much as a \
-                                   second opinion. Both are governed by the same \
-                                   boundary. Default is claude."},
+                              "description": "Which agent does this work: `claude`, \
+                                   `cursor`, or `grok`. Cursor reaches models Claude \
+                                   Code cannot — GPT-5.x, Codex, Grok, Composer — and \
+                                   draws on a separate quota. Grok Bot is the Cursor \
+                                   desktop assistant, not a CLI: assigning to `grok` \
+                                   connects that chat rather than spawning a process, \
+                                   and `tell` waits in a mailbox the worker reads with \
+                                   `inbox`. All three share the same kernel tools. \
+                                   Default is claude."},
                     "effort": {"type": "string",
                                "enum": ["low", "medium", "high", "xhigh", "max"],
                                "description": "How hard this worker should think. \
@@ -145,6 +148,15 @@ pub fn schemas() -> Vec<Value> {
             },
         }),
         json!({
+            "name": "inbox",
+            "description": "Pending work and messages for you — the assignment, and \
+                            anything a supervisor said with tell. Call this at the \
+                            start of a turn. A session that is not a long-lived pipe \
+                            will not see them otherwise; they wait here rather than \
+                            arriving as a prompt.",
+            "inputSchema": {"type": "object", "properties": {}},
+        }),
+        json!({
             "name": "tell",
             "description": "Say something to a worker you started — an answer, a \
                             correction, or more of the task.",
@@ -175,6 +187,7 @@ pub fn call(session: &str, name: &str, args: &Value) -> Result<String, String> {
         "assign" => assign(session, args),
         "fleet" => Ok(fleet()),
         "tell" => tell(args),
+        "inbox" => inbox(session),
         "claim" => claim(session, args),
         "note" => note(session, args),
         other => Err(format!("{other} is not one of Sightline's tools")),
@@ -254,7 +267,7 @@ fn assign(asked_by: &str, args: &Value) -> Result<String, String> {
     let wanted = wanted_owned.as_str();
     let agent =
         crate::agent::find(wanted).ok_or_else(|| format!("there is no agent called {wanted}"))?;
-    if agent.governance() != crate::agent::Governance::Full {
+    if agent.governance() == crate::agent::Governance::None {
         return Err(format!(
             "{} cannot be governed, so the kernel will not start one. It can be run \
              and watched — `sightline new {} --agent {}` — but a worker the boundary \
@@ -264,17 +277,10 @@ fn assign(asked_by: &str, args: &Value) -> Result<String, String> {
             wanted
         ));
     }
-    // Cursor's boundary is a file in its workspace rather than a flag, so it is
-    // written before the session starts. Doing it after would leave the first
-    // few tool calls ungoverned, which is the window that matters.
-    if wanted == "cursor" {
-        let dir = root.join(".cursor");
-        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        let me = std::env::current_exe().map_err(|e| e.to_string())?;
-        std::fs::write(dir.join("hooks.json"), crate::hook::config(&me))
-            .map_err(|e| format!("could not put the boundary in place: {e}"))?;
-    }
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
+    // The agent's own door, before it is assigned. Cursor and Grok Bot both
+    // write a hook file; doing it after would leave the first calls ungoverned.
+    agent.prepare(&root, &me)?;
 
     let policy = Policy::confined_to(&root);
     // The door, which is where the count ceiling belongs: this is the one moment
@@ -323,17 +329,14 @@ fn assign(asked_by: &str, args: &Value) -> Result<String, String> {
         reach: Vec::new(),
         kernel_tools: false,
     };
-    let started = owned::start(agent.program(), &root, &spec, SETTLE)?;
+    let started = owned::open(agent.program(), &root, &spec, SETTLE)?;
     let mut store = crate::work::Store::load(crate::work::path_in(&crate::app::data_dir()));
     let id = store.assign(&started.name, task);
     // Its own tools, now that it has a name to be attributed by. A worker gets
     // `claim` and `note` and not `assign`: one that could assign would start
     // workers of its own, and a ceiling that counts only the sessions it knows
     // about is not a ceiling.
-    if wanted == "cursor" {
-        let dir = root.join(".cursor");
-        let _ = std::fs::write(dir.join("mcp.json"), crate::mcp::config(&me, &started.name));
-    }
+    agent.offer_kernel(&root, &started.name, &me)?;
 
     // How it was routed, at the only moment anybody knows.
     store.attribute(
@@ -425,9 +428,7 @@ fn claim(session: &str, args: &Value) -> Result<String, String> {
         .get("summary")
         .and_then(Value::as_str)
         .ok_or("claim needs a summary of what you did")?;
-    let here = owned::get(session)
-        .map(|o| std::path::PathBuf::from(o.cwd))
-        .ok_or("this session is not one Sightline is holding")?;
+    let here = session_dir(session)?;
 
     let path = crate::work::path_in(&crate::app::data_dir());
     let mut store = crate::work::Store::load(path);
@@ -465,6 +466,35 @@ fn tell(args: &Value) -> Result<String, String> {
         .ok_or("tell needs something to say")?;
     owned::say(who, text)?;
     Ok(format!("said to {who}"))
+}
+
+/// Messages waiting for a worker that is not holding a pipe.
+fn inbox(session: &str) -> Result<String, String> {
+    let waiting = crate::mail::take(session)?;
+    if waiting.is_empty() {
+        Ok("nothing waiting".into())
+    } else {
+        Ok(waiting.join("\n\n---\n\n"))
+    }
+}
+
+/// Where this session is working, including from a process that is not the
+/// one holding the fleet — `sightline mcp --as SESSION` is a different
+/// process, and a claim that can only see in-memory sessions cannot finish
+/// work a connected worker did.
+fn session_dir(session: &str) -> Result<std::path::PathBuf, String> {
+    if let Some(o) = owned::get(session) {
+        return Ok(std::path::PathBuf::from(o.cwd));
+    }
+    if let Some(cwd) = crate::mail::cwd(session) {
+        return Ok(cwd);
+    }
+    for o in crate::control::owned_all() {
+        if o.name == session || (!o.session_id.is_empty() && o.session_id == session) {
+            return Ok(std::path::PathBuf::from(o.cwd));
+        }
+    }
+    Err("this session is not one Sightline is holding".into())
 }
 
 #[cfg(test)]
@@ -597,18 +627,58 @@ fn thousands(n: u64) -> String {
 mod vendor_tests {
     use super::*;
 
+    /// A directory that exists on this machine. `/tmp` is not one, on Windows,
+    /// and `assign` checks that before it looks the agent up — so a test that
+    /// used it never reached the refusal it was written for.
+    fn a_directory() -> String {
+        std::env::temp_dir().to_string_lossy().into_owned()
+    }
+
     #[test]
-    fn a_supervisor_can_name_the_agent_and_gets_told_when_it_cannot_have_one() {
-        // Aider is real, installed, and cannot be governed — no hook, no
-        // permission seam. The kernel refuses to hand out a worker the boundary
-        // does not reach, and says what it *can* do instead, because "no" with
-        // no route forward is how somebody ends up starting one by hand outside
-        // everything.
+    fn the_kernel_does_not_special_case_a_vendor_when_assigning() {
+        // The defect a third vendor would have reintroduced: `if wanted ==
+        // "cursor"` in assign, then another for grok, then the list path grows
+        // a matching except. Vendor differences belong on the adapter —
+        // spawnable, prepare, offer_kernel, delivery — so a fourth agent is
+        // another file, not another branch here.
+        let source = include_str!("kernel.rs");
+        let body = &source[source.find("fn assign(").unwrap()..];
+        let body = &body[..body.find("\nfn ").unwrap()];
+        assert!(
+            body.contains("spawnable") || body.contains("owned::open"),
+            "an unspawnable agent has to be connected rather than started"
+        );
+        assert!(
+            body.contains("prepare("),
+            "the door is the adapter's to put in place, not assign's"
+        );
+        assert!(
+            body.contains("offer_kernel"),
+            "the kernel tools are offered through the adapter, not a vendor id"
+        );
+        assert!(
+            !body.contains("wanted == \"cursor\"") && !body.contains("wanted == \"grok\""),
+            "a vendor id in assign is the special-case this was written to refuse: {body}"
+        );
+    }
+
+    #[test]
+    fn grok_is_a_worker_the_kernel_will_hand_you() {
+        // Partial, not Full, and still assignable: the boundary reaches the
+        // door this vendor actually has. Aider is None and is still refused.
+        assert_eq!(
+            crate::agent::find("grok").unwrap().governance(),
+            crate::agent::Governance::Partial
+        );
+        assert!(
+            crate::agent::find("grok").unwrap().governance() != crate::agent::Governance::None,
+            "None is the refusal; Partial has to pass"
+        );
         let why = assign(
             "chief",
-            &json!({"path": "/tmp", "task": "x", "agent": "aider"}),
+            &json!({"path": a_directory(), "task": "x", "agent": "aider"}),
         )
-        .expect_err("an ungoverned agent is not a worker this kernel starts");
+        .expect_err("an ungoverned agent is still not a worker this kernel starts");
         assert!(why.contains("cannot be governed"), "{why}");
         assert!(
             why.contains("sightline new"),
@@ -617,10 +687,37 @@ mod vendor_tests {
     }
 
     #[test]
+    fn a_claim_from_a_process_that_is_not_holding_the_fleet_still_finds_the_worker() {
+        // `sightline mcp --as SESSION` is a different process than the one that
+        // connected the worker. owned::get is empty there. The mailbox is how
+        // the directory is still known, and a claim that cannot find the
+        // directory cannot run the checks.
+        let dir = std::env::temp_dir().join(format!("sightline-grok-claim-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let name = format!("owned-mail-{}", std::process::id());
+        crate::mail::remember(&crate::mail::Connected {
+            name: name.clone(),
+            cwd: dir.to_string_lossy().into_owned(),
+            agent: "grok".into(),
+            model: String::new(),
+            started: 1,
+        })
+        .unwrap();
+        let err = call(&name, "claim", &json!({"summary": "did the thing"}))
+            .expect_err("no checks here, so the claim cannot succeed");
+        assert!(
+            !err.contains("not one Sightline is holding"),
+            "it found the worker; it is the project that is unfinished: {err}"
+        );
+        crate::mail::forget(&name);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn an_agent_nobody_has_heard_of_is_refused_by_name() {
         let why = assign(
             "chief",
-            &json!({"path": "/tmp", "task": "x", "agent": "nonesuch"}),
+            &json!({"path": a_directory(), "task": "x", "agent": "nonesuch"}),
         )
         .expect_err("unknown agents are not invented");
         assert!(why.contains("nonesuch"), "{why}");

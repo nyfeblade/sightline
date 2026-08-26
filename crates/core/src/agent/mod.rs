@@ -22,6 +22,7 @@ use std::time::SystemTime;
 pub mod aider;
 pub mod claude;
 pub mod cursor;
+pub mod grok;
 
 /// How a session gets a name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,6 +78,27 @@ pub trait Adapter: Send + Sync {
 
     /// How to pick a conversation up again, if it can be.
     fn resume(&self, id: &str) -> Option<Vec<String>>;
+
+    /// Whether Sightline starts this by spawning `program()`.
+    ///
+    /// Most agents are a binary. Grok Bot is not: it is the Cursor desktop
+    /// assistant already running, and a spawn would invent a CLI that does not
+    /// exist. The kernel still assigns work to it; it connects rather than
+    /// starts.
+    fn spawnable(&self) -> bool {
+        true
+    }
+
+    /// How a second message reaches a session of this agent.
+    fn delivery(&self) -> Delivery {
+        Delivery::Pipe
+    }
+
+    /// Whether it is here to be used, which is not always "is `program` on the
+    /// PATH". An agent with no binary still has an honest installed/not answer.
+    fn present(&self) -> bool {
+        which(self.program())
+    }
 
     fn naming(&self) -> Naming;
 
@@ -140,6 +162,49 @@ pub trait Adapter: Send + Sync {
     fn governance(&self) -> Governance {
         Governance::None
     }
+
+    /// The same thing in a sentence, so a view does not have to know the rules.
+    /// Override when the enum's sentence would describe a different agent's gap.
+    fn governance_note(&self) -> &'static str {
+        self.governance().describe()
+    }
+
+    /// Files this agent needs in the worktree before it is assigned, if any.
+    ///
+    /// Cursor's boundary is a hook file rather than a flag, and writing it
+    /// after the session starts leaves the first calls ungoverned. Default is
+    /// nothing: an agent whose boundary is on the command line has no file to
+    /// place.
+    fn prepare(&self, _root: &Path, _sightline: &Path) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Bind this session's kernel door, once it has a name.
+    ///
+    /// The session's name is baked into the MCP config, because a server
+    /// spawned by an agent has no other way to know which session it is
+    /// serving — and a `claim` attributed to the wrong one marks somebody
+    /// else's work finished.
+    fn offer_kernel(&self, _root: &Path, _session: &str, _sightline: &Path) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+/// How a second message reaches a session.
+///
+/// Claude Code in this mode holds a pipe open across turns, so another
+/// message is a write. Cursor does not exist between turns: `--print` runs
+/// once and exits, and the chat is what `--resume` reopens. Grok Bot is not
+/// even that: there is no process and no resume flag, so the message waits
+/// in a file a later turn reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Delivery {
+    /// The process is still listening.
+    Pipe,
+    /// The process has exited. `--resume <id>` reopens the chat.
+    Resume,
+    /// No process. Messages wait on disk for a later turn to pull them.
+    Mailbox,
 }
 
 /// How much of the boundary reaches an agent.
@@ -196,8 +261,8 @@ pub fn connections(check_signin: bool) -> Vec<Connection> {
     all()
         .iter()
         .map(|a| {
-            let found = which(a.program());
-            let version = if found {
+            let found = a.present();
+            let version = if found && which(a.program()) {
                 run(&[a.program(), "--version"])
                     .unwrap_or_default()
                     .lines()
@@ -224,7 +289,7 @@ pub fn connections(check_signin: bool) -> Vec<Connection> {
                 version,
                 signed_in,
                 governance: a.governance(),
-                governance_note: a.governance().describe().into(),
+                governance_note: a.governance_note().into(),
                 install_hint: a.install_hint().unwrap_or_default().into(),
                 signin_hint: a.signin_hint().unwrap_or_default().into(),
             }
@@ -234,7 +299,7 @@ pub fn connections(check_signin: bool) -> Vec<Connection> {
 
 /// Whether a program is on the path. `which` itself is not depended on: a
 /// machine that lacks it would report every agent missing.
-fn which(program: &str) -> bool {
+pub(crate) fn which(program: &str) -> bool {
     let Some(path) = std::env::var_os("PATH") else {
         return false;
     };
@@ -261,6 +326,7 @@ pub fn all() -> Vec<Box<dyn Adapter>> {
     vec![
         Box::new(claude::ClaudeCode),
         Box::new(cursor::Cursor),
+        Box::new(grok::GrokBot),
         Box::new(aider::Aider),
         Box::new(Plain::new("codex", "Codex", "codex")),
         Box::new(Plain::new("gemini", "Gemini", "gemini")),
@@ -354,6 +420,7 @@ mod tests {
         assert_eq!(find("claude").unwrap().label(), "Claude Code");
         assert_eq!(find("aider").unwrap().program(), "aider");
         assert_eq!(find("codex").unwrap().label(), "Codex");
+        assert_eq!(find("grok").unwrap().label(), "Grok Bot");
         assert!(find("nonesuch").is_none(), "unknown names are not invented");
     }
 
@@ -393,6 +460,10 @@ mod tests {
             find("aider").unwrap().command(opts),
             vec!["aider", "--model", "opus"]
         );
+        assert!(
+            find("grok").unwrap().command(opts).is_empty(),
+            "Grok Bot is not a command line"
+        );
     }
 
     #[test]
@@ -407,5 +478,32 @@ mod tests {
     fn each_says_how_a_session_gets_its_name() {
         assert_eq!(find("claude").unwrap().naming(), Naming::Command("/rename"));
         assert_eq!(find("aider").unwrap().naming(), Naming::Kept);
+    }
+
+    #[test]
+    fn grok_is_connected_rather_than_spawned() {
+        let grok = find("grok").unwrap();
+        assert!(!grok.spawnable());
+        assert_eq!(grok.delivery(), Delivery::Mailbox);
+        assert_eq!(grok.governance(), Governance::Partial);
+        assert_eq!(find("cursor").unwrap().delivery(), Delivery::Resume);
+        assert_eq!(find("claude").unwrap().delivery(), Delivery::Pipe);
+    }
+
+    #[test]
+    fn connections_include_grok_bot() {
+        let all = connections(false);
+        assert!(
+            all.iter().any(|c| c.id == "grok" && c.label == "Grok Bot"),
+            "Grok Bot sits in the same panel as Claude Code and Cursor: {:?}",
+            all.iter().map(|c| c.id.as_str()).collect::<Vec<_>>()
+        );
+        let grok = all.iter().find(|c| c.id == "grok").unwrap();
+        assert_eq!(grok.governance, Governance::Partial);
+        assert!(
+            grok.governance_note.contains("cannot prove"),
+            "the note has to be this vendor's gap, not Cursor CLI's: {}",
+            grok.governance_note
+        );
     }
 }

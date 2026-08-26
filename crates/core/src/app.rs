@@ -1560,6 +1560,14 @@ impl App {
     pub fn start_session(&mut self, spec: &NewSpec) -> Result<String, String> {
         let chosen = spec.agent.as_deref().unwrap_or("claude");
         let known = agent::find(chosen);
+        if known.as_ref().is_some_and(|a| !a.spawnable()) {
+            return Err(format!(
+                "{} is not a program Sightline can start — it is already running. \
+                 Assign work to it with agent = \"{}\"",
+                known.as_ref().map(|a| a.label()).unwrap_or(chosen),
+                known.as_ref().map(|a| a.id()).unwrap_or(chosen)
+            ));
+        }
         let argv = match &known {
             Some(a) => a.command(agent::Options {
                 model: spec.model.as_deref(),
@@ -4018,6 +4026,23 @@ mod tests {
         let chart = app.work.chart("11111111-chief");
         assert_eq!(chart.nodes.len(), 2, "and the project keeps its shape");
         assert_eq!(chart.nodes[1].from.as_deref(), Some("11111111-chief"));
+    }
+
+    #[test]
+    fn a_connected_grok_worker_is_a_session_in_the_list() {
+        // No process, no transcript id: it still has to be a row, or a chief
+        // that assigned to grok has started a worker nobody can see.
+        let mut app = bare_app();
+        let mut o = an_owned("owned-9", "", true);
+        o.agent = "grok".into();
+        o.pid = 0;
+        app.fold_owned(vec![o]);
+        assert_eq!(app.sessions.len(), 1);
+        assert_eq!(app.sessions[0].id, "owned-9");
+        assert!(
+            app.sessions[0].live.is_some(),
+            "alive without a pid is still live"
+        );
     }
 
     #[test]
